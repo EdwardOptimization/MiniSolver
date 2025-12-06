@@ -30,12 +30,10 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
     config.verbose = false; // Mute output for benchmark
     config.debug_mode = false;
     
-    // Setup Scenario Params once
     std::vector<double> dts(N);
     for(int k=0; k<N; ++k) dts[k] = (k < 20) ? 0.05 : 0.2;
     double obs_x = 12.0; double obs_y = 0.0; double obs_rad = 1.5; 
 
-    // --- Benchmarking Params ---
     const int NUM_RUNS = 100;
     const int WARMUP_RUNS = 10;
     
@@ -51,12 +49,11 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
     double last_viol = 0;
 
     for(int run = 0; run < WARMUP_RUNS + NUM_RUNS; ++run) {
-        // Re-initialize solver to simulate fresh start (Cold Start)
         // Use MAX_N = 100 for static allocation
         PDIPMSolver<CarModel, 100> solver(N, Backend::CPU_SERIAL, config);
         solver.set_dt(dts);
         
-        // Cold start setup
+        // Cold start setup (Bad Guess: u=0)
         double current_t = 0.0;
         for(int k=0; k<=N; ++k) {
             if(k > 0) current_t += dts[k-1];
@@ -76,12 +73,10 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
             double ms = std::chrono::duration<double, std::milli>(end - start).count();
             total_times.push_back(ms);
             
-            // Accumulate component times
             sum_deriv += solver.timer.times["Derivatives"];
             sum_solve += solver.timer.times["Linear Solve"];
             sum_ls    += solver.timer.times["Line Search"];
             
-            // Capture last run stats
             if (run == WARMUP_RUNS + NUM_RUNS - 1) {
                 last_iter_count = solver.current_iter;
                 
@@ -113,11 +108,9 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
     res.deriv_avg = sum_deriv / NUM_RUNS;
     res.solve_avg = sum_solve / NUM_RUNS;
     res.ls_avg    = sum_ls / NUM_RUNS;
-    
     res.converged = last_converged;
     res.final_cost = last_cost;
     res.final_viol = last_viol;
-    
     return res;
 }
 
@@ -130,27 +123,39 @@ int main() {
     base.default_dt = 0.1;
     base.max_iters = 100;
     base.tol_con = 1e-4;
+    base.reg_init = 1e-6; 
+    base.reg_min = 1e-9;
     
-    // 1. Monotone + Merit + Regularization (Classic)
+    // Shared Robustness Settings
+    base.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR; // Best performer
+    base.enable_feasibility_restoration = true;
+    base.enable_slack_reset = true;
+    base.slack_reset_trigger = 0.1; // Trigger reset if alpha < 0.1
+
+    // 1. Current: Mehrotra + Filter (Aggressive)
     SolverConfig c1 = base;
-    c1.barrier_strategy = BarrierStrategy::MONOTONE;
-    c1.line_search_type = LineSearchType::MERIT;
-    c1.inertia_strategy = InertiaStrategy::REGULARIZATION;
-    results.push_back(run_test("Monotone/Merit/Reg", c1));
+    c1.barrier_strategy = BarrierStrategy::MEHROTRA;
+    c1.line_search_type = LineSearchType::FILTER;
+    c1.mu_init = 0.1; 
+    c1.mu_min = 1e-6;
+    results.push_back(run_test("Mehrotra + Filter", c1));
     
-    // 2. Adaptive + Filter + IgnoreSingular (Modern)
+    // 2. Classic: Monotone + Merit (Conservative but Robust)
     SolverConfig c2 = base;
-    c2.barrier_strategy = BarrierStrategy::ADAPTIVE;
-    c2.line_search_type = LineSearchType::FILTER;
-    c2.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR;
-    results.push_back(run_test("Adaptive/Filter/Ignore", c2));
+    c2.barrier_strategy = BarrierStrategy::MONOTONE;
+    c2.line_search_type = LineSearchType::MERIT;
+    c2.mu_init = 0.1;
+    c2.mu_min = 1e-6;
+    c2.mu_linear_decrease_factor = 0.2; // Standard reduction
+    c2.barrier_tolerance_factor = 10.0;
+    results.push_back(run_test("Monotone + Merit", c2));
     
-    // 3. Mehrotra + Filter + IgnoreSingular (Fastest?)
+    // 3. Hybrid: Adaptive + Filter (Balanced)
     SolverConfig c3 = base;
-    c3.barrier_strategy = BarrierStrategy::MEHROTRA;
+    c3.barrier_strategy = BarrierStrategy::ADAPTIVE;
     c3.line_search_type = LineSearchType::FILTER;
-    c3.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR;
-    results.push_back(run_test("Mehrotra/Filter/Ignore", c3));
+    c3.mu_init = 0.1;
+    results.push_back(run_test("Adaptive + Filter", c3));
 
     // Print Table
     std::cout << "\n=========================================== BENCHMARK RESULTS (Avg of 100 Runs) ===========================================\n";

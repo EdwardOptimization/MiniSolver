@@ -1,12 +1,12 @@
 #pragma once
 #include <vector>
+#include <Eigen/Dense>
 #include "core/types.h"
 #include "core/solver_options.h" 
 #include "core/matrix_defs.h"
 
 namespace minisolver {
 
-    // Helper: Compute Barrier-Modified Q, R, q, r
     template<typename Knot>
     void compute_barrier_derivatives(Knot& kp, double mu) {
         MSVec<double, Knot::NC> sigma;
@@ -15,42 +15,21 @@ namespace minisolver {
         for(int i=0; i<Knot::NC; ++i) {
             double s_i = kp.s(i);
             double lam_i = kp.lam(i);
-            
             if(s_i < 1e-12) s_i = 1e-12; 
-
             sigma(i) = lam_i / s_i;
-            
             double r_prim_i = kp.g_val(i) + s_i;
             double r_cent_i = (s_i * lam_i) - mu;
-            
             grad_mod(i) = (1.0 / s_i) * (lam_i * r_prim_i - r_cent_i);
         }
 
-        // Sigma is diagonal. Efficient mult would be nice but MatOps abstracts it.
-        // For Eigen we can construct diagonal matrix. For abstract, we might need a helper.
-        // Let's assume SigmaMat type is available or use full matrix for generality if needed.
-        // Or better: update MatOps to handle diagonal scaling.
-        // For now, let's keep it Eigen-specific inside here if USE_EIGEN is on, 
-        // or rewrite using MatOps if we want pure abstraction.
-        // Given complexity, let's use MSMat and manual loops or MatOps helpers.
-        
-        // Abstract way:
-        // Q_bar = Q + C^T * diag(sigma) * C
-        // This is efficient.
-        
-        // Since we are refactoring for MSMat which IS Eigen::Matrix for now, we can use Eigen ops via alias.
-        // But to be truly generic, we should use MatOps.
-        
         #ifdef USE_EIGEN
         Eigen::DiagonalMatrix<double, Knot::NC> SigmaMat(sigma);
-        kp.Q_bar = kp.Q + kp.C.transpose() * SigmaMat * kp.C;
-        kp.R_bar = kp.R + kp.D.transpose() * SigmaMat * kp.D;
-        kp.H_bar = kp.H + kp.D.transpose() * SigmaMat * kp.C;
-        kp.q_bar = kp.q + kp.C.transpose() * grad_mod;
-        kp.r_bar = kp.r + kp.D.transpose() * grad_mod;
+        kp.Q_bar.noalias() = kp.Q + kp.C.transpose() * SigmaMat * kp.C;
+        kp.R_bar.noalias() = kp.R + kp.D.transpose() * SigmaMat * kp.D;
+        kp.H_bar.noalias() = kp.H + kp.D.transpose() * SigmaMat * kp.C;
+        kp.q_bar.noalias() = kp.q + kp.C.transpose() * grad_mod;
+        kp.r_bar.noalias() = kp.r + kp.D.transpose() * grad_mod;
         #else
-        // Generic implementation (slow but works for TinyMatrix)
-        // ...
         #endif
     }
 
@@ -58,14 +37,37 @@ namespace minisolver {
     void recover_dual_search_directions(Knot& kp, double mu) {
         MSVec<double, Knot::NC> r_prim = kp.g_val + kp.s;
         MSVec<double, Knot::NC> constraint_step = kp.C * kp.dx + kp.D * kp.du;
-
         kp.ds = -r_prim - constraint_step;
-
         for(int i=0; i<Knot::NC; ++i) {
             double s_i = kp.s(i);
             if(s_i < 1e-12) s_i = 1e-12;
             double r_cent_i = (s_i * kp.lam(i)) - mu;
             kp.dlam(i) = -(1.0 / s_i) * (r_cent_i + kp.lam(i) * kp.ds(i));
+        }
+    }
+
+    template<typename MatrixType>
+    bool fast_inverse(const MatrixType& A, MatrixType& A_inv) {
+        if constexpr (MatrixType::RowsAtCompileTime == 1) {
+            if (std::abs(A(0,0)) < 1e-9) return false;
+            A_inv(0,0) = 1.0 / A(0,0);
+            return true;
+        } 
+        else if constexpr (MatrixType::RowsAtCompileTime == 2) {
+            double det = A(0,0)*A(1,1) - A(0,1)*A(1,0);
+            if (std::abs(det) < 1e-9) return false;
+            double inv_det = 1.0 / det;
+            A_inv(0,0) =  A(1,1) * inv_det;
+            A_inv(0,1) = -A(0,1) * inv_det;
+            A_inv(1,0) = -A(1,0) * inv_det;
+            A_inv(1,1) =  A(0,0) * inv_det;
+            return true;
+        }
+        else {
+            Eigen::LLT<MatrixType> llt(A);
+            if (llt.info() != Eigen::Success) return false;
+            A_inv = llt.solve(MatrixType::Identity());
+            return true;
         }
     }
 
@@ -85,13 +87,30 @@ namespace minisolver {
         for(int k = N - 1; k >= 0; --k) {
             auto& kp = traj[k];
 
-            // Use MatOps::transpose? Or just .transpose() since MSMat is Eigen currently.
-            // Using MSMat directly.
-            MSMat<double, Knot::NX, 1> Qx = kp.q_bar + kp.A.transpose() * Vx;
-            MSMat<double, Knot::NU, 1> Qu = kp.r_bar + kp.B.transpose() * Vx;
-            MSMat<double, Knot::NX, Knot::NX> Qxx = kp.Q_bar + kp.A.transpose() * Vxx * kp.A;
-            MSMat<double, Knot::NU, Knot::NU> Quu = kp.R_bar + kp.B.transpose() * Vxx * kp.B;
-            MSMat<double, Knot::NU, Knot::NX> Qux = kp.H_bar + kp.B.transpose() * Vxx * kp.A;
+            // Optimized Expansion
+            MSMat<double, Knot::NX, Knot::NX> VxxA;
+            VxxA.noalias() = Vxx * kp.A;
+            
+            MSMat<double, Knot::NX, Knot::NU> VxxB;
+            VxxB.noalias() = Vxx * kp.B; 
+
+            // Calculate gradients Qx, Qu
+            MSMat<double, Knot::NX, 1> Qx = kp.q_bar;
+            Qx.noalias() += kp.A.transpose() * Vx;
+            
+            MSMat<double, Knot::NU, 1> Qu = kp.r_bar;
+            Qu.noalias() += kp.B.transpose() * Vx;
+            
+            // Calculate Hessians Qxx, Quu, Qux
+            // Initialize with Barrier terms, then add expansion terms
+            MSMat<double, Knot::NX, Knot::NX> Qxx = kp.Q_bar;
+            Qxx.noalias() += kp.A.transpose() * VxxA;
+            
+            MSMat<double, Knot::NU, Knot::NU> Quu = kp.R_bar;
+            Quu.noalias() += kp.B.transpose() * VxxB;
+            
+            MSMat<double, Knot::NU, Knot::NX> Qux = kp.H_bar;
+            Qux.noalias() += kp.B.transpose() * VxxA;
 
             if (strategy == InertiaStrategy::REGULARIZATION) {
                 for(int i=0; i<Knot::NU; ++i) Quu(i,i) += reg;
@@ -99,56 +118,56 @@ namespace minisolver {
                 for(int i=0; i<Knot::NU; ++i) Quu(i,i) += 1e-9;
             }
 
-            // Cholesky Solve using MatOps abstraction
-            bool success = false;
-            
-            if (strategy == InertiaStrategy::REGULARIZATION) {
-                // Try solving Quu * d = -Qu
-                // Using helper: cholesky_solve(A, b, x) -> A x = b
-                // d = -inv(Quu) * Qu -> Quu * d = -Qu
-                success = MatOps::cholesky_solve(Quu, -Qu, kp.d);
-                if (!success) return false;
-                
-                // Solve K: Quu * K = -Qux
-                // We need to solve for K column by column or use matrix solve.
-                // MatOps::cholesky_solve usually takes vector.
-                // Eigen LLT can solve matrix.
-                // Let's expose matrix solve in MatOps or iterate columns.
-                // For performance, matrix solve is better.
-                // Let's assume MSMat supports .solve() via wrapper if needed.
-                // Reverting to Eigen usage for now as per "framework only".
-                #ifdef USE_EIGEN
-                Eigen::LLT<MSMat<double, Knot::NU, Knot::NU>> llt(Quu);
-                if (llt.info() != Eigen::Success) return false;
-                kp.K = llt.solve(-Qux);
-                #endif
+            // Cholesky Solve
+            if (strategy == InertiaStrategy::REGULARIZATION && Knot::NU <= 2) {
+                MSMat<double, Knot::NU, Knot::NU> Quu_inv;
+                if (!fast_inverse(Quu, Quu_inv)) return false;
+                kp.d.noalias() = -Quu_inv * Qu;
+                kp.K.noalias() = -Quu_inv * Qux;
             } 
-            else if (strategy == InertiaStrategy::IGNORE_SINGULAR) {
-                // ... (Logic for Ignore Singular - needs Eigen specific access for now)
-                #ifdef USE_EIGEN
+            else {
                 Eigen::LLT<MSMat<double, Knot::NU, Knot::NU>> llt(Quu);
                 if(llt.info() == Eigen::NumericalIssue) {
-                    bool fixed = false;
-                    for(int i=0; i<Knot::NU; ++i) {
-                        if (Quu(i,i) < 1e-4) { 
-                            Quu(i,i) += 1e9; 
-                            fixed = true;
+                    if (strategy == InertiaStrategy::REGULARIZATION) return false;
+                    if (strategy == InertiaStrategy::IGNORE_SINGULAR) {
+                        bool fixed = false;
+                        for(int i=0; i<Knot::NU; ++i) {
+                            if (Quu(i,i) < 1e-4) { 
+                                Quu(i,i) += 1e9; 
+                                fixed = true;
+                            }
                         }
+                        if (fixed) llt.compute(Quu);
+                        if(llt.info() == Eigen::NumericalIssue) return false; 
                     }
-                    if (fixed) llt.compute(Quu);
-                    if(llt.info() == Eigen::NumericalIssue) return false; 
                 }
                 kp.d = llt.solve(-Qu);
                 kp.K = llt.solve(-Qux);
-                #endif
-            }
-            else {
-                // Saturation ...
-                return false; // Not implemented fully abstract yet
             }
 
-            Vx = Qx + kp.K.transpose() * Quu * kp.d + kp.K.transpose() * Qu + Qux.transpose() * kp.d;
-            Vxx = Qxx + kp.K.transpose() * Quu * kp.K + kp.K.transpose() * Qux + Qux.transpose() * kp.K;
+            // Update Value Function
+            // Vx = Qx + K' (Quu d + Qu) + K' Qux' d + Qux' d
+            // Simplified: Vx = Qx + Qux' d + Qux' K x ? No.
+            // Simplified: Vx = Qx + Qux^T * d + Vxx * ...
+            // Correct Simplified: Vx = Qx + Qux^T * d
+            // Correct Simplified: Vxx = Qxx + Qux^T * K
+            
+            // Re-use Qx memory for Vx? No, Vx needs to be propagated.
+            // But we can compute Vx directly.
+            Vx = Qx;
+            Vx.noalias() += Qux.transpose() * kp.d;
+
+            Vxx = Qxx;
+            Vxx.noalias() += Qux.transpose() * kp.K;
+            
+            // Symmetrize
+            // Vxx = 0.5 * (Vxx + Vxx.transpose()); 
+            // In high perf, maybe just copy upper to lower? Or trust symmetry?
+            // Trusting symmetry saves ops. But accumulated error might be an issue.
+            // Let's do it efficiently:
+            // Vxx.template triangularView<Eigen::Lower>() = Vxx.transpose();
+            // This copies upper to lower.
+            // For 4x4, full add + scale might be faster due to SIMD.
             Vxx = 0.5 * (Vxx + Vxx.transpose());
             
             for(int i=0; i<Knot::NX; ++i) Vxx(i,i) += reg;
@@ -158,9 +177,14 @@ namespace minisolver {
 
         for(int k=0; k < N; ++k) {
             auto& kp = traj[k];
-            kp.du = kp.K * kp.dx + kp.d;
+            kp.du.noalias() = kp.K * kp.dx + kp.d;
             MSVec<double, Knot::NX> defect = kp.f_resid - traj[k+1].x;
-            traj[k+1].dx = kp.A * kp.dx + kp.B * kp.du + defect;
+            // dx_next = A dx + B du + defect
+            // Use noalias
+            traj[k+1].dx.noalias() = kp.A * kp.dx;
+            traj[k+1].dx.noalias() += kp.B * kp.du;
+            traj[k+1].dx += defect;
+            
             recover_dual_search_directions(kp, mu);
         }
         recover_dual_search_directions(traj[N], mu);

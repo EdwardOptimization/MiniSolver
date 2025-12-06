@@ -10,8 +10,10 @@
 
 using namespace minisolver;
 
+// Template to accept any PDIPMSolver<Model, MAX_N>
+template<typename SolverType>
 void save_trajectory_csv(const std::string& filename, 
-                         const PDIPMSolver<CarModel>& solver, 
+                         const SolverType& solver, 
                          const std::vector<double>& dts,
                          double obs_x, double obs_y, double obs_rad) 
 {
@@ -24,8 +26,16 @@ void save_trajectory_csv(const std::string& filename,
     file << "t,x,y,theta,v,acc,steer,g_obs,obs_x,obs_y,obs_rad\n";
 
     double current_t = 0.0;
-    for(size_t k=0; k < solver.traj.size(); ++k) {
-        const auto& kp = solver.traj[k];
+    // Iterate only up to valid horizon N
+    const auto& traj = solver.get_traj();
+    
+    // Note: solver.N is the valid horizon length.
+    // We iterate from 0 to N.
+    // Since SolverType::MAX_N is static, we can't access runtime N easily if it's not public.
+    // solver.N is public.
+    
+    for(int k=0; k <= solver.N; ++k) {
+        const auto& kp = traj[k];
         if(k > 0 && k-1 < dts.size()) current_t += dts[k-1];
 
         file << current_t << ","
@@ -47,21 +57,24 @@ int main(int argc, char** argv) {
     config.integrator = IntegratorType::RK4_EXPLICIT; 
     config.default_dt = 0.1; 
 
-    config.barrier_strategy = BarrierStrategy::MONOTONE; 
+    config.barrier_strategy = BarrierStrategy::MEHROTRA; // More aggressive barrier update
     
     // [NEW] Advanced Features
     config.line_search_type = LineSearchType::FILTER;  
     config.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR; 
     config.enable_feasibility_restoration = true; 
     
-    config.mu_init = 0.1;
+    // Trigger Slack Reset more easily to escape bad initial guess
+    config.slack_reset_trigger = 0.1; 
+
+    config.mu_init = 100.0;
     config.mu_min = 1e-6;   
     config.mu_linear_decrease_factor = 0.2; 
-    config.reg_init = 1e-6; 
-    config.reg_min = 1e-9;
+    config.reg_init = 1e-4; 
+    config.reg_min = 1e-6; 
     config.tol_con = 1e-4;
     config.max_iters = 60;  
-    config.debug_mode = true; 
+    config.debug_mode = true; // Still useful for initial tuning, but verbose logging is cleaner
     config.verbose = true; // Use internal logging
 
     std::cout << ">> Initializing PDIPM Solver (N=" << N << ")...\n";
@@ -83,15 +96,17 @@ int main(int argc, char** argv) {
         if(k > 0) current_t += dts[k-1];
         double x_ref = current_t * 5.0; 
         double params[] = { 5.0, x_ref, 0.0, obs_x, obs_y, obs_rad };
-        if(k < N) solver.traj[k].u.setZero();
-        for(int i=0; i<6; ++i) solver.traj[k].p(i) = params[i];
+        
+        // Use get_traj()
+        if(k < N) solver.get_traj()[k].u.setZero();
+        for(int i=0; i<6; ++i) solver.get_traj()[k].p(i) = params[i];
     }
 
-    solver.traj[0].x.setZero(); 
+    solver.get_traj()[0].x.setZero(); 
     solver.rollout_dynamics();
 
     std::cout << ">> Solving (Cold Start)...\n";
-    solver.solve(); // Use the simplified high-level interface
+    solver.solve(); 
 
     save_trajectory_csv("trajectory.csv", solver, dts, obs_x, obs_y, obs_rad);
     return 0;
