@@ -1,5 +1,5 @@
 #pragma once
-namespace roboopt {
+namespace minisolver {
     enum class Backend {
         CPU_SERIAL,
         GPU_MPX, // Associative Scan

@@ -4,7 +4,7 @@
 #include <algorithm>
 #include "core/types.h"
 
-namespace roboopt {
+namespace minisolver {
 
 // Fraction-to-Boundary Rule for Interior Point Methods
 // Ensures that s > 0 and lam > 0 are maintained.

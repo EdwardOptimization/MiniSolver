@@ -1,8 +1,17 @@
 cmake_minimum_required(VERSION 3.10)
-project(RoboOpt LANGUAGES CXX)
+project(MiniSolver LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Optimization Flags (CRITICAL for Eigen performance)
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-O3 -march=native -ffast-math)
+endif()
 
 # --- Dependencies ---
 find_package(Eigen3 REQUIRED)
@@ -25,12 +34,12 @@ if(CUDA_FOUND)
     set_target_properties(gpu_backend PROPERTIES CUDA_STANDARD 14)
 
     # Main Executable
-    add_executable(RoboOptApp ${MAIN_SOURCES})
-    target_link_libraries(RoboOptApp PRIVATE gpu_backend)
+    add_executable(MiniSolverApp ${MAIN_SOURCES})
+    target_link_libraries(MiniSolverApp PRIVATE gpu_backend)
 else()
     message(WARNING ">> CUDA NOT Found. Compiling CPU-Only Version.")
     # Main Executable (No GPU link)
-    add_executable(RoboOptApp ${MAIN_SOURCES})
+    add_executable(MiniSolverApp ${MAIN_SOURCES})
 endif()
 # Benchmark Tool
 add_executable(benchmark_solver tools/benchmark_solver.cpp)

@@ -8,7 +8,7 @@
 #include "model/car_model.h"
 #include "solver/solver.h"
 
-using namespace roboopt;
+using namespace minisolver;
 
 void save_trajectory_csv(const std::string& filename, 
                          const PDIPMSolver<CarModel>& solver, 

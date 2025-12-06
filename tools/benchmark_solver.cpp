@@ -7,7 +7,7 @@
 #include "model/car_model.h"
 #include "solver/solver.h"
 
-using namespace roboopt;
+using namespace minisolver;
 
 struct BenchmarkResult {
     std::string name;

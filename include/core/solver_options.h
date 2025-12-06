@@ -1,6 +1,6 @@
 #pragma once
 
-namespace roboopt {
+namespace minisolver {
 
 enum class IntegratorType {
     EULER_EXPLICIT,

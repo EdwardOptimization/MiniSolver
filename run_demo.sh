@@ -10,7 +10,7 @@ make -j4
 cd ..
 
 echo ">> 2. Running Solver..."
-./build/RoboOptApp
+./build/MiniSolverApp
 
 echo ">> 3. Plotting Results..."
 python3 tools/plot_trajectory.py trajectory.csv

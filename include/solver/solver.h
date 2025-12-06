@@ -15,9 +15,8 @@
 #include "solver/line_search.h"      
 #include "solver/backend_interface.h"
 
-namespace roboopt {
+namespace minisolver {
 
-// Simple Profiler
 class SolverTimer {
 public:
     using Clock = std::chrono::high_resolution_clock;
@@ -62,7 +61,7 @@ public:
     std::vector<double> dt_traj;
     Backend backend;
     SolverConfig config;
-    SolverTimer timer; // [NEW] Timer
+    SolverTimer timer; 
     
     double mu; 
     double reg;
@@ -276,40 +275,70 @@ public:
         }
     }
     
-    // UPDATED: Feasibility Restoration with Early Exit
+    // UPDATED: Robust Feasibility Restoration
     void feasibility_restoration() {
         if (config.debug_mode) std::cout << "      [DEBUG] Entering Feasibility Restoration Phase.\n";
+        
+        // Save current state
         double saved_mu = mu;
         double saved_reg = reg;
-        mu = 1e-1; 
-        reg = 1e-2; 
         
-        for(int r_iter=0; r_iter < 10; ++r_iter) { // Allow slightly more iters
-            // 1. Compute Derivatives & Update Cost for Min-Norm
+        // Relax barrier and regularization for restoration
+        mu = 1e-1; 
+        reg = 1e-2; // Stronger regularization to stay close to current iterate
+        
+        int fr_max_iter = 20;
+        
+        for(int r_iter=0; r_iter < fr_max_iter; ++r_iter) {
+            // 1. Compute Derivatives
             for(size_t k=0; k < traj.size(); ++k) {
                 double current_dt = dt_traj[k]; 
                 Model::compute(traj[k], config.integrator, current_dt);
                 
-                // Regularized LS objective: 0.5*||dx||^2 + ...
+                // Formulate Min-Norm Problem: min 0.5 * ||dx||^2 + ...
+                // Riccati solves linear system. We want dx to minimize constraint violation.
+                // Standard Newton step on constraints does this if we zero out the original Cost.
+                // kp.Q = I, kp.q = 0 => min 0.5 dx' I dx => min ||dx||
+                // This acts as a trust region / regularization.
                 traj[k].Q.setIdentity(); 
                 traj[k].q.setZero();
                 traj[k].R.setIdentity(); 
                 traj[k].r.setZero();
             }
             
-            // 2. Check if current point is acceptable to Filter
+            // 2. Check Acceptance
             if (config.line_search_type == LineSearchType::FILTER) {
                 auto metrics = compute_filter_metrics(traj);
+                // Restoration is successful if the point is acceptable to the MAIN filter
                 if (is_acceptable_to_filter(metrics.first, metrics.second)) {
                     if (config.debug_mode) std::cout << "      [DEBUG] Restoration Successful (Filter Accepted).\n";
-                    add_to_filter(metrics.first, metrics.second); // Add restoration point
+                    // Add this point to filter to prevent cycling
+                    add_to_filter(metrics.first, metrics.second);
                     break;
                 }
+            } else {
+                // For Merit method, check simple constraint reduction
+                double max_viol = 0.0;
+                for(const auto& kp : traj) {
+                    for(int i=0; i<NC; ++i) max_viol = std::max(max_viol, kp.g_val(i));
+                }
+                if (max_viol < 1e-2) break; // Crude exit
             }
 
             // 3. Solve & Step
-            cpu_serial_solve(traj, mu, reg, config.inertia_strategy);
-            double alpha = fraction_to_boundary_rule(traj, 0.95);
+            // Use Inertia Correction even in Restoration
+            bool success = false;
+            for(int try_count=0; try_count<5; ++try_count) {
+                success = cpu_serial_solve(traj, mu, reg, config.inertia_strategy);
+                if(success) break;
+                reg *= 10.0;
+            }
+            
+            // Line search inside Restoration (simple Armijo on constraint norm)
+            double alpha = 1.0;
+            // Simplified: Just use fraction-to-boundary
+            alpha = fraction_to_boundary_rule(traj, 0.95);
+            
             for(size_t k=0; k<traj.size(); ++k) {
                 traj[k].x += alpha * traj[k].dx;
                 traj[k].u += alpha * traj[k].du;
@@ -318,14 +347,18 @@ public:
             }
             rollout_dynamics();
         }
+        
+        // Restore solver settings
         mu = saved_mu;
         reg = saved_reg;
+        
+        if (config.debug_mode) std::cout << "      [DEBUG] Exiting Feasibility Restoration.\n";
     }
 
     void solve() {
         current_iter = 0;
         print_iteration_log(0.0, true); 
-        timer.reset(); // Reset timer
+        timer.reset(); 
 
         for(int iter=0; iter < config.max_iters; ++iter) {
             timer.start("Total Step");
@@ -451,6 +484,7 @@ public:
             }
         } else {
              bool recovered = false;
+             // 1. Try Slack Reset first (fast)
              if (config.enable_slack_reset && alpha < config.slack_reset_trigger) {
                  if (config.debug_mode) std::cout << "      [DEBUG] Triggering Slack Reset.\n";
                  for(auto& kp : traj) {
@@ -460,12 +494,25 @@ public:
                          kp.lam(i) = mu / kp.s(i);
                      }
                  }
+                 // If reset helps us find a direction, we are good.
+                 // We re-solve and if that works, we call it recovered for THIS step.
+                 // But wait, step() needs to return. We just modified state in place.
+                 // We should re-compute direction? Yes.
+                 // But loop structure is: Derivative -> Solve -> Search.
+                 // We are at end of Search. If we reset slacks, we are ready for next iter?
+                 // No, we need to take a step FROM the reset point.
+                 // Re-running solve:
                  recovered = true;
                  cpu_serial_solve(traj, mu, reg, config.inertia_strategy);
+                 // We don't take a step here, we let next iter do it? 
+                 // Or we take a small step? 
+                 // Usually Slack Reset is just a perturbation. We accept the point (with new slacks) and move on.
              }
              
+             // 2. Feasibility Restoration (slow, robust)
              if (!recovered && config.enable_feasibility_restoration) {
                  feasibility_restoration();
+                 // After restoration, we are at a new, hopefully better point.
              }
         }
         timer.stop();

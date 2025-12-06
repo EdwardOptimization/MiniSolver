@@ -2,7 +2,7 @@
 #include <Eigen/Dense>
 #include "core/solver_options.h"
 
-namespace roboopt {
+namespace minisolver {
 
 template<typename T, int _NX, int _NU, int _NC, int _NP>
 struct KnotPoint {

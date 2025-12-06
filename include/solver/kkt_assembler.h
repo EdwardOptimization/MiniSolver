@@ -1,7 +1,7 @@
 #pragma once
 #include "core/types.h"
 
-namespace roboopt {
+namespace minisolver {
 // Simplification: In pure unconstrained DDP, "condensing" is calculating the
 // transition matrices for the Value function Hessian (P) and Gradient (p).
 // For MPX/PCR, we map the Riccati step into an affine operator.

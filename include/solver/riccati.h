@@ -4,7 +4,7 @@
 #include "core/types.h"
 #include "core/solver_options.h" // Need InertiaStrategy enum
 
-namespace roboopt {
+namespace minisolver {
 
     // Helper: Compute Barrier-Modified Q, R, q, r
     template<typename Knot>

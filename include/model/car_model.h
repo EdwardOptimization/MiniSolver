@@ -4,7 +4,7 @@
 #include <cmath>
 #include <Eigen/Dense>
 
-namespace roboopt {
+namespace minisolver {
 
 struct CarModel {
     static const int NX=4; 

@@ -6,7 +6,7 @@
     #define HOST_DEVICE
 #endif
 
-namespace roboopt {
+namespace minisolver {
 
 // Represents the affine operator for the backward pass:
 // P_k = A_op * P_{k+1} + b_op
