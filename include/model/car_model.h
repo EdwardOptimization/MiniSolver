@@ -1,6 +1,7 @@
 #pragma once
 #include "core/types.h"
 #include <cmath>
+#include <Eigen/Dense>
 
 namespace roboopt {
 
@@ -22,8 +23,231 @@ struct CarModel {
     // p[4] = obs_y
     // p[5] = obs_weight
 
+    // --- Continuous Dynamics: x_dot = f(x, u) ---
     template<typename T>
-    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp) {
+    static Eigen::Matrix<T, NX, 1> dynamics_continuous(
+        const Eigen::Matrix<T, NX, 1>& x,
+        const Eigen::Matrix<T, NU, 1>& u) 
+    {
+        T th = x(2);
+        T v  = x(3);
+        T acc = u(0);
+        T delta = u(1);
+        T L = 2.5; // Wheelbase
+
+        Eigen::Matrix<T, NX, 1> xdot;
+        xdot(0) = v * cos(th);
+        xdot(1) = v * sin(th);
+        xdot(2) = (v / L) * tan(delta);
+        xdot(3) = acc;
+
+        return xdot;
+    }
+
+    // --- Integrator ---
+    template<typename T>
+    static Eigen::Matrix<T, NX, 1> integrate(
+        const Eigen::Matrix<T, NX, 1>& x,
+        const Eigen::Matrix<T, NU, 1>& u,
+        double dt,
+        IntegratorType type)
+    {
+        switch(type) {
+            case IntegratorType::EULER_EXPLICIT:
+                return x + dynamics_continuous(x, u) * dt;
+
+            case IntegratorType::RK2_EXPLICIT: {
+                // Heun's Method (Explicit Trapezoidal)
+                auto k1 = dynamics_continuous(x, u);
+                auto k2 = dynamics_continuous<T>(x + k1 * dt, u);
+                return x + (k1 + k2) * 0.5 * dt;
+            }
+
+            case IntegratorType::RK4_EXPLICIT: {
+                auto k1 = dynamics_continuous(x, u);
+                auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u);
+                auto k3 = dynamics_continuous<T>(x + k2 * (0.5 * dt), u);
+                auto k4 = dynamics_continuous<T>(x + k3 * dt, u);
+                return x + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
+            }
+
+            case IntegratorType::EULER_IMPLICIT: {
+                // x_{k+1} = x_k + dt * f(x_{k+1}, u)
+                // Solve R(z) = z - x_k - dt * f(z, u) = 0
+                return solve_implicit_step(x, u, dt, [](const Eigen::Matrix<T, NX, 1>& z, const Eigen::Matrix<T, NU, 1>& u_in) {
+                    return dynamics_continuous(z, u_in);
+                });
+            }
+
+            case IntegratorType::RK2_IMPLICIT: {
+                // Implicit Midpoint (Gauss-Legendre 2)
+                // x_{k+1} = x_k + dt * f( (x_k + x_{k+1})/2, u )
+                // Solve R(z) = z - x_k - dt * f( (x_k + z)/2, u ) = 0
+                return solve_implicit_step(x, u, dt, [x](const Eigen::Matrix<T, NX, 1>& z, const Eigen::Matrix<T, NU, 1>& u_in) {
+                    return dynamics_continuous<T>((x + z) * 0.5, u_in);
+                });
+            }
+
+            case IntegratorType::RK4_IMPLICIT: {
+                // Gauss-Legendre 4 (Two-stage IRK)
+                // This requires solving for two internal stages (k1, k2) of size NX each.
+                // 2*NX nonlinear system.
+                // For demonstration, we approximate or fallback to RK4 Explicit if too complex to inline,
+                // BUT user requested it. Let's implement a simplified GL4 or rigorous one.
+                // Rigorous GL4 requires solving 2*NX system.
+                // To keep this "header-only" and simple without external nonlinear solvers,
+                // we will use a fixed-point iteration or simple Newton for the stages.
+                // However, given the code structure, implementing a robust 2*NX Newton solver here is heavy.
+                // FALLBACK for now: Use RK4 Explicit but warn, OR implement a simplified version.
+                // Let's implement the FULL GL4 using a specialized Newton solver for the stages.
+                return solve_gl4_step(x, u, dt);
+            }
+
+            default:
+                return x + dynamics_continuous(x, u) * dt;
+        }
+    }
+
+    // --- Implicit Solver Helper (Newton-Raphson) ---
+    template<typename T, typename Func>
+    static Eigen::Matrix<T, NX, 1> solve_implicit_step(
+        const Eigen::Matrix<T, NX, 1>& x0,
+        const Eigen::Matrix<T, NU, 1>& u,
+        double dt,
+        Func flux_func)
+    {
+        // Guess z = x0 (Explicit Euler guess)
+        Eigen::Matrix<T, NX, 1> z = x0 + dynamics_continuous(x0, u) * dt;
+        
+        const int max_iter = 10;
+        const double tol = 1e-6;
+
+        for(int iter=0; iter<max_iter; ++iter) {
+            // Residual: R(z) = z - x0 - dt * flux(z)
+            // Jacobian: J = I - dt * d(flux)/dz
+            // Update: z = z - J^{-1} * R
+            
+            // 1. Evaluate Residual
+            Eigen::Matrix<T, NX, 1> f_val = flux_func(z, u);
+            Eigen::Matrix<T, NX, 1> R = z - x0 - f_val * dt;
+
+            if(R.norm() < tol) break;
+
+            // 2. Compute Jacobian via Finite Difference
+            Eigen::Matrix<T, NX, NX> J;
+            double eps = 1e-7;
+            for(int i=0; i<NX; ++i) {
+                Eigen::Matrix<T, NX, 1> z_p = z;
+                z_p(i) += eps;
+                Eigen::Matrix<T, NX, 1> f_p = flux_func(z_p, u);
+                // df/dz approx
+                Eigen::Matrix<T, NX, 1> df = (f_p - f_val) / eps;
+                // dR/dz col
+                J.col(i) = Eigen::Matrix<T, NX, 1>::Unit(i) - df * dt;
+            }
+
+            // 3. Update
+            z = z - J.inverse() * R;
+        }
+        return z;
+    }
+
+    // --- Gauss-Legendre 4 Solver ---
+    template<typename T>
+    static Eigen::Matrix<T, NX, 1> solve_gl4_step(
+        const Eigen::Matrix<T, NX, 1>& x0,
+        const Eigen::Matrix<T, NU, 1>& u,
+        double dt)
+    {
+        // Constants
+        const double sqrt3 = 1.73205080757;
+        // c1 = 1/2 - sqrt3/6, c2 = 1/2 + sqrt3/6
+        // A matrix for RK: 
+        // a11 = 1/4, a12 = 1/4 - sqrt3/6
+        // a21 = 1/4 + sqrt3/6, a22 = 1/4
+        // b1 = 1/2, b2 = 1/2
+        
+        const double a11 = 0.25;
+        const double a12 = 0.25 - sqrt3/6.0;
+        const double a21 = 0.25 + sqrt3/6.0;
+        const double a22 = 0.25;
+
+        // Variables: K = [k1; k2] (Size 2*NX)
+        // Initial guess: f(x0, u) for both
+        Eigen::Matrix<T, NX, 1> f0 = dynamics_continuous(x0, u);
+        Eigen::Matrix<T, NX, 1> k1 = f0;
+        Eigen::Matrix<T, NX, 1> k2 = f0;
+
+        const int max_iter = 10;
+        const double tol = 1e-6;
+
+        for(int iter=0; iter<max_iter; ++iter) {
+            // Calculate states at stages
+            // Y1 = x0 + dt * (a11*k1 + a12*k2)
+            // Y2 = x0 + dt * (a21*k1 + a22*k2)
+            Eigen::Matrix<T, NX, 1> Y1 = x0 + dt * (a11 * k1 + a12 * k2);
+            Eigen::Matrix<T, NX, 1> Y2 = x0 + dt * (a21 * k1 + a22 * k2);
+
+            // Function evaluations
+            Eigen::Matrix<T, NX, 1> f1 = dynamics_continuous(Y1, u);
+            Eigen::Matrix<T, NX, 1> f2 = dynamics_continuous(Y2, u);
+
+            // Residuals
+            Eigen::Matrix<T, NX, 1> R1 = k1 - f1;
+            Eigen::Matrix<T, NX, 1> R2 = k2 - f2;
+
+            double err = R1.norm() + R2.norm();
+            if(err < tol) break;
+
+            // Jacobian J of the system R(K) = 0 w.r.t K
+            // R1 = k1 - f(Y1(k1, k2))
+            // dR1/dk1 = I - df/dY * dY1/dk1 = I - df/dY * (dt * a11)
+            // dR1/dk2 =   - df/dY * dY1/dk2 =   - df/dY * (dt * a12)
+            // etc.
+            // We need Jacobian of f at Y1 and Y2.
+            // Let's use FD for df/dY
+            Eigen::Matrix<T, NX, NX> J_Y1 = finite_diff_jacobian(Y1, u);
+            Eigen::Matrix<T, NX, NX> J_Y2 = finite_diff_jacobian(Y2, u);
+
+            // Construct 2*NX x 2*NX system
+            Eigen::Matrix<T, 2*NX, 2*NX> BigJ;
+            Eigen::Matrix<T, NX, NX> I = Eigen::Matrix<T, NX, NX>::Identity();
+
+            BigJ.template block<NX, NX>(0, 0)  = I - J_Y1 * (dt * a11);
+            BigJ.template block<NX, NX>(0, NX) =   - J_Y1 * (dt * a12);
+            BigJ.template block<NX, NX>(NX, 0) =   - J_Y2 * (dt * a21);
+            BigJ.template block<NX, NX>(NX, NX)= I - J_Y2 * (dt * a22);
+
+            Eigen::Matrix<T, 2*NX, 1> BigR;
+            BigR << R1, R2;
+
+            Eigen::Matrix<T, 2*NX, 1> DeltaK = BigJ.inverse() * BigR;
+            
+            k1 -= DeltaK.template head<NX>();
+            k2 -= DeltaK.template tail<NX>();
+        }
+
+        // Final update: x_{n+1} = x_n + dt/2 * (k1 + k2)
+        return x0 + 0.5 * dt * (k1 + k2);
+    }
+
+    // Helper for Jacobian
+    template<typename T>
+    static Eigen::Matrix<T, NX, NX> finite_diff_jacobian(const Eigen::Matrix<T, NX, 1>& x, const Eigen::Matrix<T, NU, 1>& u) {
+        Eigen::Matrix<T, NX, NX> J;
+        double eps = 1e-7;
+        Eigen::Matrix<T, NX, 1> f0 = dynamics_continuous(x, u);
+        for(int i=0; i<NX; ++i) {
+            Eigen::Matrix<T, NX, 1> xp = x;
+            xp(i) += eps;
+            J.col(i) = (dynamics_continuous(xp, u) - f0) / eps;
+        }
+        return J;
+    }
+
+    // --- Compute with Integrator Selection ---
+    template<typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt) {
         // --- 1. Unpack Variables ---
         T px = kp.x(0);
         T py = kp.x(1);
@@ -33,41 +257,32 @@ struct CarModel {
         T acc = kp.u(0);
         T delta = kp.u(1);
 
-        T dt = 0.1;
-        T L  = 2.5; // Wheelbase
+        // --- 2. Dynamics & Derivatives (Finite Difference) ---
+        // Explicitly calculate next state based on selected integrator
+        Eigen::Matrix<T, NX, 1> x_next = integrate(kp.x, kp.u, dt, type);
+        
+        // f_resid stores the PREDICTED next state (f(x,u))
+        kp.f_resid = x_next;
 
-        // --- 2. Dynamics & Derivatives (Kinematic Bicycle) ---
-        // f(x,u) = [x + v*cos(th)*dt, y + v*sin(th)*dt, th + v/L*tan(delta)*dt, v + acc*dt]
-        // Note: The solver expects Linearized Dynamics: x_{k+1} = A x_k + B u_k + f_resid
-        // So f_resid = f(x_linear, u_linear) - A x_linear - B u_linear roughly,
-        // OR standardly: f_resid = f(x,u). The solver usually does A dx + B du + f(x,u) - x_{k+1} = 0.
-        // Let's assume standard DDP convention:
-        // A = df/dx, B = df/du at the current linearization point.
-        // f_resid = f(current_x, current_u) - x_current (Wait, usually f_resid is the gap to the NEXT state in shooting)
-        // Let's stick to: A, B are Jacobians. f_resid is the explicit next state f(x,u).
-        // (The solver will compute defect d = f_resid - x_next)
+        // Compute A = df/dx, B = df/du using Finite Difference
+        // This makes it work for ANY integrator (implicit or explicit)
+        T eps = 1e-6;
 
-        T c_th = cos(th);
-        T s_th = sin(th);
-        T tan_d = tan(delta);
-        T sec2_d = 1.0 / (cos(delta) * cos(delta));
+        // A Matrix
+        for(int i=0; i<NX; ++i) {
+            Eigen::Matrix<T, NX, 1> x_p = kp.x;
+            x_p(i) += eps;
+            Eigen::Matrix<T, NX, 1> x_next_p = integrate(x_p, kp.u, dt, type);
+            kp.A.col(i) = (x_next_p - x_next) / eps;
+        }
 
-        // Next State
-        kp.f_resid(0) = px + v * c_th * dt;
-        kp.f_resid(1) = py + v * s_th * dt;
-        kp.f_resid(2) = th + (v / L) * tan_d * dt;
-        kp.f_resid(3) = v + acc * dt;
-
-        // A Matrix (df/dx)
-        kp.A.setIdentity();
-        kp.A(0, 2) = -v * s_th * dt; kp.A(0, 3) = c_th * dt;
-        kp.A(1, 2) =  v * c_th * dt; kp.A(1, 3) = s_th * dt;
-        kp.A(2, 3) = (tan_d / L) * dt;
-
-        // B Matrix (df/du)
-        kp.B.setZero();
-        kp.B(2, 1) = (v / L) * sec2_d * dt;
-        kp.B(3, 0) = dt;
+        // B Matrix
+        for(int i=0; i<NU; ++i) {
+            Eigen::Matrix<T, NU, 1> u_p = kp.u;
+            u_p(i) += eps;
+            Eigen::Matrix<T, NX, 1> x_next_p = integrate(kp.x, u_p, dt, type);
+            kp.B.col(i) = (x_next_p - x_next) / eps;
+        }
 
         // --- 3. Costs (Quadratic Approximation) ---
         T v_target = kp.p(0);
@@ -77,8 +292,6 @@ struct CarModel {
         T obs_y    = kp.p(4);
         T obs_w    = kp.p(5);
 
-        // State Cost: W_x * (x - x_ref)^2 + ...
-        // We accumulate into Q, q.
         // Reset Cost
         kp.Q.setZero(); kp.q.setZero();
         kp.R.setZero(); kp.r.setZero();
@@ -89,13 +302,9 @@ struct CarModel {
         T w_vel = 1.0;
         T w_ang = 0.1;
 
-        // (px - x_ref)^2
         kp.Q(0,0) += w_pos; kp.q(0) += w_pos * (px - x_ref);
-        // (py - y_ref)^2
         kp.Q(1,1) += w_pos; kp.q(1) += w_pos * (py - y_ref);
-        // th^2 (penalize heading deviation from 0)
         kp.Q(2,2) += w_ang; kp.q(2) += w_ang * th;
-        // (v - v_target)^2
         kp.Q(3,3) += w_vel; kp.q(3) += w_vel * (v - v_target);
 
         // 3.2 Control Cost
@@ -104,10 +313,7 @@ struct CarModel {
         kp.R(0,0) += w_acc;   kp.r(0) += w_acc * acc;
         kp.R(1,1) += w_steer; kp.r(1) += w_steer * delta;
 
-        // 3.3 Obstacle Avoidance (Soft Cost -> Gaussian)
-        // Cost = W * exp( -((x-ox)^2 + (y-oy)^2) / sigma )
-        // Let's rely on Hard Constraints for Obstacles in advanced usage,
-        // but for now, keep the soft cost to help the solver not get stuck locally.
+        // 3.3 Obstacle Avoidance
         T dx = px - obs_x;
         T dy = py - obs_y;
         T dist2 = dx*dx + dy*dy;
@@ -115,50 +321,30 @@ struct CarModel {
         T exp_val = exp(-dist2 / sigma);
         T cost_obs = obs_w * exp_val;
 
-        // Gradient of Obstacle Cost
-        // dC/dx = cost_obs * (-2*dx/sigma)
         T grad_factor = cost_obs * (-2.0 / sigma);
         T g_ox = grad_factor * dx;
         T g_oy = grad_factor * dy;
 
         kp.q(0) += g_ox;
         kp.q(1) += g_oy;
-
-        // Hessian of Obstacle Cost (Gauss-Newton approx or Full Hessian)
-        // Approximate: Q += grad * grad^T (Positive Semi-Definite)
-        // Or analytical. Let's do simple diagonal approx to keep it convex-ish locally
-        // Or just trust the soft cost Gradient to push it away.
-        // Let's add a small Hessian term to stabilize
-        kp.Q(0,0) += abs(g_ox); // Heuristic
+        kp.Q(0,0) += abs(g_ox); 
         kp.Q(1,1) += abs(g_oy);
 
         // --- 4. Constraints (Inequality) ---
-        // g(x,u) <= 0
-        // 0: acc - 3.0 <= 0
-        // 1: -acc - 3.0 <= 0  => acc >= -3.0
-        // 2: delta - 0.5 <= 0
-        // 3: -delta - 0.5 <= 0
-
         T max_acc = 3.0;
         T max_steer = 0.5;
 
-        // Values
         kp.g_val(0) = acc - max_acc;
         kp.g_val(1) = -acc - max_acc;
         kp.g_val(2) = delta - max_steer;
         kp.g_val(3) = -delta - max_steer;
 
-        // Jacobians (C = dg/dx, D = dg/du)
         kp.C.setZero();
         kp.D.setZero();
 
-        // 0: d/du0 = 1
         kp.D(0, 0) = 1.0;
-        // 1: d/du0 = -1
         kp.D(1, 0) = -1.0;
-        // 2: d/du1 = 1
         kp.D(2, 1) = 1.0;
-        // 3: d/du1 = -1
         kp.D(3, 1) = -1.0;
     }
 };

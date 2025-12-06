@@ -3,6 +3,15 @@
 
 namespace roboopt {
 
+enum class IntegratorType {
+    EULER_EXPLICIT,
+    EULER_IMPLICIT,
+    RK2_EXPLICIT, // Heun's method or Midpoint explicit
+    RK2_IMPLICIT, // Gauss-Legendre 2 (Implicit Midpoint)
+    RK4_EXPLICIT, // Classic RK4
+    RK4_IMPLICIT  // Gauss-Legendre 4
+};
+
 template<typename T, int _NX, int _NU, int _NC, int _NP>
 struct KnotPoint {
     // === EXPOSE TEMPLATE ARGUMENTS AS CONSTANTS ===
@@ -23,6 +32,7 @@ struct KnotPoint {
 
     // --- MODEL DATA (Derivatives) ---
     // Dynamics: x_{k+1} = A x_k + B u_k + f_resid
+    // Here f_resid stores the predicted next state f(x,u)
     Eigen::Matrix<T, NX, NX> A;
     Eigen::Matrix<T, NX, NU> B;
     Eigen::Matrix<T, NX, 1> f_resid;

@@ -67,18 +67,38 @@ int main(int argc, char** argv) {
     int N = 60;
     Backend mode = Backend::CPU_SERIAL; 
 
-    std::cout << ">> Initializing Primal-Dual Interior Point Solver (N=" << N << ")...\n";
-    PDIPMSolver<CarModel> solver(N, mode);
+    // --- Configuration ---
+    SolverConfig config;
+    config.default_dt = 0.1; // Default
+    config.integrator = IntegratorType::RK4_IMPLICIT;
+    
+    std::string int_name = "RK4 (Implicit Gauss-Legendre)";
+
+    std::cout << ">> Initializing PDIPM Solver (N=" << N << ") with " << int_name << "...\n";
+    PDIPMSolver<CarModel> solver(N, mode, config);
+
+    // --- Dynamic DT Setup ---
+    // Example: Fine resolution at start (0.05s), Coarse at end (0.2s)
+    std::vector<double> dts(N);
+    for(int k=0; k<N; ++k) {
+        if(k < 20) dts[k] = 0.05; // First 20 steps: 0.05s (Total 1.0s)
+        else       dts[k] = 0.2;  // Next 40 steps:  0.2s  (Total 8.0s) -> Total T = 9.0s
+    }
+    solver.set_dt(dts);
+    std::cout << ">> Variable DT Configured: First 20 steps @ 0.05s, Remaining @ 0.2s.\n";
 
     // --- Scenario Definition ---
     double obs_x = 12.0;
     double obs_y = 0.0;
-    double obs_weight = 200.0; // Lower weight than before, relying on dynamics and cost balance
+    double obs_weight = 200.0;
 
     // Initialize Trajectory
+    double current_t = 0.0;
     for(int k=0; k<=N; ++k) {
-        double t = k * 0.1;
-        double x_ref = t * 5.0; 
+        // Accumulate time for reference generation
+        if(k > 0) current_t += dts[k-1];
+
+        double x_ref = current_t * 5.0; 
         double y_ref = 0.0;
         double v_target = 5.0;
 
@@ -107,11 +127,7 @@ int main(int argc, char** argv) {
         // Optional: Print progress
         double max_constraint_viol = 0.0;
         for(const auto& kp : solver.traj) {
-            // Check violation: g(x,u) <= 0
-            // Since we use slack s, check primal residual: g + s = 0
             for(int i=0; i<CarModel::NC; ++i) {
-                // If s > 0, then g = -s < 0 (Satisfied)
-                // Real violation is if g > 0.
                 if(kp.g_val(i) > max_constraint_viol) max_constraint_viol = kp.g_val(i);
             }
         }

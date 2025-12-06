@@ -9,6 +9,14 @@
 
 namespace roboopt {
 
+struct SolverConfig {
+    IntegratorType integrator = IntegratorType::EULER_EXPLICIT;
+    double default_dt = 0.1; // Default if vector not set
+    double mu_init = 0.1;
+    int max_iters = 20;
+    bool verbose = true;
+};
+
 template<typename Model>
 class PDIPMSolver {
 public:
@@ -20,11 +28,16 @@ public:
     using Knot = KnotPoint<double, NX, NU, NC, NP>;
 
     std::vector<Knot> traj;
+    std::vector<double> dt_traj; // Vector of dt per step
     Backend backend;
+    SolverConfig config;
     double mu; // Barrier Parameter
 
-    PDIPMSolver(int N, Backend b) : backend(b), mu(0.1) {
+    PDIPMSolver(int N, Backend b, SolverConfig conf = SolverConfig()) 
+        : backend(b), config(conf), mu(conf.mu_init) {
         traj.resize(N + 1);
+        dt_traj.resize(N, conf.default_dt); // Initialize with default dt
+        
         // Initialize slacks/duals strictly positive
         for(auto& kp : traj) kp.initialize_defaults();
     }
@@ -33,6 +46,20 @@ public:
         for(auto& k : traj) {
             for(int i=0; i<NP; ++i) k.p(i) = p[i];
         }
+    }
+
+    // Set dynamic dt profile
+    void set_dt(const std::vector<double>& dts) {
+        if(dts.size() != dt_traj.size()) {
+            std::cerr << "Warning: DT vector size mismatch. Expected " << dt_traj.size() << "\n";
+            return;
+        }
+        dt_traj = dts;
+    }
+    
+    // Set constant dt
+    void set_dt(double dt) {
+        std::fill(dt_traj.begin(), dt_traj.end(), dt);
     }
 
     // --- Line Search (Fraction-to-Boundary) ---
@@ -60,7 +87,14 @@ public:
 
     void step() {
         // 1. Compute Derivatives & Residuals at current point
-        for(auto& kp : traj) Model::compute(kp);
+        //    Pass specific dt for each knot point
+        for(size_t k=0; k < traj.size(); ++k) {
+            // Last point doesn't really have a dt for dynamics, but compute() might use it for costs?
+            // Usually compute() calculates derivatives for x_{k+1} = f(x_k, u_k).
+            // So we use dt_traj[k] for k < N. For k=N, dt is irrelevant or 0.
+            double current_dt = (k < dt_traj.size()) ? dt_traj[k] : 0.0;
+            Model::compute(traj[k], config.integrator, current_dt);
+        }
 
         // 2. Update Barrier Parameter (Simple Strategy)
         // Average duality gap
@@ -81,8 +115,6 @@ public:
         }
 
         // 3. Solve Newton Step (Modified Riccati)
-        // Note: For GPU support, we would pass 'mu' to the GPU solver logic too.
-        // Currently adapting CPU only as requested for the logic rewrite.
         cpu_serial_solve(traj, mu);
 
         // 4. Line Search
@@ -102,11 +134,7 @@ public:
             kp.lam += alpha * kp.dlam;
         }
 
-        // 6. Simulate Dynamics (Shooting / Rollout) to ensure physical consistency
-        // In full multiple-shooting, we would treat 'x' as decision variables.
-        // Here we do a single shooting rollout to close the dynamic gaps, 
-        // effectively projecting x onto the manifold for the next linearization.
-        // (Optional, but good for DDP stability)
+        // 6. Simulate Dynamics (Rollout) to ensure physical consistency
         rollout_dynamics();
     }
 
@@ -114,33 +142,9 @@ public:
         // Start from x0
         // kp.x is updated by dynamics, kp.u is kept from the update
         for(size_t k=0; k<traj.size()-1; ++k) {
-            double dt = 0.1; 
-            // We need to re-evaluate f(x,u) for the rollout.
-            // Simplified: Use the Model logic manually or call a helper.
-            // Since Model::compute computes derivatives, let's just do a simple integration 
-            // using the same physics as CarModel.
-            // Ideally, Model should have a `integrate` static method.
-            // I will manually integrate here matching CarModel to keep it simple.
-            
-            // Unpack
-            double px = traj[k].x(0);
-            double py = traj[k].x(1);
-            double th = traj[k].x(2);
-            double v  = traj[k].x(3);
-            double acc = traj[k].u(0);
-            double st  = traj[k].u(1);
-            double L = 2.5;
-
-            double nx = px + v * cos(th) * dt;
-            double ny = py + v * sin(th) * dt;
-            double nth = th + (v/L) * tan(st) * dt;
-            double nv = v + acc * dt;
-
-            // Set next state
-            traj[k+1].x(0) = nx;
-            traj[k+1].x(1) = ny;
-            traj[k+1].x(2) = nth;
-            traj[k+1].x(3) = nv;
+            // Use the Model's integrator to maintain consistency
+            double current_dt = dt_traj[k];
+            traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, current_dt, config.integrator);
         }
     }
 };
