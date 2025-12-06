@@ -1,8 +1,8 @@
 #pragma once
 #include "core/types.h"
 #include "core/solver_options.h"
+#include "core/matrix_defs.h"
 #include <cmath>
-#include <Eigen/Dense>
 
 namespace minisolver {
 
@@ -14,13 +14,13 @@ struct CarModel {
 
     // --- Continuous Dynamics ---
     template<typename T>
-    static Eigen::Matrix<T, NX, 1> dynamics_continuous(
-        const Eigen::Matrix<T, NX, 1>& x,
-        const Eigen::Matrix<T, NU, 1>& u) 
+    static MSVec<T, NX> dynamics_continuous(
+        const MSVec<T, NX>& x,
+        const MSVec<T, NU>& u) 
     {
         T x2=x(2); T x3=x(3);
         T u0=u(0); T u1=u(1);
-        Eigen::Matrix<T, NX, 1> xdot;
+        MSVec<T, NX> xdot;
         xdot(0) = x3 * cos(x2);
         xdot(1) = x3 * sin(x2);
         xdot(2) = (x3 / 2.5) * tan(u1);
@@ -30,9 +30,9 @@ struct CarModel {
 
     // --- Integrator Interface ---
     template<typename T>
-    static Eigen::Matrix<T, NX, 1> integrate(
-        const Eigen::Matrix<T, NX, 1>& x,
-        const Eigen::Matrix<T, NU, 1>& u,
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x,
+        const MSVec<T, NU>& u,
         double dt,
         IntegratorType type)
     {

@@ -66,7 +66,9 @@ int main(int argc, char** argv) {
 
     std::cout << ">> Initializing PDIPM Solver (N=" << N << ")...\n";
     std::cout << ">> Features: Filter LS, Inertia(Ignore), Feasibility Restoration\n";
-    PDIPMSolver<CarModel> solver(N, mode, config);
+    
+    // Instantiate with MAX_N = 100
+    PDIPMSolver<CarModel, 100> solver(N, mode, config);
 
     std::vector<double> dts(N);
     for(int k=0; k<N; ++k) dts[k] = (k < 20) ? 0.05 : 0.2;

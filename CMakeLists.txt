@@ -13,8 +13,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-O3 -march=native -ffast-math)
 endif()
 
+# Matrix Backend Option
+option(USE_EIGEN "Use Eigen3 backend" ON)
+
+if(USE_EIGEN)
+    add_definitions(-DUSE_EIGEN)
+    find_package(Eigen3 REQUIRED)
+    include_directories(${EIGEN3_INCLUDE_DIR})
+else()
+    # Add logic for custom matrix lib here
+    message(STATUS "Using Custom Matrix Backend")
+endif()
+
 # --- Dependencies ---
-find_package(Eigen3 REQUIRED)
+# find_package(Eigen3 REQUIRED) -> Moved up
 find_package(CUDA QUIET)
 
 include_directories(include)

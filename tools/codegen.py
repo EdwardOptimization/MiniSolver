@@ -70,12 +70,11 @@ def generate_header():
     D_expr = g_expr.jacobian(u)
 
     # --- 7. Generate C++ Code ---
-    # Added total_cost to CSE
     replacements, reduced = sp.cse([
         x_next, A_expr, B_expr,
         q_grad, r_grad, Q, R, H,
         g_expr, C_expr, D_expr,
-        total_cost # Last element
+        total_cost 
     ])
 
     path = "include/model/car_model.h"
@@ -85,8 +84,8 @@ def generate_header():
         file.write(f"""#pragma once
 #include "core/types.h"
 #include "core/solver_options.h"
+#include "core/matrix_defs.h"
 #include <cmath>
-#include <Eigen/Dense>
 
 namespace minisolver {{
 
@@ -98,13 +97,13 @@ struct CarModel {{
 
     // --- Continuous Dynamics ---
     template<typename T>
-    static Eigen::Matrix<T, NX, 1> dynamics_continuous(
-        const Eigen::Matrix<T, NX, 1>& x,
-        const Eigen::Matrix<T, NU, 1>& u) 
+    static MSVec<T, NX> dynamics_continuous(
+        const MSVec<T, NX>& x,
+        const MSVec<T, NU>& u) 
     {{
         T x2=x(2); T x3=x(3);
         T u0=u(0); T u1=u(1);
-        Eigen::Matrix<T, NX, 1> xdot;
+        MSVec<T, NX> xdot;
         xdot(0) = x3 * cos(x2);
         xdot(1) = x3 * sin(x2);
         xdot(2) = (x3 / 2.5) * tan(u1);
@@ -114,9 +113,9 @@ struct CarModel {{
 
     // --- Integrator Interface ---
     template<typename T>
-    static Eigen::Matrix<T, NX, 1> integrate(
-        const Eigen::Matrix<T, NX, 1>& x,
-        const Eigen::Matrix<T, NU, 1>& u,
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x,
+        const MSVec<T, NU>& u,
         double dt,
         IntegratorType type)
     {{
@@ -176,4 +175,4 @@ struct CarModel {{
 
 if __name__ == "__main__":
     generate_header()
-    print("Generated High-Performance RK4 Auto-Diff Model with COST.")
+    print("Generated MSMat-compatible Model.")

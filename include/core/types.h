@@ -1,11 +1,16 @@
 #pragma once
-#include <Eigen/Dense>
 #include "core/solver_options.h"
+#include "core/matrix_defs.h" 
 
 namespace minisolver {
 
 template<typename T, int _NX, int _NU, int _NC, int _NP>
 struct KnotPoint {
+    // --- Eigen Memory Alignment (Only needed if backend is Eigen) ---
+    #ifdef USE_EIGEN
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    #endif
+
     // === EXPOSE TEMPLATE ARGUMENTS AS CONSTANTS ===
     static const int NX = _NX;
     static const int NU = _NU;
@@ -13,57 +18,57 @@ struct KnotPoint {
     static const int NP = _NP;
 
     // --- PRIMAL VARIABLES ---
-    Eigen::Matrix<T, NX, 1> x;
-    Eigen::Matrix<T, NU, 1> u;
-    Eigen::Matrix<T, NP, 1> p; // Parameters
+    MSVec<T, NX> x;
+    MSVec<T, NU> u;
+    MSVec<T, NP> p; // Parameters
 
     // --- DUAL VARIABLES & SLACKS ---
     // Inequality Constraints: g(x,u) + s = 0, s >= 0
-    Eigen::Matrix<T, NC, 1> s;   // Slack variables
-    Eigen::Matrix<T, NC, 1> lam; // Dual variables (Lambda)
+    MSVec<T, NC> s;   // Slack variables
+    MSVec<T, NC> lam; // Dual variables (Lambda)
 
     // --- MODEL DATA (Derivatives) ---
     // Dynamics: x_{k+1} = A x_k + B u_k + f_resid
     // Here f_resid stores the predicted next state f(x,u)
-    Eigen::Matrix<T, NX, NX> A;
-    Eigen::Matrix<T, NX, NU> B;
-    Eigen::Matrix<T, NX, 1> f_resid;
+    MSMat<T, NX, NX> A;
+    MSMat<T, NX, NU> B;
+    MSVec<T, NX> f_resid;
 
     // Constraints: C x + D u + g_val + s = 0
-    Eigen::Matrix<T, NC, NX> C;
-    Eigen::Matrix<T, NC, NU> D;
-    Eigen::Matrix<T, NC, 1>  g_val; // Value of g(x,u)
+    MSMat<T, NC, NX> C;
+    MSMat<T, NC, NU> D;
+    MSVec<T, NC>  g_val; // Value of g(x,u)
 
     // Cost: 0.5 x'Qx + x'Qu + ...
-    T cost; // <--- NEW: Scalar Cost Value
-    Eigen::Matrix<T, NX, 1> q;
-    Eigen::Matrix<T, NU, 1> r;
-    Eigen::Matrix<T, NX, NX> Q;
-    Eigen::Matrix<T, NU, NU> R;
-    Eigen::Matrix<T, NU, NX> H; // Cross term u'H x
+    T cost; // Scalar Cost Value
+    MSVec<T, NX> q;
+    MSVec<T, NU> r;
+    MSMat<T, NX, NX> Q;
+    MSMat<T, NU, NU> R;
+    MSMat<T, NU, NX> H; // Cross term u'H x
 
     // --- SOLVER DATA (Barrier Modified) ---
     // These are the "effective" Q, R, q, r used in the Riccati pass
     // They include the barrier terms from the Interior Point Method
-    Eigen::Matrix<T, NX, NX> Q_bar;
-    Eigen::Matrix<T, NU, NU> R_bar;
-    Eigen::Matrix<T, NU, NX> H_bar;
-    Eigen::Matrix<T, NX, 1>  q_bar;
-    Eigen::Matrix<T, NU, 1>  r_bar;
+    MSMat<T, NX, NX> Q_bar;
+    MSMat<T, NU, NU> R_bar;
+    MSMat<T, NU, NX> H_bar;
+    MSVec<T, NX>  q_bar;
+    MSVec<T, NU>  r_bar;
 
-    // Condensed System for Backward Pass
-    Eigen::Matrix<T, NX, NX> op_A;
-    Eigen::Matrix<T, NX, 1>  op_b;
+    // Condensed System for Backward Pass (Removed for CPU memory optimization)
+    // MSMat<T, NX, NX> op_A;
+    // MSVec<T, NX>  op_b;
 
     // --- SEARCH DIRECTIONS ---
-    Eigen::Matrix<T, NX, 1> dx;
-    Eigen::Matrix<T, NU, 1> du;
-    Eigen::Matrix<T, NC, 1> ds;
-    Eigen::Matrix<T, NC, 1> dlam;
+    MSVec<T, NX> dx;
+    MSVec<T, NU> du;
+    MSVec<T, NC> ds;
+    MSVec<T, NC> dlam;
 
     // Feedback Gains
-    Eigen::Matrix<T, NU, NX> K;
-    Eigen::Matrix<T, NU, 1>  d;
+    MSMat<T, NU, NX> K;
+    MSVec<T, NU>  d;
 
     KnotPoint() {
         set_zero();
@@ -71,17 +76,17 @@ struct KnotPoint {
     }
 
     void set_zero() {
-        x.setZero(); u.setZero(); p.setZero();
+        MatOps::setZero(x); MatOps::setZero(u); MatOps::setZero(p);
         s.setOnes(); lam.setOnes(); // Initialize to valid interior point usually
 
-        A.setIdentity(); B.setZero(); f_resid.setZero();
-        C.setZero(); D.setZero(); g_val.setZero();
+        MatOps::setIdentity(A); MatOps::setZero(B); MatOps::setZero(f_resid);
+        MatOps::setZero(C); MatOps::setZero(D); MatOps::setZero(g_val);
 
         cost = 0; // Reset cost
-        Q.setIdentity(); R.setIdentity(); H.setZero(); q.setZero(); r.setZero();
+        MatOps::setIdentity(Q); MatOps::setIdentity(R); MatOps::setZero(H); MatOps::setZero(q); MatOps::setZero(r);
         
-        dx.setZero(); du.setZero(); ds.setZero(); dlam.setZero();
-        K.setZero(); d.setZero();
+        MatOps::setZero(dx); MatOps::setZero(du); MatOps::setZero(ds); MatOps::setZero(dlam);
+        MatOps::setZero(K); MatOps::setZero(d);
     }
 
     void initialize_defaults() {
