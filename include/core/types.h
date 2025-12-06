@@ -1,16 +1,8 @@
 #pragma once
 #include <Eigen/Dense>
+#include "core/solver_options.h"
 
 namespace roboopt {
-
-enum class IntegratorType {
-    EULER_EXPLICIT,
-    EULER_IMPLICIT,
-    RK2_EXPLICIT, // Heun's method or Midpoint explicit
-    RK2_IMPLICIT, // Gauss-Legendre 2 (Implicit Midpoint)
-    RK4_EXPLICIT, // Classic RK4
-    RK4_IMPLICIT  // Gauss-Legendre 4
-};
 
 template<typename T, int _NX, int _NU, int _NC, int _NP>
 struct KnotPoint {
@@ -43,6 +35,7 @@ struct KnotPoint {
     Eigen::Matrix<T, NC, 1>  g_val; // Value of g(x,u)
 
     // Cost: 0.5 x'Qx + x'Qu + ...
+    T cost; // <--- NEW: Scalar Cost Value
     Eigen::Matrix<T, NX, 1> q;
     Eigen::Matrix<T, NU, 1> r;
     Eigen::Matrix<T, NX, NX> Q;
@@ -84,6 +77,7 @@ struct KnotPoint {
         A.setIdentity(); B.setZero(); f_resid.setZero();
         C.setZero(); D.setZero(); g_val.setZero();
 
+        cost = 0; // Reset cost
         Q.setIdentity(); R.setIdentity(); H.setZero(); q.setZero(); r.setZero();
         
         dx.setZero(); du.setZero(); ds.setZero(); dlam.setZero();

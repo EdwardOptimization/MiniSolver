@@ -1,50 +1,34 @@
 #pragma once
 #include "core/types.h"
+#include "core/solver_options.h"
 #include <cmath>
 #include <Eigen/Dense>
 
 namespace roboopt {
 
 struct CarModel {
-    // NX=4 (x, y, theta, v)
-    // NU=2 (accel, steer)
-    // NC=4 (Control limits: min/max for acc and steer)
-    // NP=6 (Target parameters)
-    static const int NX = 4;
-    static const int NU = 2;
-    static const int NC = 4;
-    static const int NP = 6;
+    static const int NX=4; 
+    static const int NU=2; 
+    static const int NC=5; 
+    static const int NP=6;
 
-    // Parameters map:
-    // p[0] = v_target
-    // p[1] = x_ref
-    // p[2] = y_ref
-    // p[3] = obs_x
-    // p[4] = obs_y
-    // p[5] = obs_weight
-
-    // --- Continuous Dynamics: x_dot = f(x, u) ---
+    // --- Continuous Dynamics ---
     template<typename T>
     static Eigen::Matrix<T, NX, 1> dynamics_continuous(
         const Eigen::Matrix<T, NX, 1>& x,
         const Eigen::Matrix<T, NU, 1>& u) 
     {
-        T th = x(2);
-        T v  = x(3);
-        T acc = u(0);
-        T delta = u(1);
-        T L = 2.5; // Wheelbase
-
+        T x2=x(2); T x3=x(3);
+        T u0=u(0); T u1=u(1);
         Eigen::Matrix<T, NX, 1> xdot;
-        xdot(0) = v * cos(th);
-        xdot(1) = v * sin(th);
-        xdot(2) = (v / L) * tan(delta);
-        xdot(3) = acc;
-
+        xdot(0) = x3 * cos(x2);
+        xdot(1) = x3 * sin(x2);
+        xdot(2) = (x3 / 2.5) * tan(u1);
+        xdot(3) = u0;
         return xdot;
     }
 
-    // --- Integrator ---
+    // --- Integrator Interface ---
     template<typename T>
     static Eigen::Matrix<T, NX, 1> integrate(
         const Eigen::Matrix<T, NX, 1>& x,
@@ -53,300 +37,182 @@ struct CarModel {
         IntegratorType type)
     {
         switch(type) {
-            case IntegratorType::EULER_EXPLICIT:
-                return x + dynamics_continuous(x, u) * dt;
-
-            case IntegratorType::RK2_EXPLICIT: {
-                // Heun's Method (Explicit Trapezoidal)
-                auto k1 = dynamics_continuous(x, u);
-                auto k2 = dynamics_continuous<T>(x + k1 * dt, u);
-                return x + (k1 + k2) * 0.5 * dt;
+            case IntegratorType::EULER_EXPLICIT: return x + dynamics_continuous(x, u) * dt;
+            default: // RK4 Explicit
+            {
+               auto k1 = dynamics_continuous(x, u);
+               auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u);
+               auto k3 = dynamics_continuous<T>(x + k2 * (0.5 * dt), u);
+               auto k4 = dynamics_continuous<T>(x + k3 * dt, u);
+               return x + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
             }
-
-            case IntegratorType::RK4_EXPLICIT: {
-                auto k1 = dynamics_continuous(x, u);
-                auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u);
-                auto k3 = dynamics_continuous<T>(x + k2 * (0.5 * dt), u);
-                auto k4 = dynamics_continuous<T>(x + k3 * dt, u);
-                return x + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
-            }
-
-            case IntegratorType::EULER_IMPLICIT: {
-                // x_{k+1} = x_k + dt * f(x_{k+1}, u)
-                // Solve R(z) = z - x_k - dt * f(z, u) = 0
-                return solve_implicit_step(x, u, dt, [](const Eigen::Matrix<T, NX, 1>& z, const Eigen::Matrix<T, NU, 1>& u_in) {
-                    return dynamics_continuous(z, u_in);
-                });
-            }
-
-            case IntegratorType::RK2_IMPLICIT: {
-                // Implicit Midpoint (Gauss-Legendre 2)
-                // x_{k+1} = x_k + dt * f( (x_k + x_{k+1})/2, u )
-                // Solve R(z) = z - x_k - dt * f( (x_k + z)/2, u ) = 0
-                return solve_implicit_step(x, u, dt, [x](const Eigen::Matrix<T, NX, 1>& z, const Eigen::Matrix<T, NU, 1>& u_in) {
-                    return dynamics_continuous<T>((x + z) * 0.5, u_in);
-                });
-            }
-
-            case IntegratorType::RK4_IMPLICIT: {
-                // Gauss-Legendre 4 (Two-stage IRK)
-                // This requires solving for two internal stages (k1, k2) of size NX each.
-                // 2*NX nonlinear system.
-                // For demonstration, we approximate or fallback to RK4 Explicit if too complex to inline,
-                // BUT user requested it. Let's implement a simplified GL4 or rigorous one.
-                // Rigorous GL4 requires solving 2*NX system.
-                // To keep this "header-only" and simple without external nonlinear solvers,
-                // we will use a fixed-point iteration or simple Newton for the stages.
-                // However, given the code structure, implementing a robust 2*NX Newton solver here is heavy.
-                // FALLBACK for now: Use RK4 Explicit but warn, OR implement a simplified version.
-                // Let's implement the FULL GL4 using a specialized Newton solver for the stages.
-                return solve_gl4_step(x, u, dt);
-            }
-
-            default:
-                return x + dynamics_continuous(x, u) * dt;
         }
     }
 
-    // --- Implicit Solver Helper (Newton-Raphson) ---
-    template<typename T, typename Func>
-    static Eigen::Matrix<T, NX, 1> solve_implicit_step(
-        const Eigen::Matrix<T, NX, 1>& x0,
-        const Eigen::Matrix<T, NU, 1>& u,
-        double dt,
-        Func flux_func)
-    {
-        // Guess z = x0 (Explicit Euler guess)
-        Eigen::Matrix<T, NX, 1> z = x0 + dynamics_continuous(x0, u) * dt;
-        
-        const int max_iter = 10;
-        const double tol = 1e-6;
-
-        for(int iter=0; iter<max_iter; ++iter) {
-            // Residual: R(z) = z - x0 - dt * flux(z)
-            // Jacobian: J = I - dt * d(flux)/dz
-            // Update: z = z - J^{-1} * R
-            
-            // 1. Evaluate Residual
-            Eigen::Matrix<T, NX, 1> f_val = flux_func(z, u);
-            Eigen::Matrix<T, NX, 1> R = z - x0 - f_val * dt;
-
-            if(R.norm() < tol) break;
-
-            // 2. Compute Jacobian via Finite Difference
-            Eigen::Matrix<T, NX, NX> J;
-            double eps = 1e-7;
-            for(int i=0; i<NX; ++i) {
-                Eigen::Matrix<T, NX, 1> z_p = z;
-                z_p(i) += eps;
-                Eigen::Matrix<T, NX, 1> f_p = flux_func(z_p, u);
-                // df/dz approx
-                Eigen::Matrix<T, NX, 1> df = (f_p - f_val) / eps;
-                // dR/dz col
-                J.col(i) = Eigen::Matrix<T, NX, 1>::Unit(i) - df * dt;
-            }
-
-            // 3. Update
-            z = z - J.inverse() * R;
-        }
-        return z;
-    }
-
-    // --- Gauss-Legendre 4 Solver ---
+    // --- Main Compute Function ---
     template<typename T>
-    static Eigen::Matrix<T, NX, 1> solve_gl4_step(
-        const Eigen::Matrix<T, NX, 1>& x0,
-        const Eigen::Matrix<T, NU, 1>& u,
-        double dt)
-    {
-        // Constants
-        const double sqrt3 = 1.73205080757;
-        // c1 = 1/2 - sqrt3/6, c2 = 1/2 + sqrt3/6
-        // A matrix for RK: 
-        // a11 = 1/4, a12 = 1/4 - sqrt3/6
-        // a21 = 1/4 + sqrt3/6, a22 = 1/4
-        // b1 = 1/2, b2 = 1/2
-        
-        const double a11 = 0.25;
-        const double a12 = 0.25 - sqrt3/6.0;
-        const double a21 = 0.25 + sqrt3/6.0;
-        const double a22 = 0.25;
+    static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        T x0=kp.x(0); T x1=kp.x(1); T x2=kp.x(2); T x3=kp.x(3);
+        T u0=kp.u(0); T u1=kp.u(1);
+        T p0=kp.p(0); T p1=kp.p(1); T p2=kp.p(2); T p3=kp.p(3); T p4=kp.p(4); T p5=kp.p(5);
 
-        // Variables: K = [k1; k2] (Size 2*NX)
-        // Initial guess: f(x0, u) for both
-        Eigen::Matrix<T, NX, 1> f0 = dynamics_continuous(x0, u);
-        Eigen::Matrix<T, NX, 1> k1 = f0;
-        Eigen::Matrix<T, NX, 1> k2 = f0;
-
-        const int max_iter = 10;
-        const double tol = 1e-6;
-
-        for(int iter=0; iter<max_iter; ++iter) {
-            // Calculate states at stages
-            // Y1 = x0 + dt * (a11*k1 + a12*k2)
-            // Y2 = x0 + dt * (a21*k1 + a22*k2)
-            Eigen::Matrix<T, NX, 1> Y1 = x0 + dt * (a11 * k1 + a12 * k2);
-            Eigen::Matrix<T, NX, 1> Y2 = x0 + dt * (a21 * k1 + a22 * k2);
-
-            // Function evaluations
-            Eigen::Matrix<T, NX, 1> f1 = dynamics_continuous(Y1, u);
-            Eigen::Matrix<T, NX, 1> f2 = dynamics_continuous(Y2, u);
-
-            // Residuals
-            Eigen::Matrix<T, NX, 1> R1 = k1 - f1;
-            Eigen::Matrix<T, NX, 1> R2 = k2 - f2;
-
-            double err = R1.norm() + R2.norm();
-            if(err < tol) break;
-
-            // Jacobian J of the system R(K) = 0 w.r.t K
-            // R1 = k1 - f(Y1(k1, k2))
-            // dR1/dk1 = I - df/dY * dY1/dk1 = I - df/dY * (dt * a11)
-            // dR1/dk2 =   - df/dY * dY1/dk2 =   - df/dY * (dt * a12)
-            // etc.
-            // We need Jacobian of f at Y1 and Y2.
-            // Let's use FD for df/dY
-            Eigen::Matrix<T, NX, NX> J_Y1 = finite_diff_jacobian(Y1, u);
-            Eigen::Matrix<T, NX, NX> J_Y2 = finite_diff_jacobian(Y2, u);
-
-            // Construct 2*NX x 2*NX system
-            Eigen::Matrix<T, 2*NX, 2*NX> BigJ;
-            Eigen::Matrix<T, NX, NX> I = Eigen::Matrix<T, NX, NX>::Identity();
-
-            BigJ.template block<NX, NX>(0, 0)  = I - J_Y1 * (dt * a11);
-            BigJ.template block<NX, NX>(0, NX) =   - J_Y1 * (dt * a12);
-            BigJ.template block<NX, NX>(NX, 0) =   - J_Y2 * (dt * a21);
-            BigJ.template block<NX, NX>(NX, NX)= I - J_Y2 * (dt * a22);
-
-            Eigen::Matrix<T, 2*NX, 1> BigR;
-            BigR << R1, R2;
-
-            Eigen::Matrix<T, 2*NX, 1> DeltaK = BigJ.inverse() * BigR;
-            
-            k1 -= DeltaK.template head<NX>();
-            k2 -= DeltaK.template tail<NX>();
-        }
-
-        // Final update: x_{n+1} = x_n + dt/2 * (k1 + k2)
-        return x0 + 0.5 * dt * (k1 + k2);
-    }
-
-    // Helper for Jacobian
-    template<typename T>
-    static Eigen::Matrix<T, NX, NX> finite_diff_jacobian(const Eigen::Matrix<T, NX, 1>& x, const Eigen::Matrix<T, NU, 1>& u) {
-        Eigen::Matrix<T, NX, NX> J;
-        double eps = 1e-7;
-        Eigen::Matrix<T, NX, 1> f0 = dynamics_continuous(x, u);
-        for(int i=0; i<NX; ++i) {
-            Eigen::Matrix<T, NX, 1> xp = x;
-            xp(i) += eps;
-            J.col(i) = (dynamics_continuous(xp, u) - f0) / eps;
-        }
-        return J;
-    }
-
-    // --- Compute with Integrator Selection ---
-    template<typename T>
-    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt) {
-        // --- 1. Unpack Variables ---
-        T px = kp.x(0);
-        T py = kp.x(1);
-        T th = kp.x(2);
-        T v  = kp.x(3);
-
-        T acc = kp.u(0);
-        T delta = kp.u(1);
-
-        // --- 2. Dynamics & Derivatives (Finite Difference) ---
-        // Explicitly calculate next state based on selected integrator
-        Eigen::Matrix<T, NX, 1> x_next = integrate(kp.x, kp.u, dt, type);
-        
-        // f_resid stores the PREDICTED next state (f(x,u))
-        kp.f_resid = x_next;
-
-        // Compute A = df/dx, B = df/du using Finite Difference
-        // This makes it work for ANY integrator (implicit or explicit)
-        T eps = 1e-6;
-
-        // A Matrix
-        for(int i=0; i<NX; ++i) {
-            Eigen::Matrix<T, NX, 1> x_p = kp.x;
-            x_p(i) += eps;
-            Eigen::Matrix<T, NX, 1> x_next_p = integrate(x_p, kp.u, dt, type);
-            kp.A.col(i) = (x_next_p - x_next) / eps;
-        }
-
-        // B Matrix
-        for(int i=0; i<NU; ++i) {
-            Eigen::Matrix<T, NU, 1> u_p = kp.u;
-            u_p(i) += eps;
-            Eigen::Matrix<T, NX, 1> x_next_p = integrate(kp.x, u_p, dt, type);
-            kp.B.col(i) = (x_next_p - x_next) / eps;
-        }
-
-        // --- 3. Costs (Quadratic Approximation) ---
-        T v_target = kp.p(0);
-        T x_ref    = kp.p(1);
-        T y_ref    = kp.p(2);
-        T obs_x    = kp.p(3);
-        T obs_y    = kp.p(4);
-        T obs_w    = kp.p(5);
-
-        // Reset Cost
-        kp.Q.setZero(); kp.q.setZero();
-        kp.R.setZero(); kp.r.setZero();
-        kp.H.setZero();
-
-        // 3.1 Tracking Cost
-        T w_pos = 1.0;
-        T w_vel = 1.0;
-        T w_ang = 0.1;
-
-        kp.Q(0,0) += w_pos; kp.q(0) += w_pos * (px - x_ref);
-        kp.Q(1,1) += w_pos; kp.q(1) += w_pos * (py - y_ref);
-        kp.Q(2,2) += w_ang; kp.q(2) += w_ang * th;
-        kp.Q(3,3) += w_vel; kp.q(3) += w_vel * (v - v_target);
-
-        // 3.2 Control Cost
-        T w_acc = 0.1;
-        T w_steer = 1.0;
-        kp.R(0,0) += w_acc;   kp.r(0) += w_acc * acc;
-        kp.R(1,1) += w_steer; kp.r(1) += w_steer * delta;
-
-        // 3.3 Obstacle Avoidance
-        T dx = px - obs_x;
-        T dy = py - obs_y;
-        T dist2 = dx*dx + dy*dy;
-        T sigma = 4.0; 
-        T exp_val = exp(-dist2 / sigma);
-        T cost_obs = obs_w * exp_val;
-
-        T grad_factor = cost_obs * (-2.0 / sigma);
-        T g_ox = grad_factor * dx;
-        T g_oy = grad_factor * dy;
-
-        kp.q(0) += g_ox;
-        kp.q(1) += g_oy;
-        kp.Q(0,0) += abs(g_ox); 
-        kp.Q(1,1) += abs(g_oy);
-
-        // --- 4. Constraints (Inequality) ---
-        T max_acc = 3.0;
-        T max_steer = 0.5;
-
-        kp.g_val(0) = acc - max_acc;
-        kp.g_val(1) = -acc - max_acc;
-        kp.g_val(2) = delta - max_steer;
-        kp.g_val(3) = -delta - max_steer;
-
-        kp.C.setZero();
-        kp.D.setZero();
-
-        kp.D(0, 0) = 1.0;
-        kp.D(1, 0) = -1.0;
-        kp.D(2, 1) = 1.0;
-        kp.D(3, 1) = -1.0;
+        T x4 = cos(x2);
+        T x5 = dt*u0;
+        T x6 = x3 + x5;
+        T x7 = x3 + 1.5*x5;
+        T x8 = tan(u1);
+        T x9 = 0.40000000000000002*x8;
+        T x10 = dt*x9;
+        T x11 = x10*x7 + x2;
+        T x12 = cos(x11);
+        T x13 = x12*x6;
+        T x14 = x3 + 0.5*x5;
+        T x15 = 0.20000000000000001*x8;
+        T x16 = dt*x15;
+        T x17 = x14*x16 + x2;
+        T x18 = cos(x17);
+        T x19 = 2*x18;
+        T x20 = x3 + 1.0*x5;
+        T x21 = x16*x20 + x2;
+        T x22 = cos(x21);
+        T x23 = 2*x22;
+        T x24 = 0.16666666666666666*dt;
+        T x25 = x24*(x13 + x14*x19 + x14*x23 + x3*x4);
+        T x26 = sin(x2);
+        T x27 = sin(x11);
+        T x28 = x27*x6;
+        T x29 = sin(x17);
+        T x30 = 2*x29;
+        T x31 = sin(x21);
+        T x32 = 2*x31;
+        T x33 = x14*x30 + x14*x32 + x26*x3 + x28;
+        T x34 = 1.6000000000000001*x14;
+        T x35 = x10*x14;
+        T x36 = pow(dt, 2);
+        T x37 = 0.60000000000000009*x36*x8;
+        T x38 = x15*x36;
+        T x39 = x14*x38;
+        T x40 = x14*x31;
+        T x41 = x36*x9;
+        T x42 = pow(x8, 2) + 1;
+        T x43 = 0.40000000000000002*x42;
+        T x44 = dt*x43;
+        T x45 = pow(x14, 2)*x44;
+        T x46 = x44*x7;
+        T x47 = x20*x44;
+        T x48 = 1.0*dt;
+        T x49 = x14*x22;
+        T x50 = -x0;
+        T x51 = -x1;
+        // f_resid
+        kp.f_resid(0,0) = x0 + x25;
+        kp.f_resid(1,0) = x1 + x24*x33;
+        kp.f_resid(2,0) = x2 + x24*(x3*x9 + x34*x8 + x6*x9);
+        kp.f_resid(3,0) = x20;
+        // A
+        kp.A(0,0) = 1;
+        kp.A(0,1) = 0;
+        kp.A(0,2) = -x24*x33;
+        kp.A(0,3) = x24*(-x10*x28 + x12 + x19 + x23 - x29*x35 - x31*x35 + x4);
+        kp.A(1,0) = 0;
+        kp.A(1,1) = 1;
+        kp.A(1,2) = x25;
+        kp.A(1,3) = x24*(x10*x13 + x18*x35 + x22*x35 + x26 + x27 + x30 + x32);
+        kp.A(2,0) = 0;
+        kp.A(2,1) = 0;
+        kp.A(2,2) = 1;
+        kp.A(2,3) = x10;
+        kp.A(3,0) = 0;
+        kp.A(3,1) = 0;
+        kp.A(3,2) = 0;
+        kp.A(3,3) = 1;
+        // B
+        kp.B(0,0) = x24*(dt*x12 + 1.0*dt*x18 + 1.0*dt*x22 - x28*x37 - x29*x39 - x40*x41);
+        kp.B(0,1) = x24*(-x28*x46 - x29*x45 - x40*x47);
+        kp.B(1,0) = x24*(dt*x27 + x13*x37 + x18*x39 + x29*x48 + x31*x48 + x41*x49);
+        kp.B(1,1) = x24*(x13*x46 + x18*x45 + x47*x49);
+        kp.B(2,0) = x38;
+        kp.B(2,1) = x24*(x3*x43 + x34*x42 + x43*x6);
+        kp.B(3,0) = x48;
+        kp.B(3,1) = 0;
+        // q
+        kp.q(0,0) = -2.0*p1 + 2.0*x0;
+        kp.q(1,0) = -2.0*p2 + 2.0*x1;
+        kp.q(2,0) = 0.20000000000000001*x2;
+        kp.q(3,0) = -2.0*p0 + 2.0*x3;
+        // r
+        kp.r(0,0) = 0.20000000000000001*u0;
+        kp.r(1,0) = 2.0*u1;
+        // Q
+        kp.Q(0,0) = 2.0;
+        kp.Q(0,1) = 0;
+        kp.Q(0,2) = 0;
+        kp.Q(0,3) = 0;
+        kp.Q(1,0) = 0;
+        kp.Q(1,1) = 2.0;
+        kp.Q(1,2) = 0;
+        kp.Q(1,3) = 0;
+        kp.Q(2,0) = 0;
+        kp.Q(2,1) = 0;
+        kp.Q(2,2) = 0.20000000000000001;
+        kp.Q(2,3) = 0;
+        kp.Q(3,0) = 0;
+        kp.Q(3,1) = 0;
+        kp.Q(3,2) = 0;
+        kp.Q(3,3) = 2.0;
+        // R
+        kp.R(0,0) = 0.20000000000000001;
+        kp.R(0,1) = 0;
+        kp.R(1,0) = 0;
+        kp.R(1,1) = 2.0;
+        // H
+        kp.H(0,0) = 0;
+        kp.H(0,1) = 0;
+        kp.H(0,2) = 0;
+        kp.H(0,3) = 0;
+        kp.H(1,0) = 0;
+        kp.H(1,1) = 0;
+        kp.H(1,2) = 0;
+        kp.H(1,3) = 0;
+        // g_val
+        kp.g_val(0,0) = u0 - 3.0;
+        kp.g_val(1,0) = -u0 - 3.0;
+        kp.g_val(2,0) = u1 - 0.5;
+        kp.g_val(3,0) = -u1 - 0.5;
+        kp.g_val(4,0) = -pow(-p3 - x50, 2) - pow(-p4 - x51, 2) + pow(p5 + 1.0, 2);
+        // C
+        kp.C(0,0) = 0;
+        kp.C(0,1) = 0;
+        kp.C(0,2) = 0;
+        kp.C(0,3) = 0;
+        kp.C(1,0) = 0;
+        kp.C(1,1) = 0;
+        kp.C(1,2) = 0;
+        kp.C(1,3) = 0;
+        kp.C(2,0) = 0;
+        kp.C(2,1) = 0;
+        kp.C(2,2) = 0;
+        kp.C(2,3) = 0;
+        kp.C(3,0) = 0;
+        kp.C(3,1) = 0;
+        kp.C(3,2) = 0;
+        kp.C(3,3) = 0;
+        kp.C(4,0) = 2*p3 - 2*x0;
+        kp.C(4,1) = 2*p4 - 2*x1;
+        kp.C(4,2) = 0;
+        kp.C(4,3) = 0;
+        // D
+        kp.D(0,0) = 1;
+        kp.D(0,1) = 0;
+        kp.D(1,0) = -1;
+        kp.D(1,1) = 0;
+        kp.D(2,0) = 0;
+        kp.D(2,1) = 1;
+        kp.D(3,0) = 0;
+        kp.D(3,1) = -1;
+        kp.D(4,0) = 0;
+        kp.D(4,1) = 0;
+        kp.cost = 0.10000000000000001*pow(u0, 2) + 1.0*pow(u1, 2) + 0.10000000000000001*pow(x2, 2) + 1.0*pow(-p0 + x3, 2) + 1.0*pow(-p1 - x50, 2) + 1.0*pow(-p2 - x51, 2);
     }
 };
-
 }

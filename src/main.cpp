@@ -3,64 +3,80 @@
 #include <cmath>
 #include <iomanip>
 #include <string>
+#include <fstream>
 
 #include "model/car_model.h"
 #include "solver/solver.h"
 
 using namespace roboopt;
 
-// --- Visualization Helper ---
-void plot_trajectory(const std::vector<double>& X, const std::vector<double>& Y,
-                     double obs_x, double obs_y)
+void save_trajectory_csv(const std::string& filename, 
+                         const PDIPMSolver<CarModel>& solver, 
+                         const std::vector<double>& dts,
+                         double obs_x, double obs_y, double obs_rad) 
 {
-    const int width = 60;
-    const int height = 20;
-    char grid[height][width];
-
-    // 1. Clear Grid
-    for(int i=0; i<height; ++i)
-        for(int j=0; j<width; ++j)
-            grid[i][j] = ' ';
-
-    double min_x = 0, max_x = 25;
-    double min_y = -4, max_y = 4;
-
-    auto to_grid_x = [&](double x) { return (int)((x - min_x) / (max_x - min_x) * (width - 1)); };
-    auto to_grid_y = [&](double y) { return (int)((1.0 - (y - min_y) / (max_y - min_y)) * (height - 1)); };
-
-    // 2. Draw Reference Line (y=0)
-    int y_zero = to_grid_y(0);
-    if(y_zero >= 0 && y_zero < height) {
-        for(int j=0; j<width; ++j) grid[y_zero][j] = '-';
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open file " << filename << " for writing.\n";
+        return;
     }
 
-    // 3. Draw Obstacle [O]
-    int ox = to_grid_x(obs_x);
-    int oy = to_grid_y(obs_y);
-    if(ox >= 0 && ox < width && oy >= 0 && oy < height) {
-        grid[oy][ox] = 'O';
-        if(ox+1 < width) grid[oy][ox+1] = 'O';
-        if(ox-1 >= 0)    grid[oy][ox-1] = 'O';
+    file << "t,x,y,theta,v,acc,steer,g_obs,obs_x,obs_y,obs_rad\n";
+
+    double current_t = 0.0;
+    for(size_t k=0; k < solver.traj.size(); ++k) {
+        const auto& kp = solver.traj[k];
+        if(k > 0 && k-1 < dts.size()) current_t += dts[k-1];
+
+        file << current_t << ","
+             << kp.x(0) << "," << kp.x(1) << "," << kp.x(2) << "," << kp.x(3) << ","
+             << kp.u(0) << "," << kp.u(1) << ","
+             << kp.g_val(4) << "," 
+             << obs_x << "," << obs_y << "," << obs_rad << "\n";
+    }
+    file.close();
+    std::cout << ">> Trajectory saved to " << filename << "\n";
+}
+
+struct IterationMetrics {
+    double cost = 0.0;
+    double prim_inf = 0.0; 
+    double dual_inf = 0.0; 
+    double compl_inf = 0.0; 
+};
+
+IterationMetrics compute_metrics(const PDIPMSolver<CarModel>& solver) {
+    IterationMetrics m;
+    
+    // 1. Total Cost
+    for(const auto& kp : solver.traj) {
+        m.cost += kp.cost;
     }
 
-    // 4. Draw Car Path [*] (Overwrites Reference)
-    for(size_t k=0; k<X.size(); ++k) {
-        int gx = to_grid_x(X[k]);
-        int gy = to_grid_y(Y[k]);
-        if(gx >= 0 && gx < width && gy >= 0 && gy < height) {
-            grid[gy][gx] = '*';
+    // 2. Primal Infeasibility
+    for(const auto& kp : solver.traj) {
+        for(int i=0; i<CarModel::NC; ++i) {
+            double viol = std::abs(kp.g_val(i) + kp.s(i));
+            if(viol > m.prim_inf) m.prim_inf = viol;
         }
     }
 
-    std::cout << "\n--- Trajectory Plot ---\n";
-    std::cout << "Legend: [O] Obstacle, [*] Car\n";
-    std::cout << "+" << std::string(width, '-') << "+\n";
-    for(int i=0; i<height; ++i) {
-        std::cout << "|";
-        for(int j=0; j<width; ++j) std::cout << grid[i][j];
-        std::cout << "|\n";
+    // 3. Dual Infeasibility (Max Norm of Lagrangian Gradient)
+    for(const auto& kp : solver.traj) {
+        double g_norm = kp.q_bar.lpNorm<Eigen::Infinity>(); 
+        double r_norm = kp.r_bar.lpNorm<Eigen::Infinity>(); 
+        m.dual_inf = std::max(m.dual_inf, std::max(g_norm, r_norm));
     }
-    std::cout << "+" << std::string(width, '-') << "+\n";
+
+    // 4. Complementarity
+    for(const auto& kp : solver.traj) {
+        for(int i=0; i<CarModel::NC; ++i) {
+            double comp = std::abs(kp.s(i) * kp.lam(i)); // deviation from 0
+            if(comp > m.compl_inf) m.compl_inf = comp;
+        }
+    }
+
+    return m;
 }
 
 int main(int argc, char** argv) {
@@ -69,89 +85,114 @@ int main(int argc, char** argv) {
 
     // --- Configuration ---
     SolverConfig config;
-    config.default_dt = 0.1; // Default
-    config.integrator = IntegratorType::RK4_IMPLICIT;
-    
-    std::string int_name = "RK4 (Implicit Gauss-Legendre)";
+    config.integrator = IntegratorType::RK4_EXPLICIT; 
+    config.default_dt = 0.1; 
 
-    std::cout << ">> Initializing PDIPM Solver (N=" << N << ") with " << int_name << "...\n";
+    config.barrier_strategy = BarrierStrategy::MONOTONE; 
+    config.mu_init = 0.1;
+    config.mu_min = 1e-6;   
+    config.mu_linear_decrease_factor = 0.2; 
+    config.reg_init = 1e-6; 
+    config.reg_min = 1e-9;
+    config.tol_con = 1e-4;
+    config.max_iters = 60;  
+    config.debug_mode = true; // Enable detailed diagnostics
+
+    std::cout << ">> Initializing PDIPM Solver (N=" << N << ")...\n";
     PDIPMSolver<CarModel> solver(N, mode, config);
 
-    // --- Dynamic DT Setup ---
-    // Example: Fine resolution at start (0.05s), Coarse at end (0.2s)
     std::vector<double> dts(N);
-    for(int k=0; k<N; ++k) {
-        if(k < 20) dts[k] = 0.05; // First 20 steps: 0.05s (Total 1.0s)
-        else       dts[k] = 0.2;  // Next 40 steps:  0.2s  (Total 8.0s) -> Total T = 9.0s
-    }
+    for(int k=0; k<N; ++k) dts[k] = (k < 20) ? 0.05 : 0.2;
     solver.set_dt(dts);
-    std::cout << ">> Variable DT Configured: First 20 steps @ 0.05s, Remaining @ 0.2s.\n";
 
-    // --- Scenario Definition ---
-    double obs_x = 12.0;
-    double obs_y = 0.0;
-    double obs_weight = 200.0;
+    // Scenario
+    double obs_x = 12.0; double obs_y = 0.0; double obs_rad = 1.5; 
 
-    // Initialize Trajectory
+    // Initialize Trajectory (Cold Start)
     double current_t = 0.0;
     for(int k=0; k<=N; ++k) {
-        // Accumulate time for reference generation
         if(k > 0) current_t += dts[k-1];
-
         double x_ref = current_t * 5.0; 
-        double y_ref = 0.0;
-        double v_target = 5.0;
-
-        // p = [v_target, x_ref, y_ref, obs_x, obs_y, obs_weight]
-        double params[] = { v_target, x_ref, y_ref, obs_x, obs_y, obs_weight };
-
-        // Initial Control Guess: Drive straight
-        if(k < N) {
-            solver.traj[k].u(0) = 0.0;
-            solver.traj[k].u(1) = 0.0;
-        }
-
+        double params[] = { 5.0, x_ref, 0.0, obs_x, obs_y, obs_rad };
+        if(k < N) solver.traj[k].u.setZero();
         for(int i=0; i<6; ++i) solver.traj[k].p(i) = params[i];
     }
 
-    // Initial Rollout to get consistent x
-    solver.traj[0].x.setZero(); // Start at 0,0
+    solver.traj[0].x.setZero(); 
     solver.rollout_dynamics();
 
-    std::cout << ">> Solving...\n";
+    std::cout << ">> Solving (Cold Start)...\n";
+    std::cout << "Iter |   Cost   |  Log(Mu) |  Log(Reg)|  PrimInf |  DualInf | ComplInf \n";
+    std::cout << "-----------------------------------------------------------------------\n";
 
-    // Solver Loop
-    for(int iter=0; iter<20; ++iter) {
+    for(int iter=0; iter<config.max_iters; ++iter) {
         solver.step();
-
-        // Optional: Print progress
-        double max_constraint_viol = 0.0;
-        for(const auto& kp : solver.traj) {
-            for(int i=0; i<CarModel::NC; ++i) {
-                if(kp.g_val(i) > max_constraint_viol) max_constraint_viol = kp.g_val(i);
-            }
-        }
-
-        std::cout << "Iter " << std::setw(2) << iter 
-                  << " | Mu: " << std::scientific << solver.mu 
-                  << " | Max Con: " << max_constraint_viol << std::endl;
+        IterationMetrics m = compute_metrics(solver);
         
-        if(solver.mu < 1e-5 && max_constraint_viol < 1e-3) {
+        std::cout << std::setw(4) << iter << " | "
+                  << std::scientific << std::setprecision(2) 
+                  << m.cost << " | " 
+                  << std::log10(solver.mu) << " | "
+                  << std::log10(solver.reg) << " | "
+                  << m.prim_inf << " | "
+                  << m.dual_inf << " | "
+                  << m.compl_inf << std::endl;
+
+        if(solver.check_convergence(m.prim_inf)) {
             std::cout << ">> Converged.\n";
             break;
         }
     }
 
-    // Extract Results
-    std::vector<double> path_x, path_y;
-    for(const auto& kp : solver.traj) {
-        path_x.push_back(kp.x(0));
-        path_y.push_back(kp.x(1));
+    // --- Warm Start Demo ---
+    // Simulate a moving obstacle or slightly shifted target
+    std::cout << "\n>> Testing Warm Start (Shifted Scenario)...\n";
+    // Shift obstacle slightly
+    double new_obs_x = 12.5; 
+    
+    // Save current solution
+    auto warm_traj = solver.traj; 
+    
+    // Create new solver instance (clean slate)
+    PDIPMSolver<CarModel> solver2(N, mode, config);
+    solver2.set_dt(dts);
+    
+    // Update params
+    for(int k=0; k<=N; ++k) {
+        double params[] = { 5.0, 0.0, 0.0, new_obs_x, obs_y, obs_rad }; // x_ref needs recalculation but simplicity first
+        // Fix params correctly
+        double t_ref = (k<20)? k*0.05 : 1.0 + (k-20)*0.2;
+        params[1] = t_ref * 5.0; 
+        for(int i=0; i<6; ++i) solver2.traj[k].p(i) = params[i];
+    }
+    solver2.traj[0].x.setZero();
+
+    // Apply Warm Start
+    solver2.warm_start(warm_traj);
+    
+    std::cout << ">> Solving (Warm Start)...\n";
+    std::cout << "Iter |   Cost   |  Log(Mu) |  Log(Reg)|  PrimInf |  DualInf | ComplInf \n";
+    std::cout << "-----------------------------------------------------------------------\n";
+
+    for(int iter=0; iter<config.max_iters; ++iter) {
+        solver2.step();
+        IterationMetrics m = compute_metrics(solver2);
+        
+        std::cout << std::setw(4) << iter << " | "
+                  << std::scientific << std::setprecision(2) 
+                  << m.cost << " | " 
+                  << std::log10(solver2.mu) << " | "
+                  << std::log10(solver2.reg) << " | "
+                  << m.prim_inf << " | "
+                  << m.dual_inf << " | "
+                  << m.compl_inf << std::endl;
+
+        if(solver2.check_convergence(m.prim_inf)) {
+            std::cout << ">> Converged.\n";
+            break;
+        }
     }
 
-    // Plot
-    plot_trajectory(path_x, path_y, obs_x, obs_y);
-    std::cout << ">> Final X Position: " << path_x.back() << std::endl;
-
+    save_trajectory_csv("trajectory.csv", solver2, dts, new_obs_x, obs_y, obs_rad);
     return 0;
 }
