@@ -38,47 +38,6 @@ void save_trajectory_csv(const std::string& filename,
     std::cout << ">> Trajectory saved to " << filename << "\n";
 }
 
-struct IterationMetrics {
-    double cost = 0.0;
-    double prim_inf = 0.0; 
-    double dual_inf = 0.0; 
-    double compl_inf = 0.0; 
-};
-
-IterationMetrics compute_metrics(const PDIPMSolver<CarModel>& solver) {
-    IterationMetrics m;
-    
-    // 1. Total Cost
-    for(const auto& kp : solver.traj) {
-        m.cost += kp.cost;
-    }
-
-    // 2. Primal Infeasibility
-    for(const auto& kp : solver.traj) {
-        for(int i=0; i<CarModel::NC; ++i) {
-            double viol = std::abs(kp.g_val(i) + kp.s(i));
-            if(viol > m.prim_inf) m.prim_inf = viol;
-        }
-    }
-
-    // 3. Dual Infeasibility (Max Norm of Lagrangian Gradient)
-    for(const auto& kp : solver.traj) {
-        double g_norm = kp.q_bar.lpNorm<Eigen::Infinity>(); 
-        double r_norm = kp.r_bar.lpNorm<Eigen::Infinity>(); 
-        m.dual_inf = std::max(m.dual_inf, std::max(g_norm, r_norm));
-    }
-
-    // 4. Complementarity
-    for(const auto& kp : solver.traj) {
-        for(int i=0; i<CarModel::NC; ++i) {
-            double comp = std::abs(kp.s(i) * kp.lam(i)); // deviation from 0
-            if(comp > m.compl_inf) m.compl_inf = comp;
-        }
-    }
-
-    return m;
-}
-
 int main(int argc, char** argv) {
     int N = 60;
     Backend mode = Backend::CPU_SERIAL; 
@@ -89,6 +48,12 @@ int main(int argc, char** argv) {
     config.default_dt = 0.1; 
 
     config.barrier_strategy = BarrierStrategy::MONOTONE; 
+    
+    // [NEW] Advanced Features
+    config.line_search_type = LineSearchType::FILTER;  
+    config.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR; 
+    config.enable_feasibility_restoration = true; 
+    
     config.mu_init = 0.1;
     config.mu_min = 1e-6;   
     config.mu_linear_decrease_factor = 0.2; 
@@ -96,9 +61,11 @@ int main(int argc, char** argv) {
     config.reg_min = 1e-9;
     config.tol_con = 1e-4;
     config.max_iters = 60;  
-    config.debug_mode = true; // Enable detailed diagnostics
+    config.debug_mode = true; 
+    config.verbose = true; // Use internal logging
 
     std::cout << ">> Initializing PDIPM Solver (N=" << N << ")...\n";
+    std::cout << ">> Features: Filter LS, Inertia(Ignore), Feasibility Restoration\n";
     PDIPMSolver<CarModel> solver(N, mode, config);
 
     std::vector<double> dts(N);
@@ -122,77 +89,8 @@ int main(int argc, char** argv) {
     solver.rollout_dynamics();
 
     std::cout << ">> Solving (Cold Start)...\n";
-    std::cout << "Iter |   Cost   |  Log(Mu) |  Log(Reg)|  PrimInf |  DualInf | ComplInf \n";
-    std::cout << "-----------------------------------------------------------------------\n";
+    solver.solve(); // Use the simplified high-level interface
 
-    for(int iter=0; iter<config.max_iters; ++iter) {
-        solver.step();
-        IterationMetrics m = compute_metrics(solver);
-        
-        std::cout << std::setw(4) << iter << " | "
-                  << std::scientific << std::setprecision(2) 
-                  << m.cost << " | " 
-                  << std::log10(solver.mu) << " | "
-                  << std::log10(solver.reg) << " | "
-                  << m.prim_inf << " | "
-                  << m.dual_inf << " | "
-                  << m.compl_inf << std::endl;
-
-        if(solver.check_convergence(m.prim_inf)) {
-            std::cout << ">> Converged.\n";
-            break;
-        }
-    }
-
-    // --- Warm Start Demo ---
-    // Simulate a moving obstacle or slightly shifted target
-    std::cout << "\n>> Testing Warm Start (Shifted Scenario)...\n";
-    // Shift obstacle slightly
-    double new_obs_x = 12.5; 
-    
-    // Save current solution
-    auto warm_traj = solver.traj; 
-    
-    // Create new solver instance (clean slate)
-    PDIPMSolver<CarModel> solver2(N, mode, config);
-    solver2.set_dt(dts);
-    
-    // Update params
-    for(int k=0; k<=N; ++k) {
-        double params[] = { 5.0, 0.0, 0.0, new_obs_x, obs_y, obs_rad }; // x_ref needs recalculation but simplicity first
-        // Fix params correctly
-        double t_ref = (k<20)? k*0.05 : 1.0 + (k-20)*0.2;
-        params[1] = t_ref * 5.0; 
-        for(int i=0; i<6; ++i) solver2.traj[k].p(i) = params[i];
-    }
-    solver2.traj[0].x.setZero();
-
-    // Apply Warm Start
-    solver2.warm_start(warm_traj);
-    
-    std::cout << ">> Solving (Warm Start)...\n";
-    std::cout << "Iter |   Cost   |  Log(Mu) |  Log(Reg)|  PrimInf |  DualInf | ComplInf \n";
-    std::cout << "-----------------------------------------------------------------------\n";
-
-    for(int iter=0; iter<config.max_iters; ++iter) {
-        solver2.step();
-        IterationMetrics m = compute_metrics(solver2);
-        
-        std::cout << std::setw(4) << iter << " | "
-                  << std::scientific << std::setprecision(2) 
-                  << m.cost << " | " 
-                  << std::log10(solver2.mu) << " | "
-                  << std::log10(solver2.reg) << " | "
-                  << m.prim_inf << " | "
-                  << m.dual_inf << " | "
-                  << m.compl_inf << std::endl;
-
-        if(solver2.check_convergence(m.prim_inf)) {
-            std::cout << ">> Converged.\n";
-            break;
-        }
-    }
-
-    save_trajectory_csv("trajectory.csv", solver2, dts, new_obs_x, obs_y, obs_rad);
+    save_trajectory_csv("trajectory.csv", solver, dts, obs_x, obs_y, obs_rad);
     return 0;
 }
