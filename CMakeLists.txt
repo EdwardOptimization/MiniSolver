@@ -32,3 +32,6 @@ else()
     # Main Executable (No GPU link)
     add_executable(RoboOptApp ${MAIN_SOURCES})
 endif()
+# Benchmark Tool
+add_executable(benchmark_solver tools/benchmark_solver.cpp)
+# No GPU link needed for this CPU benchmark

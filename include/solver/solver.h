@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <chrono>
+#include <map>
 
 #include "core/types.h"
 #include "core/solver_options.h"
@@ -14,6 +16,36 @@
 #include "solver/backend_interface.h"
 
 namespace roboopt {
+
+// Simple Profiler
+class SolverTimer {
+public:
+    using Clock = std::chrono::high_resolution_clock;
+    std::map<std::string, double> times;
+    std::string current_scope;
+    std::chrono::time_point<Clock> start_time;
+
+    void start(const std::string& name) {
+        current_scope = name;
+        start_time = Clock::now();
+    }
+
+    void stop() {
+        auto end_time = Clock::now();
+        std::chrono::duration<double, std::milli> ms = end_time - start_time;
+        times[current_scope] += ms.count();
+    }
+    
+    void reset() { times.clear(); }
+    
+    void print() {
+        std::cout << "\n--- Solver Profiling (ms) ---\n";
+        for(auto const& [name, time] : times) {
+            std::cout << std::left << std::setw(20) << name << ": " << time << "\n";
+        }
+        std::cout << "-----------------------------\n";
+    }
+};
 
 template<typename Model>
 class PDIPMSolver {
@@ -30,6 +62,7 @@ public:
     std::vector<double> dt_traj;
     Backend backend;
     SolverConfig config;
+    SolverTimer timer; // [NEW] Timer
     
     double mu; 
     double reg;
@@ -116,7 +149,6 @@ public:
         }
     }
 
-    // Unified Logging Function
     void print_iteration_log(double alpha, bool header = false) {
         if (!config.verbose && !config.debug_mode) return;
 
@@ -134,7 +166,6 @@ public:
             return;
         }
 
-        // Compute metrics
         double total_cost = 0.0;
         double max_prim_inf = 0.0;
         double max_dual_inf = 0.0;
@@ -166,7 +197,6 @@ public:
                   << std::endl;
                   
         if (config.debug_mode) {
-            // Additional Debug Info (e.g. MinSlack)
             double min_slack = 1e9;
             for(const auto& kp : traj) for(int i=0; i<NC; ++i) if(kp.s(i) < min_slack) min_slack = kp.s(i);
             std::cout << "      [DEBUG] MinSlack=" << std::scientific << min_slack << std::endl;
@@ -193,7 +223,6 @@ public:
     std::pair<double, double> compute_filter_metrics(const std::vector<Knot>& t) {
         double theta = 0.0; 
         double phi = 0.0;   
-        
         for(const auto& kp : t) {
             phi += kp.cost;
             for(int i=0; i<NC; ++i) {
@@ -247,6 +276,7 @@ public:
         }
     }
     
+    // UPDATED: Feasibility Restoration with Early Exit
     void feasibility_restoration() {
         if (config.debug_mode) std::cout << "      [DEBUG] Entering Feasibility Restoration Phase.\n";
         double saved_mu = mu;
@@ -254,15 +284,30 @@ public:
         mu = 1e-1; 
         reg = 1e-2; 
         
-        for(int r_iter=0; r_iter < 5; ++r_iter) {
+        for(int r_iter=0; r_iter < 10; ++r_iter) { // Allow slightly more iters
+            // 1. Compute Derivatives & Update Cost for Min-Norm
             for(size_t k=0; k < traj.size(); ++k) {
                 double current_dt = dt_traj[k]; 
                 Model::compute(traj[k], config.integrator, current_dt);
+                
+                // Regularized LS objective: 0.5*||dx||^2 + ...
                 traj[k].Q.setIdentity(); 
                 traj[k].q.setZero();
                 traj[k].R.setIdentity(); 
                 traj[k].r.setZero();
             }
+            
+            // 2. Check if current point is acceptable to Filter
+            if (config.line_search_type == LineSearchType::FILTER) {
+                auto metrics = compute_filter_metrics(traj);
+                if (is_acceptable_to_filter(metrics.first, metrics.second)) {
+                    if (config.debug_mode) std::cout << "      [DEBUG] Restoration Successful (Filter Accepted).\n";
+                    add_to_filter(metrics.first, metrics.second); // Add restoration point
+                    break;
+                }
+            }
+
+            // 3. Solve & Step
             cpu_serial_solve(traj, mu, reg, config.inertia_strategy);
             double alpha = fraction_to_boundary_rule(traj, 0.95);
             for(size_t k=0; k<traj.size(); ++k) {
@@ -277,23 +322,28 @@ public:
         reg = saved_reg;
     }
 
-    // Main Solve Loop
     void solve() {
         current_iter = 0;
-        print_iteration_log(0.0, true); // Header
+        print_iteration_log(0.0, true); 
+        timer.reset(); // Reset timer
 
         for(int iter=0; iter < config.max_iters; ++iter) {
+            timer.start("Total Step");
             bool converged = step();
+            timer.stop();
+            
             if (converged) {
                 if (config.verbose) std::cout << ">> Converged in " << iter+1 << " iterations.\n";
                 break;
             }
         }
+        if (config.verbose) timer.print();
     }
 
     bool step() {
         current_iter++;
         
+        timer.start("Derivatives");
         double max_kkt_error = 0.0;
         double max_prim_inf = 0.0;
         double total_gap = 0.0;
@@ -313,11 +363,13 @@ public:
             total_gap += traj[k].s.dot(traj[k].lam);
             total_con += NC;
         }
+        timer.stop();
 
         double avg_gap = (total_con > 0) ? (total_gap / total_con) : 0.0;
         update_barrier(max_kkt_error, avg_gap);
         if (config.line_search_type == LineSearchType::MERIT) update_merit_penalty();
 
+        timer.start("Linear Solve");
         bool solve_success = false;
         for(int try_count=0; try_count < 5; ++try_count) {
             solve_success = cpu_serial_solve(traj, mu, reg, config.inertia_strategy);
@@ -330,7 +382,9 @@ public:
         if (solve_success && reg > config.reg_min) {
              reg = std::max(config.reg_min, reg / config.reg_scale_down);
         }
+        timer.stop();
 
+        timer.start("Line Search");
         double alpha = fraction_to_boundary_rule(traj, config.line_search_tau);
         
         double merit_0 = 0.0;
@@ -414,9 +468,13 @@ public:
                  feasibility_restoration();
              }
         }
+        timer.stop();
 
         print_iteration_log(alpha);
+        
+        timer.start("Rollout");
         rollout_dynamics();
+        timer.stop();
         
         return check_convergence(max_prim_inf);
     }
