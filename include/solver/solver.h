@@ -12,10 +12,12 @@
 
 #include "core/types.h"
 #include "core/solver_options.h"
+#include "core/trajectory.h" 
 
-#include "solver/kkt_assembler.h"
-#include "solver/riccati.h"          
-#include "solver/line_search.h"      
+#include "algorithms/linear_solver.h" 
+#include "algorithms/riccati_solver.h" 
+#include "algorithms/line_search.h" 
+
 #include "solver/backend_interface.h"
 
 namespace minisolver {
@@ -59,13 +61,14 @@ public:
     static const int MAX_N = _MAX_N;
 
     using Knot = KnotPoint<double, NX, NU, NC, NP>;
-    using TrajArray = std::array<Knot, MAX_N + 1>;
+    using TrajectoryType = Trajectory<Knot, MAX_N>;
+    using TrajArray = typename TrajectoryType::TrajArray;
 
-    TrajArray traj_memory_A;
-    TrajArray traj_memory_B;
-    
-    TrajArray* traj_ptr;      
-    TrajArray* candidate_ptr; 
+    TrajectoryType trajectory;
+
+    // Components
+    std::unique_ptr<LinearSolver<TrajArray>> linear_solver;
+    std::unique_ptr<LineSearchStrategy<Model, MAX_N>> line_search;
 
     int N; 
     std::array<double, MAX_N> dt_traj;
@@ -87,19 +90,23 @@ public:
     std::unordered_map<std::string, int> param_map;
 
     PDIPMSolver(int initial_N, Backend b, SolverConfig conf = SolverConfig()) 
-        : N(initial_N), backend(b), config(conf), mu(conf.mu_init), reg(conf.reg_init), merit_nu(conf.merit_nu_init) {
+        : trajectory(initial_N), N(initial_N), backend(b), config(conf), mu(conf.mu_init), reg(conf.reg_init) {
         
         if (N > MAX_N) {
             std::cerr << "Error: N (" << N << ") > MAX_N (" << MAX_N << "). Clamping.\n";
             N = MAX_N;
         }
 
-        traj_ptr = &traj_memory_A;
-        candidate_ptr = &traj_memory_B;
         dt_traj.fill(conf.default_dt);
         
-        for(auto& kp : *traj_ptr) kp.initialize_defaults();
-        for(auto& kp : *candidate_ptr) kp.initialize_defaults();
+        // Initialize Components
+        linear_solver = std::make_unique<RiccatiSolver<TrajArray>>();
+        
+        if (config.line_search_type == LineSearchType::MERIT) {
+            line_search = std::make_unique<MeritLineSearch<Model, MAX_N>>();
+        } else {
+            line_search = std::make_unique<FilterLineSearch<Model, MAX_N>>();
+        }
         
         // Initialize Maps
         for (int i = 0; i < NX; ++i) state_map[Model::state_names[i]] = i;
@@ -107,7 +114,6 @@ public:
         for (int i = 0; i < NP; ++i) param_map[Model::param_names[i]] = i;
     }
     
-    // Helper to get index safely
     int get_state_idx(const std::string& name) const {
         auto it = state_map.find(name);
         if (it != state_map.end()) return it->second;
@@ -132,6 +138,7 @@ public:
             return;
         }
         N = new_n;
+        trajectory.resize(N);
     }
 
     // --- High-Level API ---
@@ -139,14 +146,13 @@ public:
     // 1. Initial State
     void set_initial_state(const std::vector<double>& x0) {
         if (x0.size() != NX) return;
-        auto& kp = (*traj_ptr)[0];
+        auto& kp = trajectory[0];
         for(int i=0; i<NX; ++i) kp.x(i) = x0[i];
     }
     
-    // Overload: Set by name
     void set_initial_state(const std::string& name, double value) {
         int idx = get_state_idx(name);
-        if (idx != -1) (*traj_ptr)[0].x(idx) = value;
+        if (idx != -1) trajectory[0].x(idx) = value;
         else std::cerr << "Warning: Unknown state " << name << "\n";
     }
 
@@ -154,21 +160,19 @@ public:
     void set_parameter(int stage, int idx, double value) {
         if (stage > N || stage < 0) return;
         if (idx >= NP || idx < 0) return;
-        (*traj_ptr)[stage].p(idx) = value;
+        trajectory[stage].p(idx) = value;
     }
 
-    // Overload: Set by name
     void set_parameter(int stage, const std::string& name, double value) {
         int idx = get_param_idx(name);
         if (idx != -1) set_parameter(stage, idx, value);
         else std::cerr << "Warning: Unknown param " << name << "\n";
     }
     
-    // Set for ALL stages
     void set_global_parameter(int idx, double value) {
         if (idx >= NP || idx < 0) return;
         for(int k=0; k <= N; ++k) {
-            (*traj_ptr)[k].p(idx) = value;
+            trajectory[k].p(idx) = value;
         }
     }
 
@@ -180,12 +184,12 @@ public:
 
     double get_parameter(int stage, int idx) const {
         if (stage > N || stage < 0 || idx >= NP || idx < 0) return 0.0;
-        return (*traj_ptr)[stage].p(idx);
+        return trajectory[stage].p(idx);
     }
     
     std::vector<double> get_parameters(int stage) const {
         if (stage > N || stage < 0) return {};
-        const auto& kp = (*traj_ptr)[stage];
+        const auto& kp = trajectory[stage];
         std::vector<double> res(NP);
         for(int i=0; i<NP; ++i) res[i] = kp.p(i);
         return res;
@@ -194,7 +198,7 @@ public:
     // 3. State Access
     void set_state_guess(int stage, int idx, double value) {
         if (stage > N || stage < 0 || idx >= NX || idx < 0) return;
-        (*traj_ptr)[stage].x(idx) = value;
+        trajectory[stage].x(idx) = value;
     }
 
     void set_state_guess(int stage, const std::string& name, double value) {
@@ -202,13 +206,12 @@ public:
         if (idx != -1) set_state_guess(stage, idx, value);
     }
     
-    // Set entire trajectory guess for one state variable (e.g. "x")
     void set_state_guess_traj(const std::string& name, const std::vector<double>& values) {
         int idx = get_state_idx(name);
         if (idx == -1) return;
         int count = std::min((int)values.size(), N + 1);
         for(int k=0; k<count; ++k) {
-            (*traj_ptr)[k].x(idx) = values[k];
+            trajectory[k].x(idx) = values[k];
         }
     }
 
@@ -217,14 +220,13 @@ public:
         if (idx == -1) return {};
         std::vector<double> res;
         res.reserve(N + 1);
-        for(int k=0; k<=N; ++k) res.push_back((*traj_ptr)[k].x(idx));
+        for(int k=0; k<=N; ++k) res.push_back(trajectory[k].x(idx));
         return res;
     }
     
-    // Get state vector at stage
     std::vector<double> get_state(int stage) const {
         if (stage > N || stage < 0) return {};
-        const auto& kp = (*traj_ptr)[stage];
+        const auto& kp = trajectory[stage];
         std::vector<double> res(NX);
         for(int i=0; i<NX; ++i) res[i] = kp.x(i);
         return res;
@@ -232,13 +234,13 @@ public:
 
     double get_state(int stage, int idx) const {
         if (stage > N || stage < 0 || idx >= NX || idx < 0) return 0.0;
-        return (*traj_ptr)[stage].x(idx);
+        return trajectory[stage].x(idx);
     }
 
     // 4. Control Access
     void set_control_guess(int stage, int idx, double value) {
         if (stage >= N || stage < 0 || idx >= NU || idx < 0) return;
-        (*traj_ptr)[stage].u(idx) = value;
+        trajectory[stage].u(idx) = value;
     }
 
     void set_control_guess(int stage, const std::string& name, double value) {
@@ -251,7 +253,7 @@ public:
         if (idx == -1) return;
         int count = std::min((int)values.size(), N);
         for(int k=0; k<count; ++k) {
-            (*traj_ptr)[k].u(idx) = values[k];
+            trajectory[k].u(idx) = values[k];
         }
     }
 
@@ -260,13 +262,13 @@ public:
         if (idx == -1) return {};
         std::vector<double> res;
         res.reserve(N);
-        for(int k=0; k<N; ++k) res.push_back((*traj_ptr)[k].u(idx));
+        for(int k=0; k<N; ++k) res.push_back(trajectory[k].u(idx));
         return res;
     }
     
     std::vector<double> get_control(int stage) const {
         if (stage >= N || stage < 0) return {};
-        const auto& kp = (*traj_ptr)[stage];
+        const auto& kp = trajectory[stage];
         std::vector<double> res(NU);
         for(int i=0; i<NU; ++i) res[i] = kp.u(i);
         return res;
@@ -274,23 +276,23 @@ public:
 
     double get_control(int stage, int idx) const {
         if (stage >= N || stage < 0 || idx >= NU || idx < 0) return 0.0;
-        return (*traj_ptr)[stage].u(idx);
+        return trajectory[stage].u(idx);
     }
 
     // 5. Cost Access
     double get_stage_cost(int stage) const {
         if (stage > N || stage < 0) return 0.0;
-        return (*traj_ptr)[stage].cost;
+        return trajectory[stage].cost;
     }
     
     // Helper to get constraint value
     double get_constraint_val(int stage, int idx) const {
         if (stage > N || idx >= NC) return 0.0;
-        return (*traj_ptr)[stage].g_val(idx);
+        return trajectory[stage].g_val(idx);
     }
     
     // Direct access (discouraged but available)
-    TrajArray& get_raw_traj() { return *traj_ptr; }
+    typename TrajectoryType::TrajArray& get_raw_traj() { return *trajectory.active_ptr; }
 
     void set_dt(const std::vector<double>& dts) {
         if(dts.size() > MAX_N) {
@@ -304,8 +306,8 @@ public:
         dt_traj.fill(dt);
     }
 
-    void warm_start(const TrajArray& init_traj) {
-        auto& current_traj = *traj_ptr;
+    void warm_start(const typename TrajectoryType::TrajArray& init_traj) {
+        auto& current_traj = trajectory.active();
         for(int k=0; k <= N; ++k) {
             current_traj[k].x = init_traj[k].x;
             current_traj[k].u = init_traj[k].u;
@@ -321,7 +323,7 @@ public:
             }
         }
         mu = config.mu_init;
-        filter.clear(); 
+        line_search->reset();
     }
 
     bool check_convergence(double max_viol) {
@@ -367,16 +369,21 @@ public:
                       << std::setw(10) << "Log(Reg)" 
                       << std::setw(10) << "PrimInf" 
                       << std::setw(10) << "DualInf" 
-                      << std::setw(10) << "Alpha" 
-                      << std::endl;
-            std::cout << std::string(70, '-') << std::endl;
+                      << std::setw(10) << "Alpha";
+            
+            if (config.print_level >= PrintLevel::DEBUG) {
+                std::cout << std::setw(12) << "MinSlack";
+            }
+            std::cout << std::endl;
+            std::cout << std::string(80, '-') << std::endl;
             return;
         }
 
         double total_cost = 0.0;
         double max_prim_inf = 0.0;
         double max_dual_inf = 0.0;
-        auto& traj = *traj_ptr;
+        double min_slack = 1e9;
+        auto& traj = trajectory.active();
 
         for(int k=0; k<=N; ++k) {
             const auto& kp = traj[k];
@@ -384,6 +391,7 @@ public:
             for(int i=0; i<NC; ++i) {
                 double viol = std::abs(kp.g_val(i) + kp.s(i));
                 if(viol > max_prim_inf) max_prim_inf = viol;
+                if(kp.s(i) < min_slack) min_slack = kp.s(i);
             }
             double g_norm = kp.q_bar.template lpNorm<Eigen::Infinity>(); 
             double r_norm = kp.r_bar.template lpNorm<Eigen::Infinity>(); 
@@ -402,17 +410,15 @@ public:
                   << std::setw(10) << max_prim_inf 
                   << std::setw(10) << max_dual_inf 
                   << std::fixed << std::setprecision(3)
-                  << std::setw(10) << alpha 
-                  << std::endl;
-                  
-        if (config.print_level == PrintLevel::DEBUG) {
-            double min_slack = 1e9;
-            for(int k=0; k<=N; ++k) for(int i=0; i<NC; ++i) if(traj[k].s(i) < min_slack) min_slack = traj[k].s(i);
-            std::cout << "      [DEBUG] MinSlack=" << std::scientific << min_slack << std::endl;
+                  << std::setw(10) << alpha;
+
+        if (config.print_level >= PrintLevel::DEBUG) {
+            std::cout << std::scientific << std::setprecision(2) << std::setw(12) << min_slack;
         }
+        std::cout << std::endl;
     }
 
-    double compute_merit(const TrajArray& t, double nu_param) {
+    double compute_merit(const typename TrajectoryType::TrajArray& t, double nu_param) {
         double total_merit = 0.0;
         for(int k=0; k<=N; ++k) {
             const auto& kp = t[k];
@@ -430,7 +436,7 @@ public:
         return total_merit;
     }
     
-    std::pair<double, double> compute_filter_metrics(const TrajArray& t) {
+    std::pair<double, double> compute_filter_metrics(const typename TrajectoryType::TrajArray& t) {
         double theta = 0.0; 
         double phi = 0.0;   
         for(int k=0; k<=N; ++k) {
@@ -466,7 +472,7 @@ public:
 
     void update_merit_penalty() {
         double max_dual = 0.0;
-        auto& traj = *traj_ptr;
+        auto& traj = trajectory.active();
         for(int k=0; k<=N; ++k) {
             double local_max = traj[k].lam.template lpNorm<Eigen::Infinity>();
             if(local_max > max_dual) max_dual = local_max;
@@ -475,13 +481,13 @@ public:
         if (required_nu > merit_nu) merit_nu = required_nu;
     }
 
-    void solve_soc(TrajArray& soc_traj, const TrajArray& trial_traj) {
-        auto& current_traj = *traj_ptr;
+    void solve_soc(typename TrajectoryType::TrajArray& soc_traj, const typename TrajectoryType::TrajArray& trial_traj) {
+        auto& current_traj = trajectory.active();
         for(int k=0; k<=N; ++k) soc_traj[k] = current_traj[k];
         for(int k=0; k<=N; ++k) {
             soc_traj[k].g_val = trial_traj[k].g_val + (trial_traj[k].s - current_traj[k].s);
         }
-        bool success = cpu_serial_solve(soc_traj, N, mu, reg, config.inertia_strategy);
+        bool success = linear_solver->solve(soc_traj, N, mu, reg, config.inertia_strategy);
         if (!success) {
             for(int k=0; k<=N; ++k) {
                 soc_traj[k].dx.setZero(); soc_traj[k].du.setZero(); 
@@ -498,12 +504,9 @@ public:
         mu = 1e-1; 
         reg = 1e-2; 
         
-        auto& traj = *traj_ptr;
+        auto& traj = trajectory.active();
         
         for(int r_iter=0; r_iter < 10; ++r_iter) { 
-            // 1. Compute Derivatives & Update Cost for Min-Norm
-            // We ONLY compute dynamics and constraints here, saving FLOPs.
-            // Cost is manually set to regularize restoration.
             for(int k=0; k<=N; ++k) {
                 double current_dt = dt_traj[k]; 
                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
@@ -511,8 +514,14 @@ public:
                 
                 traj[k].Q.setIdentity(); 
                 traj[k].q.setZero();
-                traj[k].R.setIdentity(); 
-                traj[k].r.setZero();
+                
+                if (k < N) {
+                    traj[k].R.setIdentity(); 
+                    traj[k].r.setZero();
+                } else {
+                    traj[k].R.setZero();
+                    traj[k].r.setZero();
+                }
             }
             
             if (config.line_search_type == LineSearchType::FILTER) {
@@ -525,7 +534,8 @@ public:
                 }
             }
 
-            cpu_serial_solve(traj, N, mu, reg, config.inertia_strategy);
+            linear_solver->solve(traj, N, mu, reg, config.inertia_strategy);
+            
             double alpha = fraction_to_boundary_rule(traj, N, 0.95);
             for(int k=0; k<=N; ++k) {
                 traj[k].x += alpha * traj[k].dx;
@@ -560,7 +570,7 @@ public:
 
     bool step() {
         current_iter++;
-        auto& traj = *traj_ptr;
+        auto& traj = trajectory.active();
         
         timer.start("Derivatives");
         double max_kkt_error = 0.0;
@@ -591,7 +601,7 @@ public:
         timer.start("Linear Solve");
         bool solve_success = false;
         for(int try_count=0; try_count < 5; ++try_count) {
-            solve_success = cpu_serial_solve(traj, N, mu, reg, config.inertia_strategy);
+            solve_success = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy);
             if (solve_success) break;
             if (reg < config.reg_min) reg = config.reg_min;
             reg *= config.reg_scale_up;
@@ -620,7 +630,9 @@ public:
         int ls_iter = 0;
         bool soc_attempted = false;
         
-        auto& candidate = *candidate_ptr;
+        // Prepare Candidate
+        trajectory.prepare_candidate();
+        auto& candidate = trajectory.candidate();
         
         while (ls_iter < config.line_search_max_iters) {
             for(int k=0; k<=N; ++k) {
@@ -628,7 +640,7 @@ public:
                 candidate[k].u = traj[k].u + alpha * traj[k].du;
                 candidate[k].s = traj[k].s + alpha * traj[k].ds;
                 candidate[k].lam = traj[k].lam + alpha * traj[k].dlam;
-                candidate[k].p = traj[k].p; 
+                // Params copied by prepare_candidate
                 
                 double current_dt = dt_traj[k];
                 Model::compute(candidate[k], config.integrator, current_dt);
@@ -647,10 +659,10 @@ public:
             }
 
             if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0 && alpha > 0.5) {
-                if (config.print_level == PrintLevel::DEBUG) 
+                if (config.print_level >= PrintLevel::DEBUG) 
                     std::cout << "      [DEBUG] Step rejected. Attempting SOC.\n";
                 
-                auto soc_data = std::make_unique<TrajArray>();
+                auto soc_data = std::make_unique<typename TrajectoryType::TrajArray>();
                 solve_soc(*soc_data, candidate); 
                 
                 for(int k=0; k<=N; ++k) {
@@ -669,17 +681,17 @@ public:
         }
         
         if (accepted) {
-            std::swap(traj_ptr, candidate_ptr);
+            trajectory.swap();
             if (config.line_search_type == LineSearchType::FILTER) {
                 add_to_filter(theta_0, phi_0);
             }
         } else {
              bool recovered = false;
              if (config.enable_slack_reset && alpha < config.slack_reset_trigger) {
-                 if (config.print_level == PrintLevel::DEBUG) 
+                 if (config.print_level >= PrintLevel::DEBUG) 
                     std::cout << "      [DEBUG] Triggering Slack Reset.\n";
                  for(int k=0; k<=N; ++k) {
-                     auto& kp = (*traj_ptr)[k];
+                     auto& kp = traj[k];
                      for(int i=0; i<NC; ++i) {
                          double min_s = std::abs(kp.g_val(i)) + std::sqrt(mu);
                          if (kp.s(i) < min_s) kp.s(i) = min_s;
@@ -687,7 +699,7 @@ public:
                      }
                  }
                  recovered = true;
-                 cpu_serial_solve(*traj_ptr, N, mu, reg, config.inertia_strategy);
+                 linear_solver->solve(traj, N, mu, reg, config.inertia_strategy);
              }
              
              if (!recovered && config.enable_feasibility_restoration) {
@@ -706,7 +718,7 @@ public:
     }
 
     void rollout_dynamics() {
-        auto& traj = *traj_ptr;
+        auto& traj = trajectory.active();
         for(int k=0; k<N; ++k) {
             double current_dt = dt_traj[k];
             traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, current_dt, config.integrator);

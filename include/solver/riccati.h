@@ -7,6 +7,7 @@
 
 namespace minisolver {
 
+    // Helper: Compute Barrier-Modified Q, R, q, r
     template<typename Knot>
     void compute_barrier_derivatives(Knot& kp, double mu) {
         MSVec<double, Knot::NC> sigma;
@@ -24,12 +25,57 @@ namespace minisolver {
 
         #ifdef USE_EIGEN
         Eigen::DiagonalMatrix<double, Knot::NC> SigmaMat(sigma);
-        kp.Q_bar.noalias() = kp.Q + kp.C.transpose() * SigmaMat * kp.C;
-        kp.R_bar.noalias() = kp.R + kp.D.transpose() * SigmaMat * kp.D;
-        kp.H_bar.noalias() = kp.H + kp.D.transpose() * SigmaMat * kp.C;
+        
+        // OPTIMIZATION: Precompute scaled matrices
+        // tempC = Sigma * C
+        // tempD = Sigma * D
+        // This avoids re-multiplying Sigma multiple times
+        MSMat<double, Knot::NC, Knot::NX> tempC = SigmaMat * kp.C;
+        MSMat<double, Knot::NC, Knot::NU> tempD = SigmaMat * kp.D;
+
+        kp.Q_bar.noalias() = kp.Q + kp.C.transpose() * tempC;
+        kp.R_bar.noalias() = kp.R + kp.D.transpose() * tempD;
+        kp.H_bar.noalias() = kp.H + kp.D.transpose() * tempC;
+        
         kp.q_bar.noalias() = kp.q + kp.C.transpose() * grad_mod;
         kp.r_bar.noalias() = kp.r + kp.D.transpose() * grad_mod;
+        
         #else
+        // Generic Fallback (Naive loops for non-Eigen backend)
+        // Q_bar = Q + C^T * diag(sigma) * C
+        kp.Q_bar = kp.Q;
+        kp.R_bar = kp.R;
+        kp.H_bar = kp.H;
+        kp.q_bar = kp.q;
+        kp.r_bar = kp.r;
+
+        // Add Hessian terms: sum_k (sigma_k * c_k^T * c_k)
+        for(int k=0; k<Knot::NC; ++k) {
+            double s = sigma(k);
+            // Q_bar += s * C.row(k)^T * C.row(k)
+            for(int i=0; i<Knot::NX; ++i) {
+                for(int j=0; j<Knot::NX; ++j) {
+                    kp.Q_bar(i,j) += s * kp.C(k,i) * kp.C(k,j);
+                }
+            }
+            // R_bar += s * D.row(k)^T * D.row(k)
+            for(int i=0; i<Knot::NU; ++i) {
+                for(int j=0; j<Knot::NU; ++j) {
+                    kp.R_bar(i,j) += s * kp.D(k,i) * kp.D(k,j);
+                }
+            }
+            // H_bar += s * D.row(k)^T * C.row(k)
+            for(int i=0; i<Knot::NU; ++i) {
+                for(int j=0; j<Knot::NX; ++j) {
+                    kp.H_bar(i,j) += s * kp.D(k,i) * kp.C(k,j);
+                }
+            }
+            
+            // Add Gradient terms
+            double g = grad_mod(k);
+            for(int i=0; i<Knot::NX; ++i) kp.q_bar(i) += kp.C(k,i) * g;
+            for(int i=0; i<Knot::NU; ++i) kp.r_bar(i) += kp.D(k,i) * g;
+        }
         #endif
     }
 
@@ -94,15 +140,12 @@ namespace minisolver {
             MSMat<double, Knot::NX, Knot::NU> VxxB;
             VxxB.noalias() = Vxx * kp.B; 
 
-            // Calculate gradients Qx, Qu
             MSMat<double, Knot::NX, 1> Qx = kp.q_bar;
             Qx.noalias() += kp.A.transpose() * Vx;
             
             MSMat<double, Knot::NU, 1> Qu = kp.r_bar;
             Qu.noalias() += kp.B.transpose() * Vx;
             
-            // Calculate Hessians Qxx, Quu, Qux
-            // Initialize with Barrier terms, then add expansion terms
             MSMat<double, Knot::NX, Knot::NX> Qxx = kp.Q_bar;
             Qxx.noalias() += kp.A.transpose() * VxxA;
             
@@ -118,7 +161,6 @@ namespace minisolver {
                 for(int i=0; i<Knot::NU; ++i) Quu(i,i) += 1e-9;
             }
 
-            // Cholesky Solve
             if (strategy == InertiaStrategy::REGULARIZATION && Knot::NU <= 2) {
                 MSMat<double, Knot::NU, Knot::NU> Quu_inv;
                 if (!fast_inverse(Quu, Quu_inv)) return false;
@@ -145,31 +187,16 @@ namespace minisolver {
                 kp.K = llt.solve(-Qux);
             }
 
-            // Update Value Function
-            // Vx = Qx + K' (Quu d + Qu) + K' Qux' d + Qux' d
-            // Simplified: Vx = Qx + Qux' d + Qux' K x ? No.
-            // Simplified: Vx = Qx + Qux^T * d + Vxx * ...
-            // Correct Simplified: Vx = Qx + Qux^T * d
-            // Correct Simplified: Vxx = Qxx + Qux^T * K
-            
-            // Re-use Qx memory for Vx? No, Vx needs to be propagated.
-            // But we can compute Vx directly.
+            // Update Value Function (Optimized)
+            // Vx = Qx + Qux^T * d
+            // Vxx = Qxx + Qux^T * K
             Vx = Qx;
             Vx.noalias() += Qux.transpose() * kp.d;
 
             Vxx = Qxx;
             Vxx.noalias() += Qux.transpose() * kp.K;
             
-            // Symmetrize
-            // Vxx = 0.5 * (Vxx + Vxx.transpose()); 
-            // In high perf, maybe just copy upper to lower? Or trust symmetry?
-            // Trusting symmetry saves ops. But accumulated error might be an issue.
-            // Let's do it efficiently:
-            // Vxx.template triangularView<Eigen::Lower>() = Vxx.transpose();
-            // This copies upper to lower.
-            // For 4x4, full add + scale might be faster due to SIMD.
             Vxx = 0.5 * (Vxx + Vxx.transpose());
-            
             for(int i=0; i<Knot::NX; ++i) Vxx(i,i) += reg;
         }
 
@@ -179,8 +206,6 @@ namespace minisolver {
             auto& kp = traj[k];
             kp.du.noalias() = kp.K * kp.dx + kp.d;
             MSVec<double, Knot::NX> defect = kp.f_resid - traj[k+1].x;
-            // dx_next = A dx + B du + defect
-            // Use noalias
             traj[k+1].dx.noalias() = kp.A * kp.dx;
             traj[k+1].dx.noalias() += kp.B * kp.du;
             traj[k+1].dx += defect;
