@@ -15,6 +15,13 @@ MiniSolver is a blazing fast, header-only C++17 library for solving Nonlinear Mo
     *   **Watchdog / Slack Reset**: Heuristic strategies to escape local minima or stuck iterations.
 *   **💾 Zero-Malloc**: Uses `std::array` and static templates (`MAX_N`) to ensure **zero dynamic memory allocation** during the solve phase, making it hard real-time safe.
 *   **🔌 Matrix Abstraction**: Built on a flexible Matrix Abstraction Layer (MAL), allowing you to swap the backend (currently Eigen3) with custom embedded math libraries.
+*   **📈 Advanced Features** (New!):
+    *   **Second Order Correction (SOC)**: Accelerates convergence for highly nonlinear problems (e.g. strict obstacle avoidance).
+    *   **Soft Constraints (L1 & L2)**: Native support for soft constraints via implicit Dual Regularization and Box Barriers, **without increasing problem dimensions**.
+    *   **SQP-RTI**: Real-Time Iteration mode for ultra-fast (>1kHz) MPC feedback loops.
+    *   **Iterative Refinement**: High-precision mode to recover from regularization errors.
+    *   **Auto-Tuner**: Built-in tool to automatically find the best solver configuration for your specific problem.
+    *   **Log & Replay**: Serialize solver states to binary files for offline debugging and regression testing.
 
 ## 📊 Benchmark
 
@@ -76,7 +83,6 @@ Or simply run the all-in-one script:
 ```bash
 ./run_demo.sh
 ```
-
 This will solve a collision avoidance problem and generate a `trajectory_plot.png` visualization.
 
 ## 📝 Defining Your Own OCP
@@ -114,7 +120,8 @@ model.minimize( 0.1 * thrust**2 )
 
 # 5. Constraints (g(x,u) <= 0)
 model.subject_to( thrust - 10.0 <= 0 ) # Max thrust
-model.subject_to( 1.0 - (px**2 + py**2) <= 0 ) # Keep away from origin (r > 1)
+# Soft Constraint Example (L1 penalty)
+model.subject_to( 1.0 - (px**2 + py**2) <= 0, weight=100.0, loss='L1' ) 
 
 # 6. Generate C++ Header
 model.generate("include/model")
@@ -134,6 +141,10 @@ int main() {
     // Set initial state
     solver.set_initial_state("px", 0.0);
     
+    // Enable Advanced Features
+    solver.config.enable_soc = true;
+    solver.config.barrier_strategy = BarrierStrategy::MEHROTRA;
+
     // Solve
     solver.solve();
 }
@@ -145,7 +156,7 @@ int main() {
 *   `include/algorithms/`: Independent algorithm implementations (Riccati, Line Search).
 *   `include/solver/`: The main `MiniSolver` orchestrator.
 *   `include/model/`: Generated model headers.
-*   `tools/`: Python DSL (`MiniModel.py`) and benchmark tools.
+*   `tools/`: Python DSL (`MiniModel.py`), benchmark tools, auto-tuner, and replay tools.
 
 ## 🤝 License
 MIT

@@ -10,10 +10,25 @@
 namespace minisolver {
 
     template<typename Knot, typename ModelType>
-    void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverConfig& config, const Knot* aff_kp = nullptr, int stage_idx = -1) {
+    void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverConfig& config, const Knot* aff_kp = nullptr, const Knot* soc_kp = nullptr) {
         MSVec<double, Knot::NC> sigma;
         MSVec<double, Knot::NC> grad_mod;
 
+        // SOC Residual Override
+        // If soc_kp is provided, it contains the candidate residuals g(x_cand).
+        // Standard IPM linearizes around x_k: g(x_k) + J dx = -residual.
+        // Usually residual = 0 (feasibility).
+        // In perturbed KKT (barrier), we target g + s = 0.
+        // r_prim = g_val + s.
+        // For SOC, we want to correct the second order error.
+        // g(x_k + dx) approx g(x_k) + J dx + 0.5 dx' H dx
+        // We want g(x_k + dx + dx_soc) = 0
+        // g(x_k + dx) + J dx_soc = 0
+        // J dx_soc = - g(x_k + dx).
+        // So we want the linear system J dx_soc = -r_soc.
+        // This means we should replace `g_val` in r_prim with `soc_kp->g_val`.
+        // Note: s is from base point x_k? Yes, we linearize at x_k.
+        
         for(int i=0; i<Knot::NC; ++i) {
             double s_i = kp.s(i);
             double lam_i = kp.lam(i);
@@ -34,15 +49,12 @@ namespace minisolver {
             if (type == 2 && w > 1e-6) { // L2 Soft (Dual Reg)
                 sigma_val = 1.0 / (s_i/lam_i + 1.0/w);
             }
-            // For L1 Soft, we use the "Extended System" reduction implicitly.
-            // Effective Sigma = (s_hard/lam + soft_s/(w-lam))^-1
-            // soft_s is the slack for the penalty constraint (z >= 0, z(w-lam) = mu)
-            else if (type == 1 && w > 1e-6) {
-                double soft_s_i = kp.soft_s(i); // Current soft slack
+            else if (type == 1 && w > 1e-6) { // L1 Soft (Dual Box)
+                double soft_s_i = kp.soft_s(i); 
                 if (soft_s_i < config.min_barrier_slack) soft_s_i = config.min_barrier_slack;
                 
                 double term_hard = s_i / lam_i;
-                double term_soft = soft_s_i / (w - lam_i); // Assuming nu = w - lam
+                double term_soft = soft_s_i / (w - lam_i); 
                 
                 sigma_val = 1.0 / (term_hard + term_soft);
             }
@@ -52,13 +64,15 @@ namespace minisolver {
             double r_y = s_i * lam_i - mu;
             if (aff_kp) r_y += aff_kp->ds(i) * aff_kp->dlam(i);
             
+            // Primal residual base
+            double g_val_i = (soc_kp) ? soc_kp->g_val(i) : kp.g_val(i);
             double effective_r_prim = 0.0;
             
             if (type == 1 && w > 1e-6) {
                 double soft_s_i = kp.soft_s(i); 
                 if (soft_s_i < config.min_barrier_slack) soft_s_i = config.min_barrier_slack;
 
-                double r_eq = kp.g_val(i) + s_i - soft_s_i;
+                double r_eq = g_val_i + s_i - soft_s_i;
                 double r_z = soft_s_i * (w - lam_i) - mu;
                 if (aff_kp) {
                     double dsoft_s_i = aff_kp->dsoft_s(i);
@@ -67,15 +81,20 @@ namespace minisolver {
                 }
                 
                 effective_r_prim = r_eq + r_y/lam_i - r_z/(w - lam_i);
-                grad_mod(i) = sigma_val * effective_r_prim;
-            }
-            else if (type == 2 && w > 1e-6) {
-                double r_prim_L2 = kp.g_val(i) + s_i - lam_i/w;
-                grad_mod(i) = sigma_val * r_prim_L2 - sigma_val * (r_y / lam_i);
+                grad_mod(i) = lam_i - sigma_val * effective_r_prim;
             }
             else {
-                double r_eq = kp.g_val(i) + s_i;
-                grad_mod(i) = sigma_val * r_eq - (r_y / s_i);
+                // Standard / L2
+                double term2;
+                if (type == 2 && w > 1e-6) {
+                    double r_prim_L2 = g_val_i + s_i - lam_i/w;
+                    term2 = sigma_val * (r_y / lam_i);
+                    grad_mod(i) = sigma_val * r_prim_L2 - term2;
+                } else {
+                    double r_eq = g_val_i + s_i;
+                    term2 = r_y / s_i;
+                    grad_mod(i) = sigma_val * r_eq - term2;
+                }
             }
         }
 
@@ -109,7 +128,9 @@ namespace minisolver {
     }
 
     template<typename Knot, typename ModelType>
-    void recover_dual_search_directions(Knot& kp, double mu, const minisolver::SolverConfig& config, int stage_idx = -1) {
+    void recover_dual_search_directions(Knot& kp, double mu, const minisolver::SolverConfig& config, const Knot* soc_kp = nullptr) {
+        // Use soc_kp->g_val if available
+        
         MSVec<double, Knot::NC> constraint_step = kp.C * kp.dx + kp.D * kp.du;
 
         for(int i=0; i<Knot::NC; ++i) {
@@ -126,18 +147,19 @@ namespace minisolver {
             }
             
             double lam_i = kp.lam(i);
-            double r_y = s_i * lam_i - mu; // Standard Centering Residual
+            double r_y = s_i * lam_i - mu; 
+            
+            double g_val_i = (soc_kp) ? soc_kp->g_val(i) : kp.g_val(i);
 
             if (type == 1 && w > 1e-6) { // L1 Soft
                 double soft_s_i = kp.soft_s(i);
                 if (soft_s_i < config.min_barrier_slack) soft_s_i = config.min_barrier_slack;
                 
-                // Recompute Sigma and RHS terms locally
                 double term_hard = s_i / lam_i;
                 double term_soft = soft_s_i / (w - lam_i);
                 double sigma_val = 1.0 / (term_hard + term_soft);
                 
-                double r_eq = kp.g_val(i) + s_i - soft_s_i;
+                double r_eq = g_val_i + s_i - soft_s_i;
                 double r_z = soft_s_i * (w - lam_i) - mu;
                 double eff_r = r_eq + r_y/lam_i - r_z/(w - lam_i);
                 
@@ -145,12 +167,10 @@ namespace minisolver {
                 kp.dlam(i) = dlam;
                 
                 kp.ds(i) = (-r_y - s_i * dlam) / lam_i; 
-                kp.dsoft_s(i) = -(r_z - soft_s_i * dlam) / (w - lam_i); // d(w-lam) = -dlam -> z*d(w-lam) -> -z*dlam
-                // Eq: (w-lam) dz + z d(w-lam) = -rz => (w-lam) dz - z dlam = -rz
-                // dz = (-rz + z dlam)/(w-lam)
+                kp.dsoft_s(i) = -(r_z - soft_s_i * dlam) / (w - lam_i); 
             }
             else if (type == 2 && w > 1e-6) { // L2 Soft
-                double r_prim_L2 = kp.g_val(i) + s_i - lam_i/w;
+                double r_prim_L2 = g_val_i + s_i - lam_i/w;
                 double term_rhs = -r_y + lam_i * (r_prim_L2 + constraint_step(i));
                 double factor = 1.0 / (s_i + lam_i/w);
                 
@@ -158,7 +178,7 @@ namespace minisolver {
                 kp.ds(i) = -r_prim_L2 - constraint_step(i) + kp.dlam(i)/w;
             }
             else { // Hard
-                double r_prim = kp.g_val(i) + s_i;
+                double r_prim = g_val_i + s_i;
                 double term_rhs = -r_y + lam_i * (r_prim + constraint_step(i));
                 
                 kp.dlam(i) = (1.0 / s_i) * term_rhs;
@@ -166,7 +186,7 @@ namespace minisolver {
             }
         }
     }
-// ... rest of file (fast_inverse, cpu_serial_solve) unchanged ...
+
     template<typename MatrixType>
     bool fast_inverse(const MatrixType& A, MatrixType& A_inv) {
         // Safe dimension check compatible with C++17
@@ -195,12 +215,14 @@ namespace minisolver {
     template<typename TrajVector, typename ModelType>
     bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg, minisolver::InertiaStrategy strategy, 
                           const minisolver::SolverConfig& config = minisolver::SolverConfig(),
-                          const TrajVector* affine_traj = nullptr) {
+                          const TrajVector* affine_traj = nullptr,
+                          const TrajVector* soc_traj = nullptr) { // [NEW] Added arg
         using Knot = typename TrajVector::value_type;
 
         for(int k=0; k<=N; ++k) {
             const Knot* aff_kp = (affine_traj) ? &((*affine_traj)[k]) : nullptr;
-            compute_barrier_derivatives<Knot, ModelType>(traj[k], mu, config, aff_kp, k); 
+            const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
+            compute_barrier_derivatives<Knot, ModelType>(traj[k], mu, config, aff_kp, soc_kp); 
         }
 
         MSVec<double, Knot::NX> Vx = traj[N].q_bar;
@@ -218,7 +240,28 @@ namespace minisolver {
             VxxB.noalias() = Vxx * kp.B; 
 
             if (config.enable_defect_correction) {
-                MSVec<double, Knot::NX> defect = kp.f_resid - traj[k+1].x;
+                // For SOC, defect should likely be based on soc_kp values?
+                // Standard SOC: g(x_cand) + J dx_soc = 0.
+                // Dynamics constraint: x_{k+1} = f(x_k, u_k).
+                // Linearization: f + A dx + B du - (x_{k+1} + dx_{k+1}) = 0
+                // Residual: f - x_{k+1}.
+                // SOC: f(x_cand, u_cand) - x_{cand, k+1} + ...
+                // Usually we do SOC on dynamics too.
+                // If soc_traj is provided, we should use its defect?
+                // Let's assume for now SOC mainly targets inequalities, and dynamics are handled by re-linearization in outer loop.
+                // But for consistency, if we provide soc_traj, we can use its defect.
+                
+                MSVec<double, Knot::NX> defect;
+                if (soc_traj) {
+                    // defect = f(x_cand) - x_cand_next ?
+                    // soc_traj stores candidate trajectory x, u.
+                    // f_resid in soc_traj[k] stores f(x_cand, u_cand).
+                    // So defect = soc_traj[k].f_resid - soc_traj[k+1].x
+                    defect = (*soc_traj)[k].f_resid - (*soc_traj)[k+1].x;
+                } else {
+                    defect = kp.f_resid - traj[k+1].x;
+                }
+                
                 MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
 
                 kp.q_bar.noalias() += kp.A.transpose() * Vx;
@@ -292,14 +335,24 @@ namespace minisolver {
         for(int k=0; k < N; ++k) {
             auto& kp = traj[k];
             kp.du.noalias() = kp.K * kp.dx + kp.d;
-            MSVec<double, Knot::NX> defect = kp.f_resid - traj[k+1].x;
+            
+            MSVec<double, Knot::NX> defect;
+            if (soc_traj) {
+                defect = (*soc_traj)[k].f_resid - (*soc_traj)[k+1].x;
+            } else {
+                defect = kp.f_resid - traj[k+1].x;
+            }
+
             traj[k+1].dx.noalias() = kp.A * kp.dx;
             traj[k+1].dx.noalias() += kp.B * kp.du;
             traj[k+1].dx += defect;
             
-            recover_dual_search_directions<Knot, ModelType>(kp, mu, config, k); 
+            const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
+            recover_dual_search_directions<Knot, ModelType>(kp, mu, config, soc_kp); 
         }
-        recover_dual_search_directions<Knot, ModelType>(traj[N], mu, config, N); 
+        
+        const Knot* soc_kp_N = (soc_traj) ? &((*soc_traj)[N]) : nullptr;
+        recover_dual_search_directions<Knot, ModelType>(traj[N], mu, config, soc_kp_N); 
         
         return true;
     }

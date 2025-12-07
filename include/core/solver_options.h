@@ -107,6 +107,12 @@ struct SolverConfig {
 
     // --- Advanced Features ---
     bool use_exact_hessian = true; 
+    bool enable_iterative_refinement = false;
+    int max_refinement_steps = 1;
+    
+    // SQP-RTI Mode
+    bool enable_rti = false; // [NEW] If true, solve() performs only 1 SQP iteration (or config.max_iters)
+    // and reuses linearization if possible (requires more state storage, currently partial support via warm_start) 
     
     // Line Search Logic
     // PURE IPM: Disable rollout by default. Trust the linearization.
@@ -117,12 +123,13 @@ struct SolverConfig {
     
     // Mehrotra Logic
     bool enable_corrector = true; 
+    bool enable_aggressive_barrier = true; // [NEW] Allow aggressive mu reduction based on step size
     
     // Feasibility Logic (Heuristics)
     // Disabled by default for PURE IPM behavior. Enable only if needed.
     bool enable_slack_reset = false; 
     bool enable_feasibility_restoration = false;
-    bool enable_soc = false; 
+    bool enable_soc = true; // Enable SOC by default for robust handling of nonlinearities 
 };
 
 }

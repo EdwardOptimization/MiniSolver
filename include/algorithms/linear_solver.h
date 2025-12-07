@@ -13,7 +13,22 @@ public:
     // affine_traj: If provided, adds Mehrotra corrector term (ds_aff * dlam_aff) to the RHS
     virtual bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy, 
                       const SolverConfig& config, const TrajArray* affine_traj = nullptr) = 0;
+                      
+    // Overload for SOC (Second Order Correction)
+    virtual bool solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N, double mu, double reg, InertiaStrategy strategy,
+                          const SolverConfig& config) {
+        return false;
+    }
+
+    // [NEW] Iterative Refinement
+    // Solves K * dx_corr = r - K * dx
+    // Uses the existing factorization (if available/stored) or re-solves.
+    // For Riccati, since we don't store factors explicitly in this lightweight version, 
+    // "Refinement" might mean re-running the backward pass with the residual as RHS.
+    // This is expensive (O(N)), but can recover precision lost by regularization.
+    virtual bool refine(TrajArray& traj, int N, double mu, double reg, const SolverConfig& config) {
+        return false; 
+    }
 };
 
 }
-

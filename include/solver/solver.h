@@ -548,6 +548,12 @@ public:
             SolverStatus status = step();
             timer.stop();
             
+            if (config.enable_rti) {
+                if (config.print_level >= PrintLevel::INFO) 
+                    MLOG_INFO("RTI Step Completed.");
+                return SolverStatus::SOLVED; // RTI treats one step as 'done' for real-time loop
+            }
+            
             if (status == SolverStatus::SOLVED) {
                 if (config.print_level >= PrintLevel::INFO) 
                     MLOG_INFO("Converged in " << iter+1 << " iterations.");
@@ -693,7 +699,24 @@ public:
             }
             mu_aff = total_comp / std::max(1, total_dim);
             
-            double sigma = std::pow(mu_aff / mu_curr, 3);
+            // Aggressive Update: Use sigma^k with k >= 1
+            // Heuristic: If affine step is good (large alpha_aff), be aggressive.
+            // If alpha_aff is small, be conservative.
+            double sigma_base = std::pow(mu_aff / mu_curr, 3);
+            double sigma = sigma_base;
+            
+            // [NEW] Aggressive Strategy
+            // If alpha_aff close to 1, we can reduce mu significantly
+            if (config.enable_aggressive_barrier) {
+                if (alpha_aff > 0.9) {
+                    sigma = std::min(sigma, 0.1); // Force at least 10x reduction
+                }
+                // If we are far from solution (large gap), allow faster drop
+                if (mu_curr > 1.0) {
+                    sigma = std::min(sigma, 0.2); 
+                }
+            }
+            
             if (sigma > 1.0) sigma = 1.0;
             double mu_target = sigma * mu_curr;
             

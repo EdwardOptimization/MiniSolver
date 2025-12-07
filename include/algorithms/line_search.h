@@ -292,25 +292,14 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         return true;
     }
     
+    // Helper removed, using linear_solver.solve_soc directly
+    /*
     void solve_soc(TrajArray& soc_traj, const TrajArray& active_traj, const TrajArray& trial_traj, 
                    int N, double mu, double reg, InertiaStrategy inertia,
                    LinearSolver<TrajArray>& solver, const SolverConfig& config) {
-        for(int k=0; k<=N; ++k) soc_traj[k] = active_traj[k];
-        
-        for(int k=0; k<=N; ++k) {
-            soc_traj[k].g_val = trial_traj[k].g_val + (trial_traj[k].s - active_traj[k].s);
-        }
-        
-        // SOC currently only corrects inequalities, could extend to defects
-        
-        bool success = solver.solve(soc_traj, N, mu, reg, inertia, config);
-        if (!success) {
-            for(int k=0; k<=N; ++k) {
-                soc_traj[k].dx.setZero(); soc_traj[k].du.setZero(); 
-                soc_traj[k].ds.setZero(); soc_traj[k].dlam.setZero();
-            }
-        }
+        ...
     }
+    */
 
 public:
     void reset() override {
@@ -371,16 +360,52 @@ public:
                      MLOG_DEBUG("Step rejected. Attempting SOC.");
                 
                 auto soc_data = std::make_unique<TrajArray>();
-                solve_soc(*soc_data, active, candidate, N, mu, reg, config.inertia_strategy, linear_solver, config);
+                // [NEW] Use solve_soc
+                // Note: solve_soc takes 'soc_rhs_traj'. We want to pass the current trial point 'candidate' as RHS source.
+                // soc_data will store the correction step.
+                // The linear_solver needs to solve J * dx_soc = -g(candidate)
                 
-                for(int k=0; k<=N; ++k) {
-                    active[k].dx += (*soc_data)[k].dx;
-                    active[k].du += (*soc_data)[k].du;
-                    active[k].ds += (*soc_data)[k].ds;
-                    active[k].dlam += (*soc_data)[k].dlam;
+                bool soc_success = linear_solver.solve_soc(*soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
+                
+                if (soc_success) {
+                    for(int k=0; k<=N; ++k) {
+                        // Apply correction: x_new = x_candidate + dx_soc
+                        // But wait, we need to re-evaluate merit for this new point in next iteration?
+                        // Actually, standard SOC applies correction and tries to accept immediately.
+                        // Or we update 'candidate' and let the loop continue with same alpha?
+                        // If we update candidate, we are effectively testing alpha=1.0 step + soc.
+                        
+                        // Let's modify candidate directly and re-check acceptability.
+                        candidate[k].x += (*soc_data)[k].dx;
+                        candidate[k].u += (*soc_data)[k].du;
+                        candidate[k].s += (*soc_data)[k].ds;
+                        candidate[k].lam += (*soc_data)[k].dlam;
+                        
+                        // Re-evaluate dynamics/constraints for SOC candidate
+                        double current_dt = dt_traj[k];
+                        if (config.enable_line_search_rollout && k < N) {
+                             if (k==0) candidate[0].x = active[0].x; // Base doesn't change? Wait, SOC modifies base? No.
+                             // SOC modifies the trial point. 
+                             // x_trial = x_k + alpha*dx + dx_soc.
+                             // Here candidate is already x_k + alpha*dx.
+                             // So we just add dx_soc.
+                             // But rollout needs consistent integration.
+                             if (k==0) {} // x0 fixed
+                             else candidate[k].x = Model::integrate(candidate[k-1].x, candidate[k-1].u, candidate[k-1].p, dt_traj[k-1], config.integrator);
+                        }
+                        Model::compute(candidate[k], config.integrator, current_dt);
+                    }
+                    
+                    auto m_soc = compute_metrics(candidate, N, mu, config);
+                    if (is_acceptable(m_soc.first, m_soc.second, config)) {
+                        if (config.print_level >= PrintLevel::DEBUG) 
+                             MLOG_DEBUG("SOC Accepted.");
+                        accepted = true;
+                    }
                 }
+                
                 soc_attempted = true;
-                continue;
+                if (accepted) break;
             }
 
             if (accepted) break;

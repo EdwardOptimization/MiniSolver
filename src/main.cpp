@@ -122,8 +122,8 @@ int main(int argc, char** argv) {
     solver.rollout_dynamics();
 
     std::cout << ">> Solving (Cold Start)...\n";
-    // [NEW] Save case before solving to capture inputs
-    SolverSerializer<CarModel, 100>::save_case("debug_case.dat", solver);
+    // Optional: Save case before solving to capture inputs
+    // SolverSerializer<CarModel, 100>::save_case("debug_case.dat", solver);
     
     SolverStatus status = solver.solve(); 
     std::cout << ">> Final Status: " << status_to_string(status) << "\n";

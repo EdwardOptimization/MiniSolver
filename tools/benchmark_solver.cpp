@@ -33,7 +33,7 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
     std::vector<double> dts(N);
     for(int k=0; k<N; ++k) dts[k] = (k < 20) ? 0.05 : 0.2;
 
-    const int NUM_RUNS = 500;
+    const int NUM_RUNS = 100;
     const int WARMUP_RUNS = 10;
     
     std::vector<double> total_times;
@@ -148,36 +148,57 @@ int main() {
     base.reg_min = 1e-9;
     
     // Shared Robustness Settings
-    base.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR; // Best performer
+    base.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR; 
     base.enable_feasibility_restoration = true;
     base.enable_slack_reset = true;
-    base.slack_reset_trigger = 0.1; // Trigger reset if alpha < 0.1
+    base.slack_reset_trigger = 0.1; 
 
-    // 1. Current: Mehrotra + Filter (Aggressive)
+    // 1. Current: Mehrotra + Filter
     SolverConfig c1 = base;
     c1.barrier_strategy = BarrierStrategy::MEHROTRA;
     c1.line_search_type = LineSearchType::FILTER;
     results.push_back(run_test("Mehrotra + Filter", c1));
     
-    // 2. Classic: Monotone + Merit (Conservative but Robust)
+    // 2. Current with SOC: Mehrotra + Filter + SOC
+    SolverConfig c1_soc = c1;
+    c1_soc.enable_soc = true;
+    results.push_back(run_test("Mehrotra + Filter + SOC", c1_soc));
+
+    // 3. Classic: Monotone + Merit
     SolverConfig c2 = base;
     c2.barrier_strategy = BarrierStrategy::MONOTONE;
     c2.line_search_type = LineSearchType::MERIT;
-    c2.mu_linear_decrease_factor = 0.2; // Standard reduction
+    c2.mu_linear_decrease_factor = 0.2; 
     c2.barrier_tolerance_factor = 10.0;
     results.push_back(run_test("Monotone + Merit", c2));
     
-    // 3. Hybrid: Adaptive + Filter (Balanced)
+    // 4. Classic with SOC: Monotone + Merit + SOC
+    SolverConfig c2_soc = c2;
+    c2_soc.enable_soc = true;
+    results.push_back(run_test("Monotone + Merit + SOC", c2_soc));
+    
+    // 5. Hybrid: Adaptive + Filter (Balanced)
     SolverConfig c3 = base;
     c3.barrier_strategy = BarrierStrategy::ADAPTIVE;
     c3.line_search_type = LineSearchType::FILTER;
     c3.mu_init = 5.0;
     results.push_back(run_test("Adaptive + Filter", c3));
 
+    // 6. Hybrid with SOC: Adaptive + Filter + SOC
+    SolverConfig c3_soc = c3;
+    c3_soc.enable_soc = true;
+    results.push_back(run_test("Adaptive + Filter + SOC", c3_soc));
+    
+    // 7. EULER Integration (Faster) + Adaptive
+    SolverConfig c4 = c3_soc;
+    c4.integrator = IntegratorType::EULER_EXPLICIT;
+    results.push_back(run_test("Adaptive + Filter + SOC (Euler)", c4));
+
+
     // Print Table
     std::cout << "\n=========================================== BENCHMARK RESULTS (Avg of 100 Runs) ===========================================\n";
     std::cout << std::left 
-              << std::setw(25) << "Config" 
+              << std::setw(30) << "Config" 
               << std::setw(8) << "Iters" 
               << std::setw(12) << "Time(ms)" 
               << std::setw(12) << "Min/Max"
@@ -187,14 +208,14 @@ int main() {
               << std::setw(12) << "Cost" 
               << std::setw(10) << "Viol"
               << "Status" << "\n";
-    std::cout << std::string(130, '-') << "\n";
+    std::cout << std::string(135, '-') << "\n";
     
     for(const auto& r : results) {
         std::stringstream range_ss;
         range_ss << std::fixed << std::setprecision(1) << r.time_min << "/" << r.time_max;
         
         std::cout << std::left 
-                  << std::setw(25) << r.name 
+                  << std::setw(30) << r.name 
                   << std::setw(8) << r.iters 
                   << std::fixed << std::setprecision(2) << std::setw(12) << r.time_avg
                   << std::setw(12) << range_ss.str()
