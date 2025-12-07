@@ -15,6 +15,10 @@ struct CarModel {
     static const int NC=5;
     static const int NP=13;
 
+    static constexpr std::array<double, NC> constraint_weights = {0.0, 0.0, 0.0, 0.0, 0.0};
+    static constexpr std::array<int, NC> constraint_types = {0, 0, 0, 0, 0};
+
+
     // --- Name Arrays (for Map Construction) ---
     static constexpr std::array<const char*, NX> state_names = {
         "x",

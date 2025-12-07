@@ -8,6 +8,7 @@
 #include "core/solver_options.h"
 #include "core/trajectory.h"
 #include "algorithms/linear_solver.h"
+#include "solver/line_search.h" // [NEW] Needed for fraction_to_boundary_rule
 
 namespace minisolver {
 
@@ -57,15 +58,53 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                     total_merit -= mu * std::log(kp.s(i));
                 else 
                     total_merit += config.barrier_inf_cost; 
+                
+                // L1 Soft Constraint: Dual Barrier
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                     if (i < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                     }
+                }
+                // For L1, cost += w * s_soft (in kp.cost via objective function? No, in soft slack setup).
+                // In extended KKT, s_soft is explicit.
+                // We need to add barrier for s_soft >= 0 and w-lam >= 0.
+                if (type == 1 && w > 1e-6) {
+                    if (kp.soft_s(i) > config.min_barrier_slack)
+                        total_merit -= mu * std::log(kp.soft_s(i));
+                    else
+                        total_merit += config.barrier_inf_cost;
+
+                    if (w - kp.lam(i) > 1e-9)
+                        total_merit -= mu * std::log(w - kp.lam(i));
+                    else 
+                        total_merit += config.barrier_inf_cost;
+                }
             }
             
             // Inequality Violation
             for(int i=0; i<NC; ++i) {
                 total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i));
+                // For L1 soft: g(x) - s_soft + s_hard = 0
+                // We need to penalize this residual.
+                // Standard code above uses g+s. For L1, it should be g + s_hard - s_soft.
+                // How to detect?
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                     if (i < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                     }
+                }
+                if (type == 1 && w > 1e-6) {
+                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                }
             }
             
             // Dynamic Defect Violation (Multiple Shooting)
-            // If Single Shooting (Rollout) is enabled, defect is 0 (except numerical error)
             if (k < N) {
                 MSVec<double, NX> defect = t[k+1].x - kp.f_resid;
                 // L1 Norm of defect
@@ -104,30 +143,7 @@ public:
         double phi_0 = compute_merit(active, N, mu, config);
         
         // 3. Calc max alpha
-        // Use full step check
-        // fraction_to_boundary_rule is typically a global function or static in solver.h
-        // Let's reimplement it here or include it
-        double alpha = 1.0;
-        double tau = config.line_search_tau;
-        const int NC = Model::NC;
-        
-        for(int k=0; k<=N; ++k) {
-            for(int i=0; i<NC; ++i) {
-                double s = active[k].s(i);
-                double ds = active[k].ds(i);
-                double lam = active[k].lam(i);
-                double dlam = active[k].dlam(i);
-                
-                if (ds < 0) {
-                    double alpha_max = -tau * s / ds;
-                    if (alpha_max < alpha) alpha = alpha_max;
-                }
-                if (dlam < 0) {
-                    double alpha_max = -tau * lam / dlam;
-                    if (alpha_max < alpha) alpha = alpha_max;
-                }
-            }
-        }
+        double alpha = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
 
         trajectory.prepare_candidate();
         auto& candidate = trajectory.candidate();
@@ -142,6 +158,10 @@ public:
                 candidate[k].u = active[k].u + alpha * active[k].du;
                 candidate[k].s = active[k].s + alpha * active[k].ds;
                 candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+                
+                // Update soft vars
+                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+                
                 candidate[k].p = active[k].p; 
                 
                 double current_dt = dt_traj[k];
@@ -154,12 +174,6 @@ public:
 
                 // Compute Residuals
                 if (config.use_exact_hessian) {
-                    // We only need f(x), g(x), cost. Derivatives are not strictly needed for merit check,
-                    // but usually compute() does everything. 
-                    // To save time, we could have a compute_val_only().
-                    // For now, stick to standard compute which fills f_resid, g_val.
-                    // Exact/GN doesn't matter for values, only for derivatives. 
-                    // Use standard compute (GN) as it's potentially cheaper if it skips constraint Hessian logic (though our impl does it all).
                     Model::compute(candidate[k], config.integrator, current_dt);
                 } else {
                     Model::compute(candidate[k], config.integrator, current_dt);
@@ -212,11 +226,46 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
             for(int i=0; i<NC; ++i) {
                 if(kp.s(i) > config.min_barrier_slack) phi -= mu * std::log(kp.s(i));
                 else phi += config.barrier_inf_cost;
+                
+                // L1 Soft Constraint: Dual Barrier
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                     if (i < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                     }
+                }
+                if (type == 1 && w > 1e-6) {
+                    if (kp.soft_s(i) > config.min_barrier_slack)
+                        phi -= mu * std::log(kp.soft_s(i));
+                    else
+                        phi += config.barrier_inf_cost;
+
+                    if (w - kp.lam(i) > 1e-9)
+                        phi -= mu * std::log(w - kp.lam(i));
+                    else 
+                        phi += config.barrier_inf_cost;
+                }
             }
             
             // Infeasibility (Theta)
             for(int i=0; i<NC; ++i) {
-                theta += std::abs(kp.g_val(i) + kp.s(i));
+                // Correct residual for L1
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                     if (i < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                     }
+                }
+                
+                if (type == 1 && w > 1e-6) {
+                    theta += std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                } else {
+                    theta += std::abs(kp.g_val(i) + kp.s(i));
+                }
             }
             
             // Dynamic Defect
@@ -282,27 +331,7 @@ public:
         double phi_0 = m_0.second;
         
         // Fraction to Boundary
-        double alpha = 1.0;
-        double tau = config.line_search_tau;
-        const int NC = Model::NC;
-        
-        for(int k=0; k<=N; ++k) {
-            for(int i=0; i<NC; ++i) {
-                double s = active[k].s(i);
-                double ds = active[k].ds(i);
-                double lam = active[k].lam(i);
-                double dlam = active[k].dlam(i);
-                
-                if (ds < 0) {
-                    double alpha_max = -tau * s / ds;
-                    if (alpha_max < alpha) alpha = alpha_max;
-                }
-                if (dlam < 0) {
-                    double alpha_max = -tau * lam / dlam;
-                    if (alpha_max < alpha) alpha = alpha_max;
-                }
-            }
-        }
+        double alpha = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
         
         trajectory.prepare_candidate();
         auto& candidate = trajectory.candidate();
@@ -317,6 +346,7 @@ public:
                 candidate[k].u = active[k].u + alpha * active[k].du;
                 candidate[k].s = active[k].s + alpha * active[k].ds;
                 candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
                 candidate[k].p = active[k].p; 
                 
                 double current_dt = dt_traj[k];
@@ -362,7 +392,7 @@ public:
             trajectory.swap();
             filter.push_back({theta_0, phi_0}); 
         } else {
-            return 0.0;
+            return 0.0; // Fail
         }
         
         return alpha;

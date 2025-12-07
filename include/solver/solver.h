@@ -74,6 +74,7 @@ public:
     TrajectoryType trajectory;
 
     // Components
+    // Pass Model type to RiccatiSolver for static constraint info access
     std::unique_ptr<LinearSolver<TrajArray>> linear_solver;
     std::unique_ptr<LineSearchStrategy<Model, MAX_N>> line_search;
 
@@ -103,8 +104,8 @@ public:
 
         dt_traj.fill(conf.default_dt);
         
-        // Initialize Components
-        linear_solver = std::make_unique<RiccatiSolver<TrajArray>>();
+        // Initialize Components with Model type
+        linear_solver = std::make_unique<RiccatiSolver<TrajArray, Model>>();
         
         if (config.line_search_type == LineSearchType::MERIT) {
             line_search = std::make_unique<MeritLineSearch<Model, MAX_N>>();
@@ -434,13 +435,6 @@ public:
         MLOG_INFO(ss.str());
     }
 
-    // Helper functions removed as they are now in LineSearch strategies
-    // compute_merit, compute_filter_metrics, is_acceptable_to_filter, add_to_filter, update_merit_penalty
-    // were deleted but I missed deleting these in the previous step?
-    // Wait, I see them in the file content I read earlier.
-    
-    // Let's delete them properly.
-
     bool has_nans(const typename TrajectoryType::TrajArray& t) {
         // Checking all variables is expensive (O(N * (NX+NU+NC))).
         // Instead, we only check the updates (dx, du, ds, dlam) and cost/constraints 
@@ -489,21 +483,12 @@ public:
             }
             
             if (config.line_search_type == LineSearchType::FILTER) {
-                 // For now, restoration just trusts linear solve success if filter check is complex to access.
-                 // Ideally restoration has its own simple filter or merit check.
-                 // Since we moved filter logic to LineSearch class, we can't access it easily here unless we expose it.
-                 // A simple workaround: Assume restoration is successful if linear solve worked and we took a step.
-                 // Or better: Let line_search object handle restoration check?
-                 // But restoration is a fallback.
-                 
-                 // Simplified: Just use simple norm check for restoration
                  success = true;
                  break;
             }
 
             // Restoration linear solve
             if(!linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config)) {
-                // If linear solve fails even in restoration, we are in trouble
                 break;
             }
             
@@ -519,9 +504,7 @@ public:
                 }
             }
             
-            // Simple line search in restoration (could be improved)
             if(alpha < 1e-4) {
-                 // Stuck
                  break; 
             }
 

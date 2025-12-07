@@ -24,6 +24,10 @@ class OptimalControlModel:
         # Special Constraints logic
         # Store tuples: (type, data_dict)
         self.special_constraints = []
+        
+        # Soft Constraints Meta Data
+        # list of {index, type='L1'/'L2', weight}
+        self.soft_constraints = []
 
     def state(self, *names):
         symbols = []
@@ -70,13 +74,18 @@ class OptimalControlModel:
         for expr in exprs:
             self.objective += expr
 
-    def subject_to(self, *constraints):
+    def subject_to(self, *constraints, weight=None, loss='L2'):
         """
         Add inequality constraint.
         Accepts: 
         - expr <= 0
         - expr >= 0
         - expr (assumed <= 0)
+        
+        If weight > 0 is provided, marks the constraint as "Soft".
+        This does NOT modify the objective function directly.
+        Instead, it registers metadata so the Solver can apply Dual Regularization (L2) 
+        or Dual Bounding (L1) during the solve phase.
         """
         for constraint in constraints:
             expr = constraint
@@ -84,18 +93,22 @@ class OptimalControlModel:
                 expr = constraint.lhs - constraint.rhs
             elif isinstance(constraint, sp.GreaterThan): # lhs >= rhs -> rhs - lhs <= 0
                 expr = constraint.rhs - constraint.lhs
-                
+            
+            # Add to constraints list
             self.constraints.append(expr)
+            idx = len(self.constraints) - 1
+            
+            if weight is not None and weight > 0.0:
+                self.soft_constraints.append({
+                    'index': idx,
+                    'type': loss,
+                    'weight': weight
+                })
 
     def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside', linearize_at_boundary=False):
         """
         Add a quadratic constraint: (x-center)^T Q (x-center) {sense} rhs
-        
-        linearize_at_boundary: If True, uses a Half-Space approximation derived from projecting the
-        current state to the quadratic boundary. This prevents constraint value scaling issues (e.g. d^2 vs d)
-        and Hessian singularities near the center.
         """
-        
         # Helper to process Q
         if not isinstance(Q, sp.Matrix):
             Q_mat = sp.Matrix(Q)
@@ -121,41 +134,13 @@ class OptimalControlModel:
         
         if is_exclusion:
             if linearize_at_boundary:
-                # Store metadata to inject custom C++ code later
-                # We add a dummy constraint to maintain index alignment, 
-                # but we will overwrite its value/derivative calculation.
-                
-                # Create auxiliary symbols for x_proj to be used in symbolic expression
-                # But actually, simpler to inject the C++ block fully.
-                # Just add a placeholder 0 constraint for now?
-                # No, SymPy needs something to CSE.
-                # Let's use the standard "Square" form as the placeholder, 
-                # but mark it for "Boundary Linearization" substitution.
-                
-                # Note: To enable CSE to work on shared terms, we use the quad form.
-                # But we will intercept the generation logic.
-                
-                # Actually, simpler approach:
-                # Generate a symbolic expression that represents the Half-Plane.
-                # L(x) = 2 * (x_proj - c)^T * Q * (x - x_proj) <= 0
-                # But x_proj depends on x. 
-                # To prevent SymPy from differentiating x_proj(x), we introduce dummy symbols for x_proj.
-                
                 xp_syms = [sp.symbols(f"xp_{len(self.special_constraints)}_{i}") for i in range(len(x))]
                 xp_vec = sp.Matrix(xp_syms)
                 
                 # Gradient at boundary: 2 Q (xp - c)
                 grad_at_boundary = 2 * Q_mat * (xp_vec - c_vec)
                 
-                # Linearized Constraint: grad^T (x - xp) <= 0
-                # Note: Since xp is on boundary, (x-xp) is the vector from boundary to point.
-                # If x is outside, (x-xp) aligns with grad (outward). 
-                # So grad^T (x-xp) > 0.
-                # We want Exclusion (Outside) -> dist >= 0.
-                # Constraint g <= 0.
-                # So we want -dist <= 0.
-                # - grad^T (x - xp) <= 0.
-                
+                # Linearized Constraint: - grad^T (x - xp) <= 0
                 boundary_linear_expr = - (grad_at_boundary.T * (x_vec - xp_vec))[0]
                 
                 self.constraints.append(boundary_linear_expr)
@@ -445,6 +430,33 @@ class OptimalControlModel:
         # Constants
         code_constants = f"static const int NX={nx};\n    static const int NU={nu};\n    static const int NC={nc};\n    static const int NP={np_param};"
         
+        # Generate Soft Constraints Meta-Data Array
+        # We need an array of weights and types.
+        # Let's map L1 -> 1, L2 -> 2
+        # Weights: array of doubles. 0 means hard.
+        
+        soft_weights_str = "{"
+        soft_types_str = "{"
+        
+        weights_list = [0.0] * nc
+        types_list = [0] * nc # 0: Hard, 1: L1, 2: L2
+        
+        for sc in self.soft_constraints:
+            idx = sc['index']
+            w = sc['weight']
+            t = 2 if sc['type'] == 'L2' else 1
+            if idx < nc:
+                weights_list[idx] = w
+                types_list[idx] = t
+        
+        soft_weights_str += ", ".join([str(w) for w in weights_list]) + "}"
+        soft_types_str += ", ".join([str(t) for t in types_list]) + "}"
+        
+        code_soft = f"    static constexpr std::array<double, NC> constraint_weights = {soft_weights_str};\n"
+        code_soft += f"    static constexpr std::array<int, NC> constraint_types = {soft_types_str};\n"
+        
+        code_constants += "\n\n" + code_soft
+
         # Name Arrays
         code_names = f"static constexpr std::array<const char*, NX> state_names = {{\n"
         for s in self.states: code_names += f'        "{s.name}",\n'

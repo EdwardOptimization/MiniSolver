@@ -48,8 +48,15 @@ struct KnotPoint {
 
     // --- DUAL VARIABLES & SLACKS ---
     // Inequality Constraints: g(x,u) + s = 0, s >= 0
-    MSVec<T, NC> s;   // Slack variables
+    // Standard IPM slacks/duals
+    MSVec<T, NC> s;   // Slack variables (s_hard in L1 formulation)
     MSVec<T, NC> lam; // Dual variables (Lambda)
+    
+    // [NEW] Soft Constraint Variables
+    // soft_s: The slack variable 's_soft' in g(x) - s_soft + s_hard = 0
+    // soft_dual: The dual variable 'nu' for the constraint s_soft >= 0
+    MSVec<T, NC> soft_s; 
+    MSVec<T, NC> soft_dual; 
 
     // --- MODEL DATA (Derivatives) ---
     // Dynamics: x_{k+1} = A x_k + B u_k + f_resid
@@ -80,15 +87,15 @@ struct KnotPoint {
     MSVec<T, NX>  q_bar;
     MSVec<T, NU>  r_bar;
 
-    // Condensed System for Backward Pass (Removed for CPU memory optimization)
-    // MSMat<T, NX, NX> op_A;
-    // MSVec<T, NX>  op_b;
-
     // --- SEARCH DIRECTIONS ---
     MSVec<T, NX> dx;
     MSVec<T, NU> du;
     MSVec<T, NC> ds;
     MSVec<T, NC> dlam;
+    
+    // [NEW] Soft Slack Steps
+    MSVec<T, NC> dsoft_s;
+    MSVec<T, NC> dsoft_dual;
 
     // Feedback Gains
     MSMat<T, NU, NX> K;
@@ -101,15 +108,17 @@ struct KnotPoint {
 
     void set_zero() {
         MatOps::setZero(x); MatOps::setZero(u); MatOps::setZero(p);
-        s.setOnes(); lam.setOnes(); // Initialize to valid interior point usually
+        s.setOnes(); lam.setOnes(); 
+        soft_s.setOnes(); soft_dual.setOnes(); // Initialize to valid interior point
 
         MatOps::setIdentity(A); MatOps::setZero(B); MatOps::setZero(f_resid);
         MatOps::setZero(C); MatOps::setZero(D); MatOps::setZero(g_val);
 
-        cost = 0; // Reset cost
+        cost = 0; 
         MatOps::setIdentity(Q); MatOps::setIdentity(R); MatOps::setZero(H); MatOps::setZero(q); MatOps::setZero(r);
         
-        MatOps::setZero(dx); MatOps::setZero(du); MatOps::setZero(ds); MatOps::setZero(dlam);
+        MatOps::setZero(dx); MatOps::setZero(du); MatOps::setZero(ds); MatOps::setZero(dlam); 
+        MatOps::setZero(dsoft_s); MatOps::setZero(dsoft_dual);
         MatOps::setZero(K); MatOps::setZero(d);
     }
 
@@ -117,6 +126,8 @@ struct KnotPoint {
         // Default slacks/duals to small positive numbers to avoid NaN in first iteration
         s.fill(1.0);
         lam.fill(1.0);
+        soft_s.fill(1.0);
+        soft_dual.fill(1.0);
     }
 };
 }
