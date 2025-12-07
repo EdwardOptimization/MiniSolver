@@ -20,6 +20,10 @@ class OptimalControlModel:
         
         # Flags
         self.use_rk4 = True
+        
+        # Special Constraints logic
+        # Store tuples: (type, data_dict)
+        self.special_constraints = []
 
     def state(self, *names):
         symbols = []
@@ -83,12 +87,13 @@ class OptimalControlModel:
                 
             self.constraints.append(expr)
 
-    def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside'):
+    def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside', linearize_at_boundary=False):
         """
         Add a quadratic constraint: (x-center)^T Q (x-center) {sense} rhs
         
-        This method automatically detects non-convex exclusion constraints (like 'outside' a region)
-        and applies reformulation to ensure consistent gradients (e.g. using sqrt).
+        linearize_at_boundary: If True, uses a Half-Space approximation derived from projecting the
+        current state to the quadratic boundary. This prevents constraint value scaling issues (e.g. d^2 vs d)
+        and Hessian singularities near the center.
         """
         
         # Helper to process Q
@@ -115,12 +120,64 @@ class OptimalControlModel:
         is_exclusion = (sense == '>=' or type == 'outside')
         
         if is_exclusion:
-            # Reformulate: sqrt(quad_term + eps) >= sqrt(rhs)
-            # -> sqrt(rhs) - sqrt(quad_term + eps) <= 0
-            epsilon = 1e-4
-            robust_dist = sp.sqrt(quad_term + epsilon)
-            robust_rhs = sp.sqrt(rhs)
-            self.constraints.append(robust_rhs - robust_dist)
+            if linearize_at_boundary:
+                # Store metadata to inject custom C++ code later
+                # We add a dummy constraint to maintain index alignment, 
+                # but we will overwrite its value/derivative calculation.
+                
+                # Create auxiliary symbols for x_proj to be used in symbolic expression
+                # But actually, simpler to inject the C++ block fully.
+                # Just add a placeholder 0 constraint for now?
+                # No, SymPy needs something to CSE.
+                # Let's use the standard "Square" form as the placeholder, 
+                # but mark it for "Boundary Linearization" substitution.
+                
+                # Note: To enable CSE to work on shared terms, we use the quad form.
+                # But we will intercept the generation logic.
+                
+                # Actually, simpler approach:
+                # Generate a symbolic expression that represents the Half-Plane.
+                # L(x) = 2 * (x_proj - c)^T * Q * (x - x_proj) <= 0
+                # But x_proj depends on x. 
+                # To prevent SymPy from differentiating x_proj(x), we introduce dummy symbols for x_proj.
+                
+                xp_syms = [sp.symbols(f"xp_{len(self.special_constraints)}_{i}") for i in range(len(x))]
+                xp_vec = sp.Matrix(xp_syms)
+                
+                # Gradient at boundary: 2 Q (xp - c)
+                grad_at_boundary = 2 * Q_mat * (xp_vec - c_vec)
+                
+                # Linearized Constraint: grad^T (x - xp) <= 0
+                # Note: Since xp is on boundary, (x-xp) is the vector from boundary to point.
+                # If x is outside, (x-xp) aligns with grad (outward). 
+                # So grad^T (x-xp) > 0.
+                # We want Exclusion (Outside) -> dist >= 0.
+                # Constraint g <= 0.
+                # So we want -dist <= 0.
+                # - grad^T (x - xp) <= 0.
+                
+                boundary_linear_expr = - (grad_at_boundary.T * (x_vec - xp_vec))[0]
+                
+                self.constraints.append(boundary_linear_expr)
+                
+                # Store info to generate the xp calculation code
+                self.special_constraints.append({
+                    'type': 'quad_boundary_proj',
+                    'index': len(self.constraints) - 1,
+                    'xp_syms': xp_syms,
+                    'Q': Q_mat,
+                    'c': c_vec,
+                    'x': x_vec,
+                    'rhs': rhs
+                })
+                
+            else:
+                # Reformulate: sqrt(quad_term + eps) >= sqrt(rhs)
+                # -> sqrt(rhs) - sqrt(quad_term + eps) <= 0
+                epsilon = 1e-6 # Tighter eps
+                robust_dist = sp.sqrt(quad_term + epsilon)
+                robust_rhs = sp.sqrt(rhs)
+                self.constraints.append(robust_rhs - robust_dist)
         else:
             # Standard form
             if sense == '<=':
@@ -205,6 +262,30 @@ class OptimalControlModel:
                         code += f"        if constexpr (Exact) kp.{name}({r},{c}) += {code_val_con};\n"
         return code
 
+    def _generate_special_constraint_preamble(self):
+        code = "\n        // --- Special Constraints Pre-Calculation ---\n"
+        for info in self.special_constraints:
+            if info['type'] == 'quad_boundary_proj':
+                # Calculate Projection
+                x_vec = info['x']
+                c_vec = info['c']
+                Q_mat = info['Q']
+                diff = x_vec - c_vec
+                d2_expr = (diff.T * Q_mat * diff)[0]
+                
+                rhs_val = info['rhs'] # Usually a number or symbol
+                
+                # Note: Declaring variables in outer scope to be visible to CSE expressions
+                code += f"        T d2 = {sp.ccode(d2_expr)};\n"
+                code += f"        T rhs = {sp.ccode(rhs_val)};\n"
+                code += f"        T scale = sqrt(rhs / (d2 + 1e-9));\n"
+                
+                for i, xp_sym in enumerate(info['xp_syms']):
+                    # xp_i = c_i + scale * (x_i - c_i)
+                    val_expr = c_vec[i] + sp.symbols("scale") * (x_vec[i] - c_vec[i])
+                    code += f"        T {xp_sym} = {sp.ccode(val_expr)};\n"
+        return code
+
     def generate(self, output_dir="include/model"):
         # 1. Vectorize
         x_vec = sp.Matrix(self.states)
@@ -254,20 +335,12 @@ class OptimalControlModel:
         integrators['RK4_EXPLICIT'] = x_next_rk4
 
         # Map Implicit to Explicit for Jacobian approximation (or generate same code)
-        # Note: True implicit derivatives require matrix inversion. 
-        # For this generator, we map implicit types to their explicit counterparts for gradient approximation.
         integrators['EULER_IMPLICIT'] = x_next_euler 
         integrators['RK2_IMPLICIT'] = x_next_rk2
         integrators['RK4_IMPLICIT'] = x_next_rk4
 
         # 3. Derivatives & CSE per Integrator
         code_compute_dyn_body = "        switch(type) {\n"
-        
-        # We group them to reduce code size if possible, but separate is clearer
-        # Actually, let's group by unique expressions to save compile time
-        # EULER_EXPLICIT, EULER_IMPLICIT -> Euler logic
-        # RK2_EXPLICIT, RK2_IMPLICIT -> RK2 logic
-        # RK4_EXPLICIT, RK4_IMPLICIT -> RK4 logic
         
         groups = [
             (['EULER_EXPLICIT', 'EULER_IMPLICIT'], integrators['EULER_EXPLICIT']),
@@ -293,9 +366,7 @@ class OptimalControlModel:
             for name, val in repl_dyn:
                 code_compute_dyn_body += f"                T {name} = {sp.ccode(val)};\n"
             
-            # Assignments (manual to handle indentation)
-            # reduced_dyn: [x_next, A, B]
-            
+            # Assignments
             # f_resid (x_next)
             if nx > 0:
                 mat = reduced_dyn[0]
@@ -331,7 +402,6 @@ class OptimalControlModel:
         code_compute_dyn_body += "        }"
 
         # 3.5 Derivatives for Cost & Constraints (Independent of Integrator)
-        # (Assuming cost/constraints are stage-wise and depend on x, u directly, not x_next)
         xu_vec = sp.Matrix.vstack(x_vec, u_vec)
         
         # Cost Derivatives
@@ -395,14 +465,16 @@ class OptimalControlModel:
             code_dyn_cont += f"        xdot({i}) = {sp.ccode(f_cont[i])};\n"
         code_dyn_cont += "        return xdot;"
 
-        # Compute Dynamics Body (The Switch Statement)
-        # We need unpacking first
+        # Compute Dynamics Body
         code_compute_dyn = self._generate_unpack_block(source_kp=True)
         code_compute_dyn += "\n"
         code_compute_dyn += code_compute_dyn_body
 
         # Compute Constraints Body
         code_compute_con = self._generate_unpack_block(source_kp=True)
+        # [NEW] Inject Pre-Calculation for Special Constraints (e.g. Projection)
+        code_compute_con += self._generate_special_constraint_preamble()
+        
         code_compute_con += "\n"
         for name, val in repl_con:
             code_compute_con += f"        T {name} = {sp.ccode(val)};\n"
@@ -416,6 +488,13 @@ class OptimalControlModel:
         if nc > 0:
             for i in range(nc):
                 code_unpack += f"        T lam_{i} = kp.lam({i});\n"
+        
+        # Cost also needs the projection logic if Hessians depend on it?
+        # Our linearized constraints have 0 Hessian, so lam * hess_g is 0.
+        # But if we didn't linearize fully, we might need it. 
+        # With linearize_at_boundary=True, Hessian is 0 symbolic.
+        # So we don't need preamble here unless cost depends on it (it doesn't).
+        
         code_cse = "\n"
         for name, val in repl_cost:
             code_cse += f"        T {name} = {sp.ccode(val)};\n"

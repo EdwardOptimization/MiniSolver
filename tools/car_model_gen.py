@@ -48,10 +48,16 @@ if __name__ == "__main__":
     model.subject_to(steer <= 0.5)
     model.subject_to(steer >= -0.5)
     
-    # Obstacle
-    eps = 1e-6
-    dist = sp.sqrt((x - obs_x)**2 + (y - obs_y)**2 + eps)
-    model.subject_to( (obs_rad + car_rad) - dist <= 0 )
+    # Obstacle - Use robust boundary linearization
+    # Quadratic form: (x-obs_x)^2 + (y-obs_y)^2
+    # Q is identity for x,y.
+    Q_obs = sp.Matrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]) # 4x4 for [x, y, theta, v]
+    center = [obs_x, obs_y, 0, 0]
+    total_rad = obs_rad + car_rad
+    rhs = total_rad**2
+    
+    # Use the new robust mode
+    model.subject_to_quad(Q_obs, [x,y,theta,v], center=center, rhs=rhs, type='outside', linearize_at_boundary=True)
     
     # 6. Generate
     model.generate("include/model")

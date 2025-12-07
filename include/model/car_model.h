@@ -355,17 +355,24 @@ struct CarModel {
         T w_acc = kp.p(11);
         T w_steer = kp.p(12);
 
-        T tmp_c0 = -obs_x + x;
-        T tmp_c1 = -obs_y + y;
-        T tmp_c2 = sqrt(pow(tmp_c0, 2) + pow(tmp_c1, 2) + 9.9999999999999995e-7);
-        T tmp_c3 = 1.0/tmp_c2;
+        // --- Special Constraints Pre-Calculation ---
+        T d2 = pow(-obs_x + x, 2) + pow(-obs_y + y, 2);
+        T rhs = pow(car_rad + obs_rad, 2);
+        T scale = sqrt(rhs / (d2 + 1e-9));
+        T xp_0_0 = obs_x + scale*(-obs_x + x);
+        T xp_0_1 = obs_y + scale*(-obs_y + y);
+        T xp_0_2 = scale*theta;
+        T xp_0_3 = scale*v;
+
+        T tmp_c0 = 2*obs_x - 2*xp_0_0;
+        T tmp_c1 = 2*obs_y - 2*xp_0_1;
 
         // g_val
         kp.g_val(0,0) = acc - 3.0;
         kp.g_val(1,0) = -acc - 3.0;
         kp.g_val(2,0) = steer - 0.5;
         kp.g_val(3,0) = -steer - 0.5;
-        kp.g_val(4,0) = car_rad + obs_rad - tmp_c2;
+        kp.g_val(4,0) = tmp_c0*(x - xp_0_0) + tmp_c1*(-xp_0_1 + y);
 
         // C
         kp.C(0,0) = 0;
@@ -384,8 +391,8 @@ struct CarModel {
         kp.C(3,1) = 0;
         kp.C(3,2) = 0;
         kp.C(3,3) = 0;
-        kp.C(4,0) = -tmp_c0*tmp_c3;
-        kp.C(4,1) = -tmp_c1*tmp_c3;
+        kp.C(4,0) = tmp_c0;
+        kp.C(4,1) = tmp_c1;
         kp.C(4,2) = 0;
         kp.C(4,3) = 0;
 
@@ -435,15 +442,6 @@ struct CarModel {
         T tmp_j1 = 2*w_acc;
         T tmp_j2 = 2*w_steer;
         T tmp_j3 = 2*w_pos;
-        T tmp_j4 = obs_x - x;
-        T tmp_j5 = -tmp_j4;
-        T tmp_j6 = obs_y - y;
-        T tmp_j7 = -tmp_j6;
-        T tmp_j8 = pow(tmp_j5, 2) + pow(tmp_j7, 2) + 9.9999999999999995e-7;
-        T tmp_j9 = pow(tmp_j8, -1.0/2.0);
-        T tmp_j10 = pow(tmp_j8, -3.0/2.0);
-        T tmp_j11 = tmp_j10*tmp_j5;
-        T tmp_j12 = -lam_4*tmp_j11*tmp_j6;
 
         // q
         kp.q(0,0) = w_pos*(2*x - 2*x_ref);
@@ -457,15 +455,11 @@ struct CarModel {
 
         // Q (Conditionally Exact)
         kp.Q(0,0) = tmp_j3;
-        if constexpr (Exact) kp.Q(0,0) += lam_4*(-tmp_j11*tmp_j4 - tmp_j9);
         kp.Q(0,1) = 0;
-        if constexpr (Exact) kp.Q(0,1) += tmp_j12;
         kp.Q(0,2) = 0;
         kp.Q(0,3) = 0;
         kp.Q(1,0) = 0;
-        if constexpr (Exact) kp.Q(1,0) += tmp_j12;
         kp.Q(1,1) = tmp_j3;
-        if constexpr (Exact) kp.Q(1,1) += lam_4*(-tmp_j10*tmp_j6*tmp_j7 - tmp_j9);
         kp.Q(1,2) = 0;
         kp.Q(1,3) = 0;
         kp.Q(2,0) = 0;
