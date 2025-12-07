@@ -27,8 +27,7 @@ struct BenchmarkResult {
 
 BenchmarkResult run_test(const std::string& name, SolverConfig config) {
     int N = 60;
-    config.verbose = false; // Mute output for benchmark
-    config.debug_mode = false;
+    config.print_level = PrintLevel::NONE; // Mute output for benchmark
     
     std::vector<double> dts(N);
     for(int k=0; k<N; ++k) dts[k] = (k < 20) ? 0.05 : 0.2;
@@ -58,11 +57,24 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
         for(int k=0; k<=N; ++k) {
             if(k > 0) current_t += dts[k-1];
             double x_ref = current_t * 5.0; 
-            double params[] = { 5.0, x_ref, 0.0, obs_x, obs_y, obs_rad };
-            if(k < N) solver.get_traj()[k].u.setZero();
-            for(int i=0; i<6; ++i) solver.get_traj()[k].p(i) = params[i];
+            
+            if(k < N) {
+                solver.set_control_guess(k, "acc", 0.0);
+                solver.set_control_guess(k, "steer", 0.0);
+            }
+            
+            solver.set_parameter(k, "v_ref", 5.0);
+            solver.set_parameter(k, "x_ref", x_ref);
+            solver.set_parameter(k, "y_ref", 0.0);
+            solver.set_parameter(k, "obs_x", obs_x);
+            solver.set_parameter(k, "obs_y", obs_y);
+            solver.set_parameter(k, "obs_rad", obs_rad);
         }
-        solver.get_traj()[0].x.setZero(); 
+        solver.set_initial_state("x", 0.0);
+        solver.set_initial_state("y", 0.0);
+        solver.set_initial_state("theta", 0.0);
+        solver.set_initial_state("v", 0.0);
+        
         solver.rollout_dynamics();
 
         auto start = std::chrono::high_resolution_clock::now();
@@ -81,15 +93,16 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
                 last_iter_count = solver.current_iter;
                 
                 double max_viol = 0.0;
-                for(const auto& kp : solver.get_traj()) {
+                for(int k=0; k<=solver.N; ++k) {
                     for(int i=0; i<CarModel::NC; ++i) {
-                        if(kp.g_val(i) > max_viol) max_viol = kp.g_val(i);
+                        double val = solver.get_constraint_val(k, i);
+                        if(val > max_viol) max_viol = val;
                     }
                 }
                 last_converged = (solver.mu <= config.mu_min * 10.0) && (max_viol < 1e-3);
                 
                 double cost = 0.0;
-                for(const auto& kp : solver.get_traj()) cost += kp.cost;
+                for(int k=0; k<=solver.N; ++k) cost += solver.get_stage_cost(k);
                 last_cost = cost;
                 last_viol = max_viol;
             }
@@ -121,8 +134,9 @@ int main() {
     SolverConfig base;
     base.integrator = IntegratorType::RK4_EXPLICIT;
     base.default_dt = 0.1;
-    base.max_iters = 100;
+    base.max_iters = 200;
     base.tol_con = 1e-4;
+    base.print_level = PrintLevel::NONE; // Ensure clean benchmark output
     base.reg_init = 1e-6; 
     base.reg_min = 1e-9;
     
@@ -136,16 +150,12 @@ int main() {
     SolverConfig c1 = base;
     c1.barrier_strategy = BarrierStrategy::MEHROTRA;
     c1.line_search_type = LineSearchType::FILTER;
-    c1.mu_init = 0.1; 
-    c1.mu_min = 1e-6;
     results.push_back(run_test("Mehrotra + Filter", c1));
     
     // 2. Classic: Monotone + Merit (Conservative but Robust)
     SolverConfig c2 = base;
     c2.barrier_strategy = BarrierStrategy::MONOTONE;
     c2.line_search_type = LineSearchType::MERIT;
-    c2.mu_init = 0.1;
-    c2.mu_min = 1e-6;
     c2.mu_linear_decrease_factor = 0.2; // Standard reduction
     c2.barrier_tolerance_factor = 10.0;
     results.push_back(run_test("Monotone + Merit", c2));

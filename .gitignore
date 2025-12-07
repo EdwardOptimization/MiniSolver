@@ -1,5 +1,6 @@
 .idea/
 build/
 .vscode/
+**__pycache__/
 trajectory.csv
 trajectory_plot.png

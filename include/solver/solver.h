@@ -1,6 +1,5 @@
 #pragma once
 #include <vector>
-#include <array>
 #include <iostream>
 #include <algorithm>
 #include <cmath>
@@ -8,6 +7,8 @@
 #include <chrono>
 #include <map>
 #include <memory> 
+#include <string>
+#include <unordered_map> 
 
 #include "core/types.h"
 #include "core/solver_options.h"
@@ -58,21 +59,15 @@ public:
     static const int MAX_N = _MAX_N;
 
     using Knot = KnotPoint<double, NX, NU, NC, NP>;
-    
-    // Static Allocation: Zero malloc at runtime
     using TrajArray = std::array<Knot, MAX_N + 1>;
 
-    // Double Buffering
     TrajArray traj_memory_A;
     TrajArray traj_memory_B;
     
     TrajArray* traj_ptr;      
     TrajArray* candidate_ptr; 
 
-    // Runtime horizon
     int N; 
-    
-    // Using vector for dt is fine as it's small, but array is better
     std::array<double, MAX_N> dt_traj;
     
     Backend backend;
@@ -85,8 +80,12 @@ public:
     int current_iter = 0;
     
     std::vector<std::pair<double, double>> filter;
+    
+    // Lookup Maps
+    std::unordered_map<std::string, int> state_map;
+    std::unordered_map<std::string, int> control_map;
+    std::unordered_map<std::string, int> param_map;
 
-    // Constructor: N is initial valid horizon
     PDIPMSolver(int initial_N, Backend b, SolverConfig conf = SolverConfig()) 
         : N(initial_N), backend(b), config(conf), mu(conf.mu_init), reg(conf.reg_init), merit_nu(conf.merit_nu_init) {
         
@@ -97,16 +96,36 @@ public:
 
         traj_ptr = &traj_memory_A;
         candidate_ptr = &traj_memory_B;
-        
-        // Default DT
         dt_traj.fill(conf.default_dt);
         
-        // Initialize defaults
         for(auto& kp : *traj_ptr) kp.initialize_defaults();
         for(auto& kp : *candidate_ptr) kp.initialize_defaults();
+        
+        // Initialize Maps
+        for (int i = 0; i < NX; ++i) state_map[Model::state_names[i]] = i;
+        for (int i = 0; i < NU; ++i) control_map[Model::control_names[i]] = i;
+        for (int i = 0; i < NP; ++i) param_map[Model::param_names[i]] = i;
     }
     
-    // Set active horizon length
+    // Helper to get index safely
+    int get_state_idx(const std::string& name) const {
+        auto it = state_map.find(name);
+        if (it != state_map.end()) return it->second;
+        return -1;
+    }
+
+    int get_control_idx(const std::string& name) const {
+        auto it = control_map.find(name);
+        if (it != control_map.end()) return it->second;
+        return -1;
+    }
+
+    int get_param_idx(const std::string& name) const {
+        auto it = param_map.find(name);
+        if (it != param_map.end()) return it->second;
+        return -1;
+    }
+
     void resize_horizon(int new_n) {
         if (new_n > MAX_N) {
             std::cerr << "Error: new_n > MAX_N\n";
@@ -115,18 +134,163 @@ public:
         N = new_n;
     }
 
-    TrajArray& get_traj() { return *traj_ptr; }
-    const TrajArray& get_traj() const { return *traj_ptr; }
+    // --- High-Level API ---
 
-    // Helpers to iterate only up to N
-    // We can use spans in C++20, but for C++17 we just pass pointer + size
+    // 1. Initial State
+    void set_initial_state(const std::vector<double>& x0) {
+        if (x0.size() != NX) return;
+        auto& kp = (*traj_ptr)[0];
+        for(int i=0; i<NX; ++i) kp.x(i) = x0[i];
+    }
     
-    void set_params(const double* p) {
+    // Overload: Set by name
+    void set_initial_state(const std::string& name, double value) {
+        int idx = get_state_idx(name);
+        if (idx != -1) (*traj_ptr)[0].x(idx) = value;
+        else std::cerr << "Warning: Unknown state " << name << "\n";
+    }
+
+    // 2. Parameters
+    void set_parameter(int stage, int idx, double value) {
+        if (stage > N || stage < 0) return;
+        if (idx >= NP || idx < 0) return;
+        (*traj_ptr)[stage].p(idx) = value;
+    }
+
+    // Overload: Set by name
+    void set_parameter(int stage, const std::string& name, double value) {
+        int idx = get_param_idx(name);
+        if (idx != -1) set_parameter(stage, idx, value);
+        else std::cerr << "Warning: Unknown param " << name << "\n";
+    }
+    
+    // Set for ALL stages
+    void set_global_parameter(int idx, double value) {
+        if (idx >= NP || idx < 0) return;
         for(int k=0; k <= N; ++k) {
-            auto& kp = (*traj_ptr)[k];
-            for(int i=0; i<NP; ++i) kp.p(i) = p[i];
+            (*traj_ptr)[k].p(idx) = value;
         }
     }
+
+    void set_global_parameter(const std::string& name, double value) {
+        int idx = get_param_idx(name);
+        if (idx != -1) set_global_parameter(idx, value);
+        else std::cerr << "Warning: Unknown param " << name << "\n";
+    }
+
+    double get_parameter(int stage, int idx) const {
+        if (stage > N || stage < 0 || idx >= NP || idx < 0) return 0.0;
+        return (*traj_ptr)[stage].p(idx);
+    }
+    
+    std::vector<double> get_parameters(int stage) const {
+        if (stage > N || stage < 0) return {};
+        const auto& kp = (*traj_ptr)[stage];
+        std::vector<double> res(NP);
+        for(int i=0; i<NP; ++i) res[i] = kp.p(i);
+        return res;
+    }
+
+    // 3. State Access
+    void set_state_guess(int stage, int idx, double value) {
+        if (stage > N || stage < 0 || idx >= NX || idx < 0) return;
+        (*traj_ptr)[stage].x(idx) = value;
+    }
+
+    void set_state_guess(int stage, const std::string& name, double value) {
+        int idx = get_state_idx(name);
+        if (idx != -1) set_state_guess(stage, idx, value);
+    }
+    
+    // Set entire trajectory guess for one state variable (e.g. "x")
+    void set_state_guess_traj(const std::string& name, const std::vector<double>& values) {
+        int idx = get_state_idx(name);
+        if (idx == -1) return;
+        int count = std::min((int)values.size(), N + 1);
+        for(int k=0; k<count; ++k) {
+            (*traj_ptr)[k].x(idx) = values[k];
+        }
+    }
+
+    std::vector<double> get_state_traj(const std::string& name) const {
+        int idx = get_state_idx(name);
+        if (idx == -1) return {};
+        std::vector<double> res;
+        res.reserve(N + 1);
+        for(int k=0; k<=N; ++k) res.push_back((*traj_ptr)[k].x(idx));
+        return res;
+    }
+    
+    // Get state vector at stage
+    std::vector<double> get_state(int stage) const {
+        if (stage > N || stage < 0) return {};
+        const auto& kp = (*traj_ptr)[stage];
+        std::vector<double> res(NX);
+        for(int i=0; i<NX; ++i) res[i] = kp.x(i);
+        return res;
+    }
+
+    double get_state(int stage, int idx) const {
+        if (stage > N || stage < 0 || idx >= NX || idx < 0) return 0.0;
+        return (*traj_ptr)[stage].x(idx);
+    }
+
+    // 4. Control Access
+    void set_control_guess(int stage, int idx, double value) {
+        if (stage >= N || stage < 0 || idx >= NU || idx < 0) return;
+        (*traj_ptr)[stage].u(idx) = value;
+    }
+
+    void set_control_guess(int stage, const std::string& name, double value) {
+        int idx = get_control_idx(name);
+        if (idx != -1) set_control_guess(stage, idx, value);
+    }
+    
+    void set_control_guess_traj(const std::string& name, const std::vector<double>& values) {
+        int idx = get_control_idx(name);
+        if (idx == -1) return;
+        int count = std::min((int)values.size(), N);
+        for(int k=0; k<count; ++k) {
+            (*traj_ptr)[k].u(idx) = values[k];
+        }
+    }
+
+    std::vector<double> get_control_traj(const std::string& name) const {
+        int idx = get_control_idx(name);
+        if (idx == -1) return {};
+        std::vector<double> res;
+        res.reserve(N);
+        for(int k=0; k<N; ++k) res.push_back((*traj_ptr)[k].u(idx));
+        return res;
+    }
+    
+    std::vector<double> get_control(int stage) const {
+        if (stage >= N || stage < 0) return {};
+        const auto& kp = (*traj_ptr)[stage];
+        std::vector<double> res(NU);
+        for(int i=0; i<NU; ++i) res[i] = kp.u(i);
+        return res;
+    }
+
+    double get_control(int stage, int idx) const {
+        if (stage >= N || stage < 0 || idx >= NU || idx < 0) return 0.0;
+        return (*traj_ptr)[stage].u(idx);
+    }
+
+    // 5. Cost Access
+    double get_stage_cost(int stage) const {
+        if (stage > N || stage < 0) return 0.0;
+        return (*traj_ptr)[stage].cost;
+    }
+    
+    // Helper to get constraint value
+    double get_constraint_val(int stage, int idx) const {
+        if (stage > N || idx >= NC) return 0.0;
+        return (*traj_ptr)[stage].g_val(idx);
+    }
+    
+    // Direct access (discouraged but available)
+    TrajArray& get_raw_traj() { return *traj_ptr; }
 
     void set_dt(const std::vector<double>& dts) {
         if(dts.size() > MAX_N) {
@@ -193,7 +357,7 @@ public:
     }
 
     void print_iteration_log(double alpha, bool header = false) {
-        if (!config.verbose && !config.debug_mode) return;
+        if (config.print_level < PrintLevel::ITER) return;
 
         if (header) {
             std::cout << std::left 
@@ -241,7 +405,7 @@ public:
                   << std::setw(10) << alpha 
                   << std::endl;
                   
-        if (config.debug_mode) {
+        if (config.print_level == PrintLevel::DEBUG) {
             double min_slack = 1e9;
             for(int k=0; k<=N; ++k) for(int i=0; i<NC; ++i) if(traj[k].s(i) < min_slack) min_slack = traj[k].s(i);
             std::cout << "      [DEBUG] MinSlack=" << std::scientific << min_slack << std::endl;
@@ -313,9 +477,7 @@ public:
 
     void solve_soc(TrajArray& soc_traj, const TrajArray& trial_traj) {
         auto& current_traj = *traj_ptr;
-        // Copy current
         for(int k=0; k<=N; ++k) soc_traj[k] = current_traj[k];
-        
         for(int k=0; k<=N; ++k) {
             soc_traj[k].g_val = trial_traj[k].g_val + (trial_traj[k].s - current_traj[k].s);
         }
@@ -329,7 +491,8 @@ public:
     }
     
     void feasibility_restoration() {
-        if (config.debug_mode) std::cout << "      [DEBUG] Entering Feasibility Restoration Phase.\n";
+        if (config.print_level >= PrintLevel::DEBUG) 
+            std::cout << "      [DEBUG] Entering Feasibility Restoration Phase.\n";
         double saved_mu = mu;
         double saved_reg = reg;
         mu = 1e-1; 
@@ -338,9 +501,14 @@ public:
         auto& traj = *traj_ptr;
         
         for(int r_iter=0; r_iter < 10; ++r_iter) { 
+            // 1. Compute Derivatives & Update Cost for Min-Norm
+            // We ONLY compute dynamics and constraints here, saving FLOPs.
+            // Cost is manually set to regularize restoration.
             for(int k=0; k<=N; ++k) {
                 double current_dt = dt_traj[k]; 
-                Model::compute(traj[k], config.integrator, current_dt);
+                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                Model::compute_constraints(traj[k]);
+                
                 traj[k].Q.setIdentity(); 
                 traj[k].q.setZero();
                 traj[k].R.setIdentity(); 
@@ -350,7 +518,8 @@ public:
             if (config.line_search_type == LineSearchType::FILTER) {
                 auto metrics = compute_filter_metrics(traj);
                 if (is_acceptable_to_filter(metrics.first, metrics.second)) {
-                    if (config.debug_mode) std::cout << "      [DEBUG] Restoration Successful (Filter Accepted).\n";
+                    if (config.print_level >= PrintLevel::DEBUG) 
+                        std::cout << "      [DEBUG] Restoration Successful (Filter Accepted).\n";
                     add_to_filter(metrics.first, metrics.second);
                     break;
                 }
@@ -381,11 +550,12 @@ public:
             timer.stop();
             
             if (converged) {
-                if (config.verbose) std::cout << ">> Converged in " << iter+1 << " iterations.\n";
+                if (config.print_level >= PrintLevel::INFO) 
+                    std::cout << ">> Converged in " << iter+1 << " iterations.\n";
                 break;
             }
         }
-        if (config.verbose) timer.print();
+        if (config.print_level >= PrintLevel::INFO) timer.print();
     }
 
     bool step() {
@@ -477,26 +647,10 @@ public:
             }
 
             if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0 && alpha > 0.5) {
-                if (config.debug_mode) std::cout << "      [DEBUG] Step rejected. Attempting SOC.\n";
+                if (config.print_level == PrintLevel::DEBUG) 
+                    std::cout << "      [DEBUG] Step rejected. Attempting SOC.\n";
                 
-                // SOC needs a temp buffer. We can't reuse traj (A) as it holds current valid point.
-                // We can't reuse candidate (B) as it holds trial point residuals needed for SOC.
-                // We allocate a local TrajArray on stack/heap? TrajArray is huge on stack.
-                // Ideally class should have 3 buffers.
-                // For now, let's use std::vector allocation for SOC (fallback is rare).
-                // Actually solve_soc signature expects TrajArray&.
-                // Hack: We don't have a 3rd buffer.
-                // We can modify candidate in place if we are careful?
-                // No, we need original A and B residuals.
-                
-                // For this optimization phase, let's SKIP SOC implementation update to save time/complexity
-                // or allocate dynamic vector.
-                // Let's allocate dynamic vector for SOC.
-                
-                // Note: To match TrajArray, we can't easily use vector unless templated.
-                // Let's create a local static array if stack allows, or just heap alloc via unique_ptr.
                 auto soc_data = std::make_unique<TrajArray>();
-                
                 solve_soc(*soc_data, candidate); 
                 
                 for(int k=0; k<=N; ++k) {
@@ -522,7 +676,8 @@ public:
         } else {
              bool recovered = false;
              if (config.enable_slack_reset && alpha < config.slack_reset_trigger) {
-                 if (config.debug_mode) std::cout << "      [DEBUG] Triggering Slack Reset.\n";
+                 if (config.print_level == PrintLevel::DEBUG) 
+                    std::cout << "      [DEBUG] Triggering Slack Reset.\n";
                  for(int k=0; k<=N; ++k) {
                      auto& kp = (*traj_ptr)[k];
                      for(int i=0; i<NC; ++i) {

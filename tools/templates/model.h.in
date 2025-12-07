@@ -1,0 +1,75 @@
+#pragma once
+#include "core/types.h"
+#include "core/solver_options.h"
+#include "core/matrix_defs.h"
+#include <cmath>
+#include <string>
+#include <array>
+
+namespace minisolver {
+
+struct {{MODEL_NAME}} {
+    // --- Constants ---
+    {{CONSTANTS}}
+
+    // --- Name Arrays (for Map Construction) ---
+    {{NAME_ARRAYS}}
+
+    // --- Continuous Dynamics ---
+    template<typename T>
+    static MSVec<T, NX> dynamics_continuous(
+        const MSVec<T, NX>& x_in,
+        const MSVec<T, NU>& u_in) 
+    {
+        {{DYNAMICS_CONTINUOUS_BODY}}
+    }
+
+    // --- Integrator Interface ---
+    template<typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x,
+        const MSVec<T, NU>& u,
+        double dt,
+        IntegratorType type)
+    {
+        switch(type) {
+            case IntegratorType::EULER_EXPLICIT: return x + dynamics_continuous(x, u) * dt;
+            default: // RK4 Explicit
+            {
+               auto k1 = dynamics_continuous(x, u);
+               auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u);
+               auto k3 = dynamics_continuous<T>(x + k2 * (0.5 * dt), u);
+               auto k4 = dynamics_continuous<T>(x + k3 * dt, u);
+               return x + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
+            }
+        }
+    }
+
+    // --- 1. Compute Dynamics (f_resid, A, B) ---
+    template<typename T>
+    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        {{COMPUTE_DYNAMICS_BODY}}
+    }
+
+    // --- 2. Compute Constraints (g_val, C, D) ---
+    template<typename T>
+    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+        {{COMPUTE_CONSTRAINTS_BODY}}
+    }
+
+    // --- 3. Compute Cost (q, r, Q, R, H, cost) ---
+    template<typename T>
+    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {
+        {{COMPUTE_COST_BODY}}
+    }
+
+    // --- 4. Compute All (Convenience) ---
+    template<typename T>
+    static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
+    }
+};
+}
+

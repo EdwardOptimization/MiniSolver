@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+echo ">> 0. Generating Model..."
+python3 tools/car_model_gen.py
+
 echo ">> 1. Building C++ Project..."
 # Clean build to ensure fresh config
 rm -rf build

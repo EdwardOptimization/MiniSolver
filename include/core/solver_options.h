@@ -17,17 +17,23 @@ enum class BarrierStrategy {
     MEHROTRA  
 };
 
-// [NEW] Inertia Correction Strategies for Non-Convex Hessians
 enum class InertiaStrategy {
-    REGULARIZATION, // Add delta*I to diagonal until PD
-    SATURATION,     // Force small eigenvalues to epsilon (Modify Cholesky)
-    IGNORE_SINGULAR // Freeze directions with near-zero curvature
+    REGULARIZATION, 
+    SATURATION,     
+    IGNORE_SINGULAR 
 };
 
-// [NEW] Globalization Strategies
 enum class LineSearchType {
-    MERIT,  // Armijo on L1 Penalty Function
-    FILTER  // IPOPT-style Filter Method (Accept if Cost OR Con improves)
+    MERIT,  
+    FILTER  
+};
+
+// [NEW] Print Levels
+enum class PrintLevel {
+    NONE,   // Silent
+    INFO,   // Start/End summary only
+    ITER,   // One line per iteration
+    DEBUG   // Detailed internal state
 };
 
 struct SolverConfig {
@@ -44,7 +50,7 @@ struct SolverConfig {
     double barrier_tolerance_factor = 10.0; 
     double mu_safety_margin = 0.1; 
 
-    // --- Regularization & Inertia ---
+    // --- Regularization ---
     InertiaStrategy inertia_strategy = InertiaStrategy::REGULARIZATION;
     double reg_init = 1e-6;     
     double reg_min = 1e-9;
@@ -62,22 +68,18 @@ struct SolverConfig {
     int line_search_max_iters = 10;
     double line_search_tau = 0.995; 
     
-    // Heuristic Heuristic (Watchdog)
     bool enable_slack_reset = true; 
     double slack_reset_trigger = 0.05;
 
-    // Advanced Globalization
     bool enable_soc = true;             
     double merit_nu_init = 1000.0;      
     double eta_suff_descent = 1e-4;     
     
-    // Feasibility Restoration (Fallback)
     bool enable_feasibility_restoration = true;
 
     // --- General ---
     int max_iters = 20;
-    bool verbose = true;
-    bool debug_mode = false; 
+    PrintLevel print_level = PrintLevel::ITER; // Replaces verbose/debug_mode
 };
 
 }

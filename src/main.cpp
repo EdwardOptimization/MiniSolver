@@ -27,21 +27,23 @@ void save_trajectory_csv(const std::string& filename,
 
     double current_t = 0.0;
     // Iterate only up to valid horizon N
-    const auto& traj = solver.get_traj();
-    
-    // Note: solver.N is the valid horizon length.
-    // We iterate from 0 to N.
-    // Since SolverType::MAX_N is static, we can't access runtime N easily if it's not public.
-    // solver.N is public.
+    // Use get_state and get_constraint_val instead of get_traj
     
     for(int k=0; k <= solver.N; ++k) {
-        const auto& kp = traj[k];
+        std::vector<double> x = solver.get_state(k);
+        std::vector<double> u = solver.get_control(k); // might be empty at N
+        double g_obs = solver.get_constraint_val(k, 4); // Obstacle constraint
+        
         if(k > 0 && k-1 < dts.size()) current_t += dts[k-1];
 
+        // Safe access
+        double u0 = (k < solver.N) ? u[0] : 0.0;
+        double u1 = (k < solver.N) ? u[1] : 0.0;
+
         file << current_t << ","
-             << kp.x(0) << "," << kp.x(1) << "," << kp.x(2) << "," << kp.x(3) << ","
-             << kp.u(0) << "," << kp.u(1) << ","
-             << kp.g_val(4) << "," 
+             << x[0] << "," << x[1] << "," << x[2] << "," << x[3] << ","
+             << u0 << "," << u1 << ","
+             << g_obs << "," 
              << obs_x << "," << obs_y << "," << obs_rad << "\n";
     }
     file.close();
@@ -57,7 +59,7 @@ int main(int argc, char** argv) {
     config.integrator = IntegratorType::RK4_EXPLICIT; 
     config.default_dt = 0.1; 
 
-    config.barrier_strategy = BarrierStrategy::MEHROTRA; // More aggressive barrier update
+    config.barrier_strategy = BarrierStrategy::MONOTONE; // Revert to robust strategy
     
     // [NEW] Advanced Features
     config.line_search_type = LineSearchType::FILTER;  
@@ -67,15 +69,14 @@ int main(int argc, char** argv) {
     // Trigger Slack Reset more easily to escape bad initial guess
     config.slack_reset_trigger = 0.1; 
 
-    config.mu_init = 100.0;
+    config.mu_init = 0.1; // Back to standard 0.1
     config.mu_min = 1e-6;   
     config.mu_linear_decrease_factor = 0.2; 
     config.reg_init = 1e-4; 
     config.reg_min = 1e-6; 
     config.tol_con = 1e-4;
-    config.max_iters = 60;  
-    config.debug_mode = true; // Still useful for initial tuning, but verbose logging is cleaner
-    config.verbose = true; // Use internal logging
+    config.max_iters = 200;  
+    config.print_level = PrintLevel::DEBUG; // Updated logging config
 
     std::cout << ">> Initializing PDIPM Solver (N=" << N << ")...\n";
     std::cout << ">> Features: Filter LS, Inertia(Ignore), Feasibility Restoration\n";
@@ -95,14 +96,26 @@ int main(int argc, char** argv) {
     for(int k=0; k<=N; ++k) {
         if(k > 0) current_t += dts[k-1];
         double x_ref = current_t * 5.0; 
-        double params[] = { 5.0, x_ref, 0.0, obs_x, obs_y, obs_rad };
         
-        // Use get_traj()
-        if(k < N) solver.get_traj()[k].u.setZero();
-        for(int i=0; i<6; ++i) solver.get_traj()[k].p(i) = params[i];
+        // Use set_control_guess and set_parameter
+        if(k < N) {
+            solver.set_control_guess(k, "acc", 0.0);
+            solver.set_control_guess(k, "steer", 0.0);
+        }
+        
+        solver.set_parameter(k, "v_ref", 5.0);
+        solver.set_parameter(k, "x_ref", x_ref);
+        solver.set_parameter(k, "y_ref", 0.0);
+        solver.set_parameter(k, "obs_x", obs_x);
+        solver.set_parameter(k, "obs_y", obs_y);
+        solver.set_parameter(k, "obs_rad", obs_rad);
     }
-
-    solver.get_traj()[0].x.setZero(); 
+    
+    // Set Initial State
+    solver.set_initial_state("x", 0.0);
+    solver.set_initial_state("y", 0.0);
+    solver.set_initial_state("theta", 0.0);
+    solver.set_initial_state("v", 0.0); 
     solver.rollout_dynamics();
 
     std::cout << ">> Solving (Cold Start)...\n";
