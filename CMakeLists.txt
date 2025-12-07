@@ -59,4 +59,7 @@ add_executable(benchmark_solver tools/benchmark_solver.cpp)
 # Auto Tuner Tool
 add_executable(auto_tuner tools/auto_tuner.cpp)
 
+# Replay Tool
+add_executable(replay_solver tools/replay_solver.cpp)
+
 # No GPU link needed for this CPU benchmark
