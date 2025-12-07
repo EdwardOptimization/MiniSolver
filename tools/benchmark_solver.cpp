@@ -84,7 +84,7 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
         solver.rollout_dynamics();
 
         auto start = std::chrono::high_resolution_clock::now();
-        solver.solve();
+        SolverStatus status = solver.solve();
         auto end = std::chrono::high_resolution_clock::now();
         
         if (run >= WARMUP_RUNS) {
@@ -105,7 +105,8 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
                         if(val > max_viol) max_viol = val;
                     }
                 }
-                last_converged = (solver.mu <= config.mu_min * 10.0) && (max_viol < 1e-3);
+                // Updated convergence check to use SolverStatus
+                last_converged = (status == SolverStatus::SOLVED);
                 
                 double cost = 0.0;
                 for(int k=0; k<=solver.N; ++k) cost += solver.get_stage_cost(k);

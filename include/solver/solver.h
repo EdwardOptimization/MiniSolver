@@ -481,6 +481,24 @@ public:
         if (required_nu > merit_nu) merit_nu = required_nu;
     }
 
+    bool has_nans(const typename TrajectoryType::TrajArray& t) {
+        // Checking all variables is expensive (O(N * (NX+NU+NC))).
+        // Instead, we only check the updates (dx, du, ds, dlam) and cost/constraints 
+        // which are the sources of NaNs.
+        for(int k=0; k<=N; ++k) {
+            const auto& kp = t[k];
+            // Check Search Directions (Most likely place for NaN from Linear Solve)
+            if(!kp.dx.allFinite()) return true;
+            if(!kp.du.allFinite()) return true;
+            if(!kp.ds.allFinite()) return true;
+            if(!kp.dlam.allFinite()) return true;
+            
+            // Check key scalar values
+            if(!std::isfinite(kp.cost)) return true;
+        }
+        return false;
+    }
+
     void solve_soc(typename TrajectoryType::TrajArray& soc_traj, const typename TrajectoryType::TrajArray& trial_traj) {
         auto& current_traj = trajectory.active();
         for(int k=0; k<=N; ++k) soc_traj[k] = current_traj[k];
@@ -496,7 +514,7 @@ public:
         }
     }
     
-    void feasibility_restoration() {
+    bool feasibility_restoration() {
         if (config.print_level >= PrintLevel::DEBUG) 
             std::cout << "      [DEBUG] Entering Feasibility Restoration Phase.\n";
         double saved_mu = mu;
@@ -505,6 +523,7 @@ public:
         reg = config.restoration_reg; 
         
         auto& traj = trajectory.active();
+        bool success = false;
         
         for(int r_iter=0; r_iter < config.max_restoration_iters; ++r_iter) { 
             for(int k=0; k<=N; ++k) {
@@ -530,13 +549,25 @@ public:
                     if (config.print_level >= PrintLevel::DEBUG) 
                         std::cout << "      [DEBUG] Restoration Successful (Filter Accepted).\n";
                     add_to_filter(metrics.first, metrics.second);
+                    success = true;
                     break;
                 }
             }
 
-            linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
+            // Restoration linear solve
+            if(!linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config)) {
+                // If linear solve fails even in restoration, we are in trouble
+                break;
+            }
             
             double alpha = fraction_to_boundary_rule(traj, N, config.restoration_alpha);
+            
+            // Simple line search in restoration (could be improved)
+            if(alpha < 1e-4) {
+                 // Stuck
+                 break; 
+            }
+
             for(int k=0; k<=N; ++k) {
                 traj[k].x += alpha * traj[k].dx;
                 traj[k].u += alpha * traj[k].du;
@@ -547,28 +578,51 @@ public:
         }
         mu = saved_mu;
         reg = saved_reg;
+        return success;
     }
 
-    void solve() {
+    SolverStatus solve() {
         current_iter = 0;
         print_iteration_log(0.0, true); 
         timer.reset(); 
 
         for(int iter=0; iter < config.max_iters; ++iter) {
             timer.start("Total Step");
-            bool converged = step();
+            SolverStatus status = step();
             timer.stop();
             
-            if (converged) {
+            if (status == SolverStatus::SOLVED) {
                 if (config.print_level >= PrintLevel::INFO) 
                     std::cout << ">> Converged in " << iter+1 << " iterations.\n";
-                break;
+                if (config.print_level >= PrintLevel::INFO) timer.print();
+                return SolverStatus::SOLVED;
+            } else if (status != SolverStatus::UNSOLVED) {
+                // Error or Infeasible
+                if (config.print_level >= PrintLevel::INFO)
+                     std::cout << ">> Solver terminated with status: " << status_to_string(status) << "\n";
+                if (config.print_level >= PrintLevel::INFO) timer.print();
+                return status;
             }
         }
+        if (config.print_level >= PrintLevel::INFO) std::cout << ">> Max iterations reached.\n";
         if (config.print_level >= PrintLevel::INFO) timer.print();
+        
+        // Final Feasibility Check
+        auto& traj = trajectory.active();
+        double max_viol = 0.0;
+        for(int k=0; k<=N; ++k) {
+             for(int i=0; i<NC; ++i) {
+                 double v = std::abs(traj[k].g_val(i) + traj[k].s(i));
+                 if(v > max_viol) max_viol = v;
+             }
+        }
+        
+        if (max_viol <= config.tol_con) return SolverStatus::FEASIBLE;
+        
+        return SolverStatus::MAX_ITER;
     }
 
-    bool step() {
+    SolverStatus step() {
         current_iter++;
         auto& traj = trajectory.active();
         
@@ -594,6 +648,16 @@ public:
         }
         timer.stop();
 
+        // Check for Numerical Instability (NaN/Inf)
+        if (has_nans(traj)) {
+             if (config.print_level >= PrintLevel::INFO) 
+                std::cout << ">> Numerical Error: NaNs detected in derivatives or state.\n";
+             return SolverStatus::NUMERICAL_ERROR;
+        }
+
+        // Check Convergence
+        if (check_convergence(max_prim_inf)) return SolverStatus::SOLVED;
+
         double avg_gap = (total_con > 0) ? (total_gap / total_con) : 0.0;
         update_barrier(max_kkt_error, avg_gap);
         if (config.line_search_type == LineSearchType::MERIT) update_merit_penalty();
@@ -611,6 +675,8 @@ public:
              reg = std::max(config.reg_min, reg / config.reg_scale_down);
         }
         timer.stop();
+
+        if (!solve_success) return SolverStatus::NUMERICAL_ERROR;
 
         timer.start("Line Search");
         double alpha = fraction_to_boundary_rule(traj, N, config.line_search_tau);
@@ -686,6 +752,7 @@ public:
                 add_to_filter(theta_0, phi_0);
             }
         } else {
+             // Step 1: Slack Reset
              bool recovered = false;
              if (config.enable_slack_reset && alpha < config.slack_reset_trigger) {
                  if (config.print_level >= PrintLevel::DEBUG) 
@@ -698,12 +765,20 @@ public:
                          kp.lam(i) = mu / kp.s(i);
                      }
                  }
-                 recovered = true;
-                 linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
+                 // Try one linear solve step to see if we can move
+                 recovered = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
              }
              
+             // Step 2: Feasibility Restoration
              if (!recovered && config.enable_feasibility_restoration) {
-                 feasibility_restoration();
+                 recovered = feasibility_restoration();
+             }
+
+             if (!recovered) {
+                 // Both Slack Reset and Feasibility Restoration failed (or were disabled)
+                 timer.stop();
+                 print_iteration_log(alpha); // Log the fail state
+                 return SolverStatus::PRIMAL_INFEASIBLE;
              }
         }
         timer.stop();
@@ -714,7 +789,10 @@ public:
         rollout_dynamics();
         timer.stop();
         
-        return check_convergence(max_prim_inf);
+        // Final check after step update
+        if(check_convergence(max_prim_inf)) return SolverStatus::SOLVED;
+
+        return SolverStatus::UNSOLVED;
     }
 
     void rollout_dynamics() {

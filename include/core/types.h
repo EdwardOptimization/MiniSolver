@@ -4,6 +4,30 @@
 
 namespace minisolver {
 
+enum class SolverStatus {
+    SOLVED,                // Converged to tolerances
+    MAX_ITER,              // Maximum iterations reached without convergence
+    FEASIBLE,              // Feasible but not optimal (e.g. max iters reached but constraints satisfied)
+    PRIMAL_INFEASIBLE,     // Problem is likely primal infeasible (restoration failed)
+    DUAL_INFEASIBLE,       // Problem is likely dual infeasible (unbounded) - rarely detected in current impl
+    NUMERICAL_ERROR,       // Linear solver failed or other numerical issues
+    UNSOLVED               // Not yet solved
+};
+
+// Helper to get string from status
+inline const char* status_to_string(SolverStatus status) {
+    switch(status) {
+        case SolverStatus::SOLVED: return "SOLVED";
+        case SolverStatus::MAX_ITER: return "MAX_ITER";
+        case SolverStatus::FEASIBLE: return "FEASIBLE";
+        case SolverStatus::PRIMAL_INFEASIBLE: return "PRIMAL_INFEASIBLE";
+        case SolverStatus::DUAL_INFEASIBLE: return "DUAL_INFEASIBLE";
+        case SolverStatus::NUMERICAL_ERROR: return "NUMERICAL_ERROR";
+        case SolverStatus::UNSOLVED: return "UNSOLVED";
+        default: return "UNKNOWN";
+    }
+}
+
 template<typename T, int _NX, int _NU, int _NC, int _NP>
 struct KnotPoint {
     // --- Eigen Memory Alignment (Only needed if backend is Eigen) ---

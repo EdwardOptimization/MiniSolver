@@ -124,7 +124,8 @@ int main(int argc, char** argv) {
     solver.rollout_dynamics();
 
     std::cout << ">> Solving (Cold Start)...\n";
-    solver.solve(); 
+    SolverStatus status = solver.solve(); 
+    std::cout << ">> Final Status: " << status_to_string(status) << "\n";
 
     save_trajectory_csv("trajectory.csv", solver, dts, obs_x, obs_y, obs_rad);
     return 0;
