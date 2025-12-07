@@ -77,11 +77,14 @@ class OptimalControlModel:
             for i, p in enumerate(self.parameters):
                 code += f"        T {p} = kp.p({i});\n"
         else:
-            # Source from function args x_in, u_in
+            # Source from function args x_in, u_in (and p_in)
             for i, s in enumerate(self.states):
                 code += f"        T {s} = x_in({i});\n"
             for i, u in enumerate(self.controls):
                 code += f"        T {u} = u_in({i});\n"
+            # Add parameter unpacking for continuous dynamics
+            for i, p in enumerate(self.parameters):
+                code += f"        T {p} = p_in({i});\n"
         return code
 
     def _generate_assign_block(self, assignments, reduced):

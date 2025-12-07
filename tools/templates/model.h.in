@@ -19,7 +19,8 @@ struct {{MODEL_NAME}} {
     template<typename T>
     static MSVec<T, NX> dynamics_continuous(
         const MSVec<T, NX>& x_in,
-        const MSVec<T, NU>& u_in) 
+        const MSVec<T, NU>& u_in,
+        const MSVec<T, NP>& p_in) 
     {
         {{DYNAMICS_CONTINUOUS_BODY}}
     }
@@ -29,17 +30,18 @@ struct {{MODEL_NAME}} {
     static MSVec<T, NX> integrate(
         const MSVec<T, NX>& x,
         const MSVec<T, NU>& u,
+        const MSVec<T, NP>& p,
         double dt,
         IntegratorType type)
     {
         switch(type) {
-            case IntegratorType::EULER_EXPLICIT: return x + dynamics_continuous(x, u) * dt;
+            case IntegratorType::EULER_EXPLICIT: return x + dynamics_continuous(x, u, p) * dt;
             default: // RK4 Explicit
             {
-               auto k1 = dynamics_continuous(x, u);
-               auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u);
-               auto k3 = dynamics_continuous<T>(x + k2 * (0.5 * dt), u);
-               auto k4 = dynamics_continuous<T>(x + k3 * dt, u);
+               auto k1 = dynamics_continuous(x, u, p);
+               auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u, p);
+               auto k3 = dynamics_continuous<T>(x + k2 * (0.5 * dt), u, p);
+               auto k4 = dynamics_continuous<T>(x + k3 * dt, u, p);
                return x + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
             }
         }

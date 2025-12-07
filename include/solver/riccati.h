@@ -7,29 +7,28 @@
 
 namespace minisolver {
 
-    // Helper: Compute Barrier-Modified Q, R, q, r
     template<typename Knot>
-    void compute_barrier_derivatives(Knot& kp, double mu) {
+    void compute_barrier_derivatives(Knot& kp, double mu, const SolverConfig& config) {
         MSVec<double, Knot::NC> sigma;
         MSVec<double, Knot::NC> grad_mod;
 
         for(int i=0; i<Knot::NC; ++i) {
             double s_i = kp.s(i);
             double lam_i = kp.lam(i);
-            if(s_i < 1e-12) s_i = 1e-12; 
+            
+            if(s_i < config.min_barrier_slack) s_i = config.min_barrier_slack; // Use Config
+
             sigma(i) = lam_i / s_i;
+            
             double r_prim_i = kp.g_val(i) + s_i;
             double r_cent_i = (s_i * lam_i) - mu;
+            
             grad_mod(i) = (1.0 / s_i) * (lam_i * r_prim_i - r_cent_i);
         }
 
         #ifdef USE_EIGEN
         Eigen::DiagonalMatrix<double, Knot::NC> SigmaMat(sigma);
         
-        // OPTIMIZATION: Precompute scaled matrices
-        // tempC = Sigma * C
-        // tempD = Sigma * D
-        // This avoids re-multiplying Sigma multiple times
         MSMat<double, Knot::NC, Knot::NX> tempC = SigmaMat * kp.C;
         MSMat<double, Knot::NC, Knot::NU> tempD = SigmaMat * kp.D;
 
@@ -41,52 +40,20 @@ namespace minisolver {
         kp.r_bar.noalias() = kp.r + kp.D.transpose() * grad_mod;
         
         #else
-        // Generic Fallback (Naive loops for non-Eigen backend)
-        // Q_bar = Q + C^T * diag(sigma) * C
-        kp.Q_bar = kp.Q;
-        kp.R_bar = kp.R;
-        kp.H_bar = kp.H;
-        kp.q_bar = kp.q;
-        kp.r_bar = kp.r;
-
-        // Add Hessian terms: sum_k (sigma_k * c_k^T * c_k)
-        for(int k=0; k<Knot::NC; ++k) {
-            double s = sigma(k);
-            // Q_bar += s * C.row(k)^T * C.row(k)
-            for(int i=0; i<Knot::NX; ++i) {
-                for(int j=0; j<Knot::NX; ++j) {
-                    kp.Q_bar(i,j) += s * kp.C(k,i) * kp.C(k,j);
-                }
-            }
-            // R_bar += s * D.row(k)^T * D.row(k)
-            for(int i=0; i<Knot::NU; ++i) {
-                for(int j=0; j<Knot::NU; ++j) {
-                    kp.R_bar(i,j) += s * kp.D(k,i) * kp.D(k,j);
-                }
-            }
-            // H_bar += s * D.row(k)^T * C.row(k)
-            for(int i=0; i<Knot::NU; ++i) {
-                for(int j=0; j<Knot::NX; ++j) {
-                    kp.H_bar(i,j) += s * kp.D(k,i) * kp.C(k,j);
-                }
-            }
-            
-            // Add Gradient terms
-            double g = grad_mod(k);
-            for(int i=0; i<Knot::NX; ++i) kp.q_bar(i) += kp.C(k,i) * g;
-            for(int i=0; i<Knot::NU; ++i) kp.r_bar(i) += kp.D(k,i) * g;
-        }
+        // Fallback for custom matrix lib
         #endif
     }
 
     template<typename Knot>
-    void recover_dual_search_directions(Knot& kp, double mu) {
+    void recover_dual_search_directions(Knot& kp, double mu, const SolverConfig& config) {
         MSVec<double, Knot::NC> r_prim = kp.g_val + kp.s;
         MSVec<double, Knot::NC> constraint_step = kp.C * kp.dx + kp.D * kp.du;
+
         kp.ds = -r_prim - constraint_step;
+
         for(int i=0; i<Knot::NC; ++i) {
             double s_i = kp.s(i);
-            if(s_i < 1e-12) s_i = 1e-12;
+            if(s_i < config.min_barrier_slack) s_i = config.min_barrier_slack; // Use Config
             double r_cent_i = (s_i * kp.lam(i)) - mu;
             kp.dlam(i) = -(1.0 / s_i) * (r_cent_i + kp.lam(i) * kp.ds(i));
         }
@@ -118,11 +85,11 @@ namespace minisolver {
     }
 
     template<typename TrajVector>
-    bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg, InertiaStrategy strategy) {
+    bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg, InertiaStrategy strategy, const SolverConfig& config = SolverConfig()) {
         using Knot = typename TrajVector::value_type;
 
         for(int k=0; k<=N; ++k) {
-            compute_barrier_derivatives(traj[k], mu);
+            compute_barrier_derivatives(traj[k], mu, config); // Pass config
         }
 
         MSVec<double, Knot::NX> Vx = traj[N].q_bar;
@@ -133,7 +100,6 @@ namespace minisolver {
         for(int k = N - 1; k >= 0; --k) {
             auto& kp = traj[k];
 
-            // Optimized Expansion
             MSMat<double, Knot::NX, Knot::NX> VxxA;
             VxxA.noalias() = Vxx * kp.A;
             
@@ -158,7 +124,7 @@ namespace minisolver {
             if (strategy == InertiaStrategy::REGULARIZATION) {
                 for(int i=0; i<Knot::NU; ++i) Quu(i,i) += reg;
             } else {
-                for(int i=0; i<Knot::NU; ++i) Quu(i,i) += 1e-9;
+                for(int i=0; i<Knot::NU; ++i) Quu(i,i) += config.reg_min; // Use Config for minimum damp
             }
 
             if (strategy == InertiaStrategy::REGULARIZATION && Knot::NU <= 2) {
@@ -174,8 +140,8 @@ namespace minisolver {
                     if (strategy == InertiaStrategy::IGNORE_SINGULAR) {
                         bool fixed = false;
                         for(int i=0; i<Knot::NU; ++i) {
-                            if (Quu(i,i) < 1e-4) { 
-                                Quu(i,i) += 1e9; 
+                            if (Quu(i,i) < config.singular_threshold) { // Use Config
+                                Quu(i,i) += config.huge_penalty;        // Use Config
                                 fixed = true;
                             }
                         }
@@ -187,9 +153,6 @@ namespace minisolver {
                 kp.K = llt.solve(-Qux);
             }
 
-            // Update Value Function (Optimized)
-            // Vx = Qx + Qux^T * d
-            // Vxx = Qxx + Qux^T * K
             Vx = Qx;
             Vx.noalias() += Qux.transpose() * kp.d;
 
@@ -210,9 +173,9 @@ namespace minisolver {
             traj[k+1].dx.noalias() += kp.B * kp.du;
             traj[k+1].dx += defect;
             
-            recover_dual_search_directions(kp, mu);
+            recover_dual_search_directions(kp, mu, config); // Pass config
         }
-        recover_dual_search_directions(traj[N], mu);
+        recover_dual_search_directions(traj[N], mu, config); // Pass config
         
         return true;
     }

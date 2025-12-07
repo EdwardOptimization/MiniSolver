@@ -7,9 +7,9 @@ namespace minisolver {
 template<typename TrajArray>
 class RiccatiSolver : public LinearSolver<TrajArray> {
 public:
-    bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy) override {
+    bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy, const SolverConfig& config) override {
         // Call the existing static/template function
-        return cpu_serial_solve(traj, N, mu, reg, strategy);
+        return cpu_serial_solve(traj, N, mu, reg, strategy, config);
     }
 };
 

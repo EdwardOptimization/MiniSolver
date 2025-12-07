@@ -7,6 +7,7 @@
 #include <numeric>
 
 #include "model/car_model.h"
+#include "model/scenario.h" // [NEW] Shared Scenario Config
 #include "solver/solver.h"
 
 using namespace minisolver;
@@ -26,12 +27,11 @@ struct BenchmarkResult {
 };
 
 BenchmarkResult run_test(const std::string& name, SolverConfig config) {
-    int N = 60;
-    config.print_level = PrintLevel::NONE; // Mute output for benchmark
+    int N = ScenarioConfig::N;
+    config.print_level = PrintLevel::NONE; 
     
     std::vector<double> dts(N);
     for(int k=0; k<N; ++k) dts[k] = (k < 20) ? 0.05 : 0.2;
-    double obs_x = 12.0; double obs_y = 0.0; double obs_rad = 1.5; 
 
     const int NUM_RUNS = 100;
     const int WARMUP_RUNS = 10;
@@ -48,27 +48,33 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
     double last_viol = 0;
 
     for(int run = 0; run < WARMUP_RUNS + NUM_RUNS; ++run) {
-        // Use MAX_N = 100 for static allocation
         PDIPMSolver<CarModel, 100> solver(N, Backend::CPU_SERIAL, config);
         solver.set_dt(dts);
         
-        // Cold start setup (Bad Guess: u=0)
         double current_t = 0.0;
         for(int k=0; k<=N; ++k) {
             if(k > 0) current_t += dts[k-1];
-            double x_ref = current_t * 5.0; 
+            double x_ref = current_t * ScenarioConfig::TARGET_V; 
             
             if(k < N) {
                 solver.set_control_guess(k, "acc", 0.0);
                 solver.set_control_guess(k, "steer", 0.0);
             }
             
-            solver.set_parameter(k, "v_ref", 5.0);
+            solver.set_parameter(k, "v_ref", ScenarioConfig::TARGET_V);
             solver.set_parameter(k, "x_ref", x_ref);
             solver.set_parameter(k, "y_ref", 0.0);
-            solver.set_parameter(k, "obs_x", obs_x);
-            solver.set_parameter(k, "obs_y", obs_y);
-            solver.set_parameter(k, "obs_rad", obs_rad);
+            solver.set_parameter(k, "obs_x", ScenarioConfig::OBS_X);
+            solver.set_parameter(k, "obs_y", ScenarioConfig::OBS_Y);
+            solver.set_parameter(k, "obs_rad", ScenarioConfig::OBS_RAD);
+            solver.set_parameter(k, "L", ScenarioConfig::CAR_L);
+            solver.set_parameter(k, "car_rad", ScenarioConfig::CAR_RAD);
+            
+            solver.set_parameter(k, "w_pos", ScenarioConfig::W_POS);
+            solver.set_parameter(k, "w_vel", ScenarioConfig::W_VEL);
+            solver.set_parameter(k, "w_theta", ScenarioConfig::W_THETA);
+            solver.set_parameter(k, "w_acc", ScenarioConfig::W_ACC);
+            solver.set_parameter(k, "w_steer", ScenarioConfig::W_STEER);
         }
         solver.set_initial_state("x", 0.0);
         solver.set_initial_state("y", 0.0);

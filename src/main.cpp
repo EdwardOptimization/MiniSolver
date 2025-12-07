@@ -68,15 +68,14 @@ int main(int argc, char** argv) {
     
     // Trigger Slack Reset more easily to escape bad initial guess
     config.slack_reset_trigger = 0.1; 
-
-    config.mu_init = 0.1; // Back to standard 0.1
+    config.mu_init = 100.0;
     config.mu_min = 1e-6;   
     config.mu_linear_decrease_factor = 0.2; 
     config.reg_init = 1e-4; 
     config.reg_min = 1e-6; 
     config.tol_con = 1e-4;
-    config.max_iters = 200;  
-    config.print_level = PrintLevel::DEBUG; // Updated logging config
+    config.max_iters = 60;  
+    config.print_level = PrintLevel::DEBUG; 
 
     std::cout << ">> Initializing PDIPM Solver (N=" << N << ")...\n";
     std::cout << ">> Features: Filter LS, Inertia(Ignore), Feasibility Restoration\n";
@@ -90,14 +89,13 @@ int main(int argc, char** argv) {
 
     // Scenario
     double obs_x = 12.0; double obs_y = 0.0; double obs_rad = 1.5; 
-
+    
     // Initialize Trajectory (Cold Start)
     double current_t = 0.0;
     for(int k=0; k<=N; ++k) {
         if(k > 0) current_t += dts[k-1];
         double x_ref = current_t * 5.0; 
         
-        // Use set_control_guess and set_parameter
         if(k < N) {
             solver.set_control_guess(k, "acc", 0.0);
             solver.set_control_guess(k, "steer", 0.0);
@@ -109,13 +107,20 @@ int main(int argc, char** argv) {
         solver.set_parameter(k, "obs_x", obs_x);
         solver.set_parameter(k, "obs_y", obs_y);
         solver.set_parameter(k, "obs_rad", obs_rad);
+        solver.set_parameter(k, "L", 2.5);
+        solver.set_parameter(k, "car_rad", 1.0);
+        solver.set_parameter(k, "w_pos", 1.0);
+        solver.set_parameter(k, "w_vel", 1.0);
+        solver.set_parameter(k, "w_theta", 0.1);
+        solver.set_parameter(k, "w_acc", 0.1);
+        solver.set_parameter(k, "w_steer", 1.0);
     }
     
     // Set Initial State
     solver.set_initial_state("x", 0.0);
     solver.set_initial_state("y", 0.0);
     solver.set_initial_state("theta", 0.0);
-    solver.set_initial_state("v", 0.0); 
+    solver.set_initial_state("v", 0.0);
     solver.rollout_dynamics();
 
     std::cout << ">> Solving (Cold Start)...\n";

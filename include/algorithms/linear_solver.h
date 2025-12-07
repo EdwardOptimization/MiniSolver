@@ -11,7 +11,7 @@ public:
     
     // Solves the KKT system for the search direction (dx, du, ds, dlam)
     // Returns true on success, false on failure (e.g. matrix not PD)
-    virtual bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy) = 0;
+    virtual bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy, const SolverConfig& config) = 0;
 };
 
 }

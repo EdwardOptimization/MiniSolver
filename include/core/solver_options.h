@@ -28,7 +28,7 @@ enum class LineSearchType {
     FILTER  
 };
 
-// [NEW] Print Levels
+// Print Levels
 enum class PrintLevel {
     NONE,   // Silent
     INFO,   // Start/End summary only
@@ -57,6 +57,11 @@ struct SolverConfig {
     double reg_max = 1e9;
     double reg_scale_up = 10.0;
     double reg_scale_down = 2.0;
+    
+    // Inertia Tuning
+    double singular_threshold = 1e-4; // For IGNORE_SINGULAR
+    double huge_penalty = 1e9;        // Penalty for frozen directions
+    int inertia_max_retries = 5;
 
     // --- Convergence Tolerances ---
     double tol_grad = 1e-4;     
@@ -66,20 +71,38 @@ struct SolverConfig {
     // --- Line Search & Robustness ---
     LineSearchType line_search_type = LineSearchType::MERIT;
     int line_search_max_iters = 10;
-    double line_search_tau = 0.995; 
+    double line_search_tau = 0.995;
+    double line_search_backtrack_factor = 0.5; // [NEW] alpha *= factor
     
+    // Filter Method
+    double filter_gamma_theta = 1e-5; // [NEW] Sufficient reduction for theta
+    double filter_gamma_phi = 1e-5;   // [NEW] Sufficient reduction for phi
+    
+    // Barrier Numerical Safety
+    double min_barrier_slack = 1e-12; // [NEW] s > this
+    double barrier_inf_cost = 1e9;    // [NEW] Cost if s <= 0
+    
+    // Watchdog
     bool enable_slack_reset = true; 
     double slack_reset_trigger = 0.05;
+    double warm_start_slack_init = 1e-2; 
 
-    bool enable_soc = true;             
+    // Globalization
+    bool enable_soc = true;
+    double soc_trigger_alpha = 0.5; // [NEW] Try SOC if alpha > this
     double merit_nu_init = 1000.0;      
     double eta_suff_descent = 1e-4;     
     
+    // Restoration
     bool enable_feasibility_restoration = true;
+    int max_restoration_iters = 10; 
+    double restoration_mu = 1e-1;  // [NEW]
+    double restoration_reg = 1e-2; // [NEW]
+    double restoration_alpha = 0.95; // [NEW]
 
     // --- General ---
     int max_iters = 20;
-    PrintLevel print_level = PrintLevel::ITER; // Replaces verbose/debug_mode
+    PrintLevel print_level = PrintLevel::ITER; 
 };
 
 }

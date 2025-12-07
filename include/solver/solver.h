@@ -487,7 +487,7 @@ public:
         for(int k=0; k<=N; ++k) {
             soc_traj[k].g_val = trial_traj[k].g_val + (trial_traj[k].s - current_traj[k].s);
         }
-        bool success = linear_solver->solve(soc_traj, N, mu, reg, config.inertia_strategy);
+        bool success = linear_solver->solve(soc_traj, N, mu, reg, config.inertia_strategy, config);
         if (!success) {
             for(int k=0; k<=N; ++k) {
                 soc_traj[k].dx.setZero(); soc_traj[k].du.setZero(); 
@@ -501,12 +501,12 @@ public:
             std::cout << "      [DEBUG] Entering Feasibility Restoration Phase.\n";
         double saved_mu = mu;
         double saved_reg = reg;
-        mu = 1e-1; 
-        reg = 1e-2; 
+        mu = config.restoration_mu; 
+        reg = config.restoration_reg; 
         
         auto& traj = trajectory.active();
         
-        for(int r_iter=0; r_iter < 10; ++r_iter) { 
+        for(int r_iter=0; r_iter < config.max_restoration_iters; ++r_iter) { 
             for(int k=0; k<=N; ++k) {
                 double current_dt = dt_traj[k]; 
                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
@@ -534,9 +534,9 @@ public:
                 }
             }
 
-            linear_solver->solve(traj, N, mu, reg, config.inertia_strategy);
+            linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
             
-            double alpha = fraction_to_boundary_rule(traj, N, 0.95);
+            double alpha = fraction_to_boundary_rule(traj, N, config.restoration_alpha);
             for(int k=0; k<=N; ++k) {
                 traj[k].x += alpha * traj[k].dx;
                 traj[k].u += alpha * traj[k].du;
@@ -600,8 +600,8 @@ public:
 
         timer.start("Linear Solve");
         bool solve_success = false;
-        for(int try_count=0; try_count < 5; ++try_count) {
-            solve_success = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy);
+        for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
+            solve_success = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
             if (solve_success) break;
             if (reg < config.reg_min) reg = config.reg_min;
             reg *= config.reg_scale_up;
@@ -699,7 +699,7 @@ public:
                      }
                  }
                  recovered = true;
-                 linear_solver->solve(traj, N, mu, reg, config.inertia_strategy);
+                 linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
              }
              
              if (!recovered && config.enable_feasibility_restoration) {
@@ -721,7 +721,7 @@ public:
         auto& traj = trajectory.active();
         for(int k=0; k<N; ++k) {
             double current_dt = dt_traj[k];
-            traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, current_dt, config.integrator);
+            traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator);
         }
     }
 };
