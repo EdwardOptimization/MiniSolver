@@ -10,7 +10,7 @@
 
 using namespace minisolver;
 
-// Template to accept any PDIPMSolver<Model, MAX_N>
+// Template to accept any MiniSolver<Model, MAX_N>
 template<typename SolverType>
 void save_trajectory_csv(const std::string& filename, 
                          const SolverType& solver, 
@@ -55,33 +55,28 @@ int main(int argc, char** argv) {
     Backend mode = Backend::CPU_SERIAL; 
 
     // --- Configuration ---
+    // Use default "Pure IPM" config which should be fast and general
     SolverConfig config;
+    config.print_level = PrintLevel::ITER; // Show progress
+    
+    // [FIX] Enable RK4 and Restoration to recover stability
     config.integrator = IntegratorType::RK4_EXPLICIT; 
-    config.default_dt = 0.1; 
-
-    config.barrier_strategy = BarrierStrategy::MONOTONE; // Revert to robust strategy
-    
-    // [NEW] Advanced Features
-    config.line_search_type = LineSearchType::FILTER;  
-    config.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR; 
     config.enable_feasibility_restoration = true; 
+    config.enable_slack_reset = true;
     
-    // Trigger Slack Reset more easily to escape bad initial guess
-    config.slack_reset_trigger = 0.1; 
-    config.mu_init = 100.0;
-    config.mu_min = 1e-6;   
-    config.mu_linear_decrease_factor = 0.2; 
-    config.reg_init = 1e-4; 
-    config.reg_min = 1e-6; 
+    // Revert to Monotone + IgnoreSingular for robustness
+    config.barrier_strategy = BarrierStrategy::MONOTONE;
+    config.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR;
+    
+    // Adjust tolerances for demo
     config.tol_con = 1e-4;
-    config.max_iters = 60;  
-    config.print_level = PrintLevel::DEBUG; 
+    config.max_iters = 100;
 
-    std::cout << ">> Initializing PDIPM Solver (N=" << N << ")...\n";
-    std::cout << ">> Features: Filter LS, Inertia(Ignore), Feasibility Restoration\n";
+    std::cout << ">> Initializing MiniSolver (N=" << N << ")...\n";
+    std::cout << ">> Features: Default Pure IPM (Mehrotra + Filter)\n";
     
     // Instantiate with MAX_N = 100
-    PDIPMSolver<CarModel, 100> solver(N, mode, config);
+    MiniSolver<CarModel, 100> solver(N, mode, config);
 
     std::vector<double> dts(N);
     for(int k=0; k<N; ++k) dts[k] = (k < 20) ? 0.05 : 0.2;
@@ -121,6 +116,8 @@ int main(int argc, char** argv) {
     solver.set_initial_state("y", 0.0);
     solver.set_initial_state("theta", 0.0);
     solver.set_initial_state("v", 0.0);
+    
+    // Pure IPM often benefits from a consistent initial rollout (or not, but let's keep it for fair comparison)
     solver.rollout_dynamics();
 
     std::cout << ">> Solving (Cold Start)...\n";

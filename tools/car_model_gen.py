@@ -5,13 +5,9 @@ if __name__ == "__main__":
     model = OptimalControlModel("CarModel")
     
     # 1. Variables
-    x = model.state("x")
-    y = model.state("y")
-    theta = model.state("theta")
-    v = model.state("v")
+    x, y, theta, v = model.state("x", "y", "theta", "v")
     
-    acc = model.control("acc")
-    steer = model.control("steer")
+    acc, steer = model.control("acc", "steer")
     
     # 2. Parameters
     v_ref = model.parameter("v_ref")

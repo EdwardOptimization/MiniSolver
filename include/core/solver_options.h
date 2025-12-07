@@ -21,6 +21,7 @@ enum class InertiaStrategy {
     REGULARIZATION, 
     SATURATION,     
     IGNORE_SINGULAR 
+    // In the future: FACTORIZATION_MODIFY
 };
 
 enum class LineSearchType {
@@ -38,24 +39,26 @@ enum class PrintLevel {
 
 struct SolverConfig {
     // --- Integration ---
-    IntegratorType integrator = IntegratorType::EULER_EXPLICIT;
+    // RK2 is a good balance for general nonlinear problems
+    IntegratorType integrator = IntegratorType::RK4_EXPLICIT;
     double default_dt = 0.1;
 
     // --- Barrier Strategy ---
-    BarrierStrategy barrier_strategy = BarrierStrategy::MONOTONE; 
+    // MEHROTRA is generally the fastest (quadratic convergence)
+    BarrierStrategy barrier_strategy = BarrierStrategy::MEHROTRA; 
     
     double mu_init = 1e-1;      
-    double mu_min = 1e-6;       
+    double mu_min = 1e-6;       // Tighter tolerance for high precision
     double mu_linear_decrease_factor = 0.2; 
     double barrier_tolerance_factor = 10.0; 
     double mu_safety_margin = 0.1; 
 
     // --- Regularization ---
     InertiaStrategy inertia_strategy = InertiaStrategy::REGULARIZATION;
-    double reg_init = 1e-6;     
-    double reg_min = 1e-9;
+    double reg_init = 1e-4;     // Slightly higher init to be safe
+    double reg_min = 1e-8;
     double reg_max = 1e9;
-    double reg_scale_up = 10.0;
+    double reg_scale_up = 100.0; // Aggressive scaling to recover quickly
     double reg_scale_down = 2.0;
     
     // Inertia Tuning
@@ -69,40 +72,57 @@ struct SolverConfig {
     double tol_mu = 1e-5;       
 
     // --- Line Search & Robustness ---
-    LineSearchType line_search_type = LineSearchType::MERIT;
+    // Filter is generally more robust than Merit without parameter tuning
+    LineSearchType line_search_type = LineSearchType::FILTER;
     int line_search_max_iters = 10;
-    double line_search_tau = 0.995;
-    double line_search_backtrack_factor = 0.5; // [NEW] alpha *= factor
+    double line_search_tau = 0.995; // Fraction to boundary
+    double line_search_backtrack_factor = 0.5; 
     
-    // Filter Method
-    double filter_gamma_theta = 1e-5; // [NEW] Sufficient reduction for theta
-    double filter_gamma_phi = 1e-5;   // [NEW] Sufficient reduction for phi
+    // Filter Method Parameters
+    double filter_gamma_theta = 1e-5; 
+    double filter_gamma_phi = 1e-5;   
     
     // Barrier Numerical Safety
-    double min_barrier_slack = 1e-12; // [NEW] s > this
-    double barrier_inf_cost = 1e9;    // [NEW] Cost if s <= 0
+    double min_barrier_slack = 1e-12; 
+    double barrier_inf_cost = 1e9;    
     
-    // Watchdog
-    bool enable_slack_reset = true; 
-    double slack_reset_trigger = 0.05;
+    // Watchdog / Heuristics
+    double slack_reset_trigger = 1e-3; // Only reset if step is VERY small
     double warm_start_slack_init = 1e-2; 
 
     // Globalization
-    bool enable_soc = true;
-    double soc_trigger_alpha = 0.5; // [NEW] Try SOC if alpha > this
+    double soc_trigger_alpha = 0.5; 
     double merit_nu_init = 1000.0;      
     double eta_suff_descent = 1e-4;     
     
     // Restoration
-    bool enable_feasibility_restoration = true;
-    int max_restoration_iters = 10; 
-    double restoration_mu = 1e-1;  // [NEW]
-    double restoration_reg = 1e-2; // [NEW]
-    double restoration_alpha = 0.95; // [NEW]
+    int max_restoration_iters = 5; 
+    double restoration_mu = 1e-1;  
+    double restoration_reg = 1e-2; 
+    double restoration_alpha = 0.8; 
 
     // --- General ---
-    int max_iters = 20;
+    int max_iters = 30; // Give it enough room
     PrintLevel print_level = PrintLevel::ITER; 
+
+    // --- Advanced Features ---
+    bool use_exact_hessian = true; 
+    
+    // Line Search Logic
+    // PURE IPM: Disable rollout by default. Trust the linearization.
+    bool enable_line_search_rollout = false; 
+    
+    // Riccati Logic
+    bool enable_defect_correction = true; 
+    
+    // Mehrotra Logic
+    bool enable_corrector = true; 
+    
+    // Feasibility Logic (Heuristics)
+    // Disabled by default for PURE IPM behavior. Enable only if needed.
+    bool enable_slack_reset = false; 
+    bool enable_feasibility_restoration = false;
+    bool enable_soc = false; 
 };
 
 }

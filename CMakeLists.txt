@@ -55,4 +55,8 @@ else()
 endif()
 # Benchmark Tool
 add_executable(benchmark_solver tools/benchmark_solver.cpp)
+
+# Auto Tuner Tool
+add_executable(auto_tuner tools/auto_tuner.cpp)
+
 # No GPU link needed for this CPU benchmark

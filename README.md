@@ -33,6 +33,28 @@ On an Intel Core i7 (Single Thread):
 *   Python 3 (for code generation) + SymPy (`pip install sympy`)
 *   C++17 Compiler (GCC/Clang)
 
+### 📢 Logging & Debugging
+
+MiniSolver provides a zero-overhead logging system useful for debugging convergence issues or deployment.
+
+**Log Levels:**
+*   `0`: NONE (No overhead, for Production)
+*   `1`: ERROR
+*   `2`: WARN
+*   `3`: INFO (Default)
+*   `4`: DEBUG (Detailed internal state, KKT residuals, slack values)
+
+**Usage:**
+Pass `MINISOLVER_LOG_LEVEL` during compilation to control verbosity.
+
+```bash
+# Debug Mode (Maximum verbosity)
+g++ ... -DMINISOLVER_LOG_LEVEL=4 ...
+
+# Production Mode (Silent, Zero-Overhead)
+g++ ... -DMINISOLVER_LOG_LEVEL=0 ...
+```
+
 ### Build & Run Demo
 
 ```bash
@@ -105,7 +127,7 @@ Then in your C++ code:
 using namespace minisolver;
 
 int main() {
-    PDIPMSolver<DroneModel, 100> solver(50, Backend::CPU_SERIAL); // N=50
+    MiniSolver<DroneModel, 100> solver(50, Backend::CPU_SERIAL); // N=50
     
     // Set initial state
     solver.set_initial_state("px", 0.0);
@@ -119,7 +141,7 @@ int main() {
 
 *   `include/core/`: Basic types (`KnotPoint`), configuration, and matrix abstraction.
 *   `include/algorithms/`: Independent algorithm implementations (Riccati, Line Search).
-*   `include/solver/`: The main `PDIPMSolver` orchestrator.
+*   `include/solver/`: The main `MiniSolver` orchestrator.
 *   `include/model/`: Generated model headers.
 *   `tools/`: Python DSL (`MiniModel.py`) and benchmark tools.
 

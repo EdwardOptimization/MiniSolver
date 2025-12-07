@@ -10,8 +10,9 @@ public:
     virtual ~LinearSolver() = default;
     
     // Solves the KKT system for the search direction (dx, du, ds, dlam)
-    // Returns true on success, false on failure (e.g. matrix not PD)
-    virtual bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy, const SolverConfig& config) = 0;
+    // affine_traj: If provided, adds Mehrotra corrector term (ds_aff * dlam_aff) to the RHS
+    virtual bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy, 
+                      const SolverConfig& config, const TrajArray* affine_traj = nullptr) = 0;
 };
 
 }

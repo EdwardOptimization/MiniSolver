@@ -15,7 +15,7 @@ public:
     // Double Buffering
     // We use unique_ptr to manage memory ownership clearly, 
     // but raw pointers for swapping to avoid overhead.
-    // Actually, std::array is on stack/inline. PDIPMSolver has them as members.
+    // Actually, std::array is on stack/inline. MiniSolver has them as members.
     // To allow Trajectory class to own data, we can store them here.
     
     TrajArray memory_A;
@@ -61,6 +61,27 @@ public:
         // But for safety (params, etc.), copy is good.
         // Optimization: Only copy params once?
         *candidate_ptr = *active_ptr; 
+    }
+    // Shifts the trajectory for Warm Start (MPC)
+    // Moves x[k] <- x[k+1], u[k] <- u[k+1]
+    // Duplicates the last step
+    void shift() {
+        auto& traj = *active_ptr;
+        for(int k=0; k < N; ++k) {
+            traj[k].x = traj[k+1].x;
+            traj[k].u = traj[k+1].u;
+            traj[k].s = traj[k+1].s;
+            traj[k].lam = traj[k+1].lam;
+            // Parameters (p) should usually NOT be shifted if they are time-dependent (like reference),
+            // but for autonomous systems, we might shift. 
+            // Standard MPC: Shift guess (x,u), but keep parameters aligned with absolute time or update them externally.
+            // Here we only shift primal/dual variables.
+        }
+        // Duplicate last step
+        traj[N].x = traj[N-1].x; // Should integrate dynamics, but copy is safe approx
+        traj[N].u = traj[N-1].u;
+        traj[N].s = traj[N-1].s;
+        traj[N].lam = traj[N-1].lam;
     }
     
     int size() const { return N + 1; }

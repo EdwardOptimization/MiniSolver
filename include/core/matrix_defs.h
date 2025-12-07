@@ -85,12 +85,74 @@ struct MatOps {
 }
 
 #else
-// Placeholder for Custom Matrix Library
-// #include "core/tiny_matrix.h"
-// namespace minisolver {
-//     template<typename T, int R, int C> using MSMat = TinyMatrix<T, R, C>;
-//     ...
-// }
-#error "Custom Matrix Library not implemented yet. Define USE_EIGEN."
+// Custom Matrix Library
+#include "core/mini_matrix.h"
+
+namespace minisolver {
+    // Type Aliases
+    template<typename T, int R, int C> 
+    using MSMat = MiniMatrix<T, R, C>;
+    
+    template<typename T, int N>
+    using MSVec = MiniMatrix<T, N, 1>;
+    
+    template<typename T, int N>
+    using MSDiag = MiniDiagonal<T, N>;
+
+    // Operations Abstraction
+    struct MatOps {
+        template<typename Derived>
+        static void setZero(Derived& m) {
+            m.setZero();
+        }
+
+        template<typename Derived>
+        static void setIdentity(Derived& m) {
+            m.setIdentity();
+        }
+        
+        // Return by value for MiniMatrix
+        template<typename Derived>
+        static auto transpose(const Derived& m) {
+            return m.transpose();
+        }
+
+        // Linear Solve: x = A^-1 * b using Cholesky (LLT)
+        template<typename Mat, typename Vec, typename ResVec>
+        static bool cholesky_solve(const Mat& A, const Vec& b, ResVec& x) {
+            MiniLLT<double, Mat::Rows> llt(A);
+            if (llt.info() != 0) return false;
+            x = llt.solve(b);
+            return true;
+        }
+        
+        template<typename Mat, typename Vec>
+        static auto cholesky_solve_ret(const Mat& A, const Vec& b) {
+             MiniLLT<double, Mat::Rows> llt(A);
+             return llt.solve(b);
+        }
+        
+        template<typename Mat>
+        static bool is_pos_def(const Mat& A) {
+            MiniLLT<double, Mat::Rows> llt(A);
+            return llt.info() == 0;
+        }
+
+        template<typename Derived>
+        static double norm_inf(const Derived& m) {
+            return m.lpNormInfinity();
+        }
+        
+        template<typename V1, typename V2>
+        static double dot(const V1& a, const V2& b) {
+            return a.dot(b);
+        }
+        
+        template<typename V>
+        static V cwiseMax(const V& a, double val) {
+            return a.cwiseMax(val);
+        }
+    };
+}
 #endif
 
