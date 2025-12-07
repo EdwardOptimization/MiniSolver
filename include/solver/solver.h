@@ -597,7 +597,17 @@ public:
 
         for(int k=0; k<=N; ++k) {
             double current_dt = dt_traj[k];
-            Model::compute(traj[k], config.integrator, current_dt);
+            
+            // Conditionally use GN or Exact compute
+            if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                 Model::compute_cost_gn(traj[k]);
+                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                 Model::compute_constraints(traj[k]);
+            } else {
+                 Model::compute_cost_exact(traj[k]);
+                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                 Model::compute_constraints(traj[k]);
+            }
             
             for(int i=0; i<NC; ++i) {
                 double viol = std::abs(traj[k].g_val(i) + traj[k].s(i)); 
@@ -645,11 +655,8 @@ public:
             bool aff_success = false;
             // Solve with mu = 0
             for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
-                if (config.use_exact_hessian) {
-                    aff_success = linear_solver->solve(affine_traj, N, 0.0, reg, config.inertia_strategy, config);
-                } else {
-                    aff_success = linear_solver->solve(affine_traj, N, 0.0, reg, config.inertia_strategy, config);
-                }
+                // Use new enum for exact/GN
+                aff_success = linear_solver->solve(affine_traj, N, 0.0, reg, config.inertia_strategy, config);
                 if (aff_success) break;
                 if (reg < config.reg_min) reg = config.reg_min;
                 reg *= config.reg_scale_up;

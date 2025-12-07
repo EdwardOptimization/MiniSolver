@@ -193,6 +193,11 @@ int main() {
     SolverConfig c4 = c3_soc;
     c4.integrator = IntegratorType::EULER_EXPLICIT;
     results.push_back(run_test("Adaptive + Filter + SOC (Euler)", c4));
+    
+    // 8. Gauss-Newton (Adaptive + Filter + SOC + Euler)
+    SolverConfig c5 = c4;
+    c5.hessian_approximation = HessianApproximation::GAUSS_NEWTON;
+    results.push_back(run_test("GN + Adaptive + SOC (Euler)", c5));
 
 
     // Print Table

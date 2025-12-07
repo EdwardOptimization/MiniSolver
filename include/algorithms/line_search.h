@@ -173,10 +173,14 @@ public:
                 }
 
                 // Compute Residuals
-                if (config.use_exact_hessian) {
-                    Model::compute(candidate[k], config.integrator, current_dt);
+                if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                    Model::compute_cost_gn(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
                 } else {
-                    Model::compute(candidate[k], config.integrator, current_dt);
+                    Model::compute_cost_exact(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
                 }
             }
             
@@ -346,7 +350,16 @@ public:
                     candidate[k+1].x = Model::integrate(candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
                 }
                 
-                Model::compute(candidate[k], config.integrator, current_dt);
+                // Compute Residuals
+                if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                    Model::compute_cost_gn(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
+                } else {
+                    Model::compute_cost_exact(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
+                }
             }
             
             auto m_alpha = compute_metrics(candidate, N, mu, config);
@@ -393,7 +406,16 @@ public:
                              if (k==0) {} // x0 fixed
                              else candidate[k].x = Model::integrate(candidate[k-1].x, candidate[k-1].u, candidate[k-1].p, dt_traj[k-1], config.integrator);
                         }
-                        Model::compute(candidate[k], config.integrator, current_dt);
+                        // Compute Residuals
+                if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                    Model::compute_cost_gn(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
+                } else {
+                    Model::compute_cost_exact(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
+                }
                     }
                     
                     auto m_soc = compute_metrics(candidate, N, mu, config);

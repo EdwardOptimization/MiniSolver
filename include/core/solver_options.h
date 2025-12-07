@@ -29,6 +29,12 @@ enum class LineSearchType {
     FILTER  
 };
 
+
+enum class HessianApproximation {
+    EXACT,          // Full Hessian (Objective + Constraints)
+    GAUSS_NEWTON    // Gauss-Newton (Objective J^T J only), ignore constraint curvature
+};
+
 // Print Levels
 enum class PrintLevel {
     NONE,   // Silent
@@ -106,7 +112,8 @@ struct SolverConfig {
     PrintLevel print_level = PrintLevel::ITER; 
 
     // --- Advanced Features ---
-    bool use_exact_hessian = true; 
+    HessianApproximation hessian_approximation = HessianApproximation::EXACT;
+    
     bool enable_iterative_refinement = false;
     int max_refinement_steps = 1;
     

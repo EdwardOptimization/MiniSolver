@@ -425,22 +425,32 @@ class OptimalControlModel:
             symbols=sp.numbered_symbols("tmp_j")
         )
         
+        # [NEW] Gauss-Newton Hessian (Objective Only)
+        # H_gn = J^T W J. Wait, self.objective might not be in LS form explicitly.
+        # But commonly we assume H_obj is dominated by J^T J if residuals are small.
+        # Acados assumes cost is explicitly y - y_ref.
+        # For general objective, if it is convex, H_obj is PSD.
+        # If we want GN, we need the user to provide LS terms? 
+        # Or we just assume H_obj is good, but we DROP the constraint Hessian.
+        # "Gauss-Newton" in SQP context usually means dropping the Constraint Hessian (Lagrangian term).
+        # So H_approx = H_obj (assuming H_obj is PSD).
+        # Let's generate a separate set of expressions where we don't add hess_con_total.
+        
+        # Actually, reduced_cost contains 8 matrices: q, r, Q_obj, R_obj, H_obj, Q_con, R_con, H_con.
+        # We can just construct a separate compute_gn function that uses Q_obj but ignores Q_con!
+        # The CSE `reduced_cost` already separates them.
+        # So we just need to generate a new C++ function `compute_gn` that assigns Q = Q_obj (instead of Q_obj + Q_con).
+        
         # 5. Code Construction
         
         # Constants
         code_constants = f"static const int NX={nx};\n    static const int NU={nu};\n    static const int NC={nc};\n    static const int NP={np_param};"
         
         # Generate Soft Constraints Meta-Data Array
-        # We need an array of weights and types.
-        # Let's map L1 -> 1, L2 -> 2
-        # Weights: array of doubles. 0 means hard.
-        
         soft_weights_str = "{"
         soft_types_str = "{"
-        
         weights_list = [0.0] * nc
-        types_list = [0] * nc # 0: Hard, 1: L1, 2: L2
-        
+        types_list = [0] * nc 
         for sc in self.soft_constraints:
             idx = sc['index']
             w = sc['weight']
@@ -448,24 +458,19 @@ class OptimalControlModel:
             if idx < nc:
                 weights_list[idx] = w
                 types_list[idx] = t
-        
         soft_weights_str += ", ".join([str(w) for w in weights_list]) + "}"
         soft_types_str += ", ".join([str(t) for t in types_list]) + "}"
-        
         code_soft = f"    static constexpr std::array<double, NC> constraint_weights = {soft_weights_str};\n"
         code_soft += f"    static constexpr std::array<int, NC> constraint_types = {soft_types_str};\n"
-        
         code_constants += "\n\n" + code_soft
 
         # Name Arrays
         code_names = f"static constexpr std::array<const char*, NX> state_names = {{\n"
         for s in self.states: code_names += f'        "{s.name}",\n'
         code_names += "    };\n\n"
-        
         code_names += f"    static constexpr std::array<const char*, NU> control_names = {{\n"
         for u in self.controls: code_names += f'        "{u.name}",\n'
         code_names += "    };\n\n"
-        
         code_names += f"    static constexpr std::array<const char*, NP> param_names = {{\n"
         for p in self.parameters: code_names += f'        "{p.name}",\n'
         code_names += "    };\n"
@@ -484,9 +489,7 @@ class OptimalControlModel:
 
         # Compute Constraints Body
         code_compute_con = self._generate_unpack_block(source_kp=True)
-        # [NEW] Inject Pre-Calculation for Special Constraints (e.g. Projection)
         code_compute_con += self._generate_special_constraint_preamble()
-        
         code_compute_con += "\n"
         for name, val in repl_con:
             code_compute_con += f"        T {name} = {sp.ccode(val)};\n"
@@ -494,39 +497,100 @@ class OptimalControlModel:
         code_compute_con += self._generate_assign_block(assign_con, reduced_con)
 
         # Compute Cost Body
-        code_cost_impl = "template<typename T, bool Exact>\n"
+        # Template param: 0 = Exact (with Con Hessian), 1 = GN (without Con Hessian)
+        # Note: We also had 'Exact' bool before to toggle Con Hessian?
+        # Let's redefine: compute_cost_impl<T, Mode>
+        # Mode 0: Gauss-Newton (Q = Q_obj only)
+        # Mode 1: Exact (Q = Q_obj + Q_con)
+        
+        code_cost_impl = "template<typename T, int Mode>\n"
         code_cost_impl += "    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
         code_unpack = self._generate_unpack_block(source_kp=True)
         if nc > 0:
             for i in range(nc):
                 code_unpack += f"        T lam_{i} = kp.lam({i});\n"
         
-        # Cost also needs the projection logic if Hessians depend on it?
-        # Our linearized constraints have 0 Hessian, so lam * hess_g is 0.
-        # But if we didn't linearize fully, we might need it. 
-        # With linearize_at_boundary=True, Hessian is 0 symbolic.
-        # So we don't need preamble here unless cost depends on it (it doesn't).
-        
         code_cse = "\n"
         for name, val in repl_cost:
             code_cse += f"        T {name} = {sp.ccode(val)};\n"
+            
         code_assign = ""
         assign_grads = [("q", 0, nx, 1), ("r", 1, nu, 1)]
         code_assign += self._generate_assign_block(assign_grads, reduced_cost)
-        code_assign += self._generate_assign_block_exact(None, reduced_cost, 2, None, 5)
+        
+        # The key difference: generate_assign_block_exact handles the conditional addition
+        # Mode 1 -> Exact. Mode 0 -> GN.
+        # We need to adapt _generate_assign_block_exact to use the integer template.
+        
+        # Inline modified generation logic here
+        target_names = ["Q", "R", "H"]
+        offset_obj = 2
+        offset_con = 5
+        
+        for i, name in enumerate(target_names):
+            idx_obj = offset_obj + i
+            idx_con = offset_con + i
+            
+            mat_obj = reduced_cost[idx_obj]
+            mat_con = reduced_cost[idx_con]
+            
+            rows = mat_obj.shape[0]
+            cols = mat_obj.shape[1]
+            
+            code_assign += f"\n        // {name} (Mode 0=GN, 1=Exact)\n"
+            for r in range(rows):
+                for c in range(cols):
+                    val_obj = mat_obj[r, c]
+                    val_con = mat_con[r, c]
+                    
+                    code_val_obj = sp.ccode(val_obj)
+                    code_val_con = sp.ccode(val_con)
+                    
+                    # kp.Q = Q_obj
+                    if val_con == 0:
+                        code_assign += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
+                    else:
+                        code_assign += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
+                        # Add constraint hessian only if Mode == 1
+                        code_assign += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {code_val_con};\n"
+        
         if len(reduced_cost) > 8:
             code_assign += f"\n        kp.cost = {sp.ccode(reduced_cost[8])};\n"
+        
         code_cost_impl += code_unpack + code_cse + code_assign
         code_cost_impl += "    }\n\n"
         
+        # Wrappers
+        # compute_cost -> GN (Default? No, existing code expects Exact usually? Or GN?)
+        # Let's align with Acados philosophy: GN is preferred for control.
+        # But strictly, compute_cost usually means evaluate everything.
+        # Solver calls compute() which calls compute_cost().
+        # We need to exposing a way to select.
+        # The current C++ code in MiniSolver calls Model::compute_cost(kp).
+        # We should make compute_cost use a template or runtime switch?
+        # Runtime switch inside compute is nice.
+        
+        # New approach: compute_cost takes a flag? 
+        # But signature is fixed in solver.
+        
+        # Let's provide explicit named functions.
         code_wrappers = "template<typename T>\n"
-        code_wrappers += "    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
-        code_wrappers += "        compute_cost_impl<T, false>(kp);\n"
+        code_wrappers += "    static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code_wrappers += "        compute_cost_impl<T, 0>(kp);\n"
         code_wrappers += "    }\n\n"
+        
         code_wrappers += "    template<typename T>\n"
         code_wrappers += "    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
-        code_wrappers += "        compute_cost_impl<T, true>(kp);\n"
+        code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
+        code_wrappers += "    }\n\n"
+        
+        # Default alias (Exact for backward compat, or GN?)
+        # Let's make it Exact to be safe.
+        code_wrappers += "    template<typename T>\n"
+        code_wrappers += "    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
         code_wrappers += "    }\n"
+        
         code_compute_cost = code_cost_impl + code_wrappers
 
         # 6. Read Template & Replace

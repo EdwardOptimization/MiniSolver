@@ -415,7 +415,7 @@ struct CarModel {
     }
 
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
-    template<typename T, bool Exact>
+    template<typename T, int Mode>
     static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {
         T x = kp.x(0);
         T y = kp.x(1);
@@ -457,7 +457,7 @@ struct CarModel {
         kp.r(0,0) = acc*tmp_j1;
         kp.r(1,0) = steer*tmp_j2;
 
-        // Q (Conditionally Exact)
+        // Q (Mode 0=GN, 1=Exact)
         kp.Q(0,0) = tmp_j3;
         kp.Q(0,1) = 0;
         kp.Q(0,2) = 0;
@@ -475,13 +475,13 @@ struct CarModel {
         kp.Q(3,2) = 0;
         kp.Q(3,3) = 2*w_vel;
 
-        // R (Conditionally Exact)
+        // R (Mode 0=GN, 1=Exact)
         kp.R(0,0) = tmp_j1;
         kp.R(0,1) = 0;
         kp.R(1,0) = 0;
         kp.R(1,1) = tmp_j2;
 
-        // H (Conditionally Exact)
+        // H (Mode 0=GN, 1=Exact)
         kp.H(0,0) = 0;
         kp.H(0,1) = 0;
         kp.H(0,2) = 0;
@@ -495,13 +495,18 @@ struct CarModel {
     }
 
 template<typename T>
-    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {
-        compute_cost_impl<T, false>(kp);
+    static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) {
+        compute_cost_impl<T, 0>(kp);
     }
 
     template<typename T>
     static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {
-        compute_cost_impl<T, true>(kp);
+        compute_cost_impl<T, 1>(kp);
+    }
+
+    template<typename T>
+    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {
+        compute_cost_impl<T, 1>(kp);
     }
 
 
