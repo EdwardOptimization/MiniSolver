@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use MiniSolver in your research, please cite it using these metadata."
+title: "MiniSolver: A Professional Solver for Robotics and Autonomous Driving"
+abstract: "MiniSolver is a high-performance optimization solver designed for trajectory planning, MPC, and control in autonomous systems. It is optimized for embedded deployment and real-time applications."
+type: software
+license: Apache-2.0
+version: 0.1.0
+date-released: 2025-12-08
+repository-code: "https://github.com/EdwardOptimization/MiniSolver"
+keywords:
+  - robotics
+  - autonomous-driving
+  - optimal-control
+  - mpc
+  - trajectory-optimization
+  - solver
+  - convex-optimization
+authors:
+  - family-names: "Qu"
+    given-names: "Edward"
