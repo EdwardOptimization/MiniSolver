@@ -747,6 +747,7 @@ public:
             
             if (sigma > 1.0) sigma = 1.0;
             double mu_target = sigma * mu_curr;
+            if (mu_target < config.mu_min) mu_target = config.mu_min; // [FIX] Enforce lower bound
             
             // 2. Corrector Step
             // Solve with mu_target and affine correction term

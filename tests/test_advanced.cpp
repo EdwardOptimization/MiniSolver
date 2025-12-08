@@ -95,7 +95,7 @@ TEST(AdvancedFeaturesTest, SoftConstraintL2) {
     int N = 5;
     SolverConfig config;
     config.print_level = PrintLevel::DEBUG; // Enable debug logs
-    config.max_iters = 50;
+    config.max_iters = 500;
     
     MiniSolver<SoftModel, 10> solver(N, Backend::CPU_SERIAL, config);
     solver.set_dt(1.0);
@@ -132,7 +132,7 @@ TEST(AdvancedFeaturesTest, SoftConstraintL2) {
     // Penalty is 0 there. Gradient is 2*u = 0.14. 
     // It should go to 0.
     // We relax the check to < 0.1 to account for barrier/numerical residue.
-    EXPECT_LT(solver.get_control(0, 0), 0.1);
+    EXPECT_LT(solver.get_control(0, 0), 1.0e-3);
 }
 
 // Test GN
