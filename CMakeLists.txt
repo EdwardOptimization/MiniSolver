@@ -62,4 +62,33 @@ add_executable(auto_tuner tools/auto_tuner.cpp)
 # Replay Tool
 add_executable(replay_solver tools/replay_solver.cpp)
 
+# --- Unit Tests (GoogleTest) ---
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+)
+# For Windows: Prevent overriding the parent project's compiler/linker settings
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+
+# Helper to add test
+function(add_minisolver_test test_name source_file)
+    add_executable(${test_name} ${source_file})
+    target_link_libraries(${test_name} GTest::gtest_main)
+    target_include_directories(${test_name} PRIVATE include)
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endfunction()
+
+# Register Tests (Files will be created in next steps)
+add_minisolver_test(test_matrix tests/test_matrix.cpp)
+add_minisolver_test(test_autodiff tests/test_autodiff.cpp)
+add_minisolver_test(test_riccati tests/test_riccati.cpp)
+add_minisolver_test(test_linesearch tests/test_line_search.cpp)
+add_minisolver_test(test_solver tests/test_solver.cpp)
+add_minisolver_test(test_advanced tests/test_advanced.cpp)
+add_minisolver_test(test_soc tests/test_soc.cpp)
+
 # No GPU link needed for this CPU benchmark

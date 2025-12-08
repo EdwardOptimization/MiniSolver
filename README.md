@@ -85,6 +85,26 @@ Or simply run the all-in-one script:
 ```
 This will solve a collision avoidance problem and generate a `trajectory_plot.png` visualization.
 
+## 🧪 Unit Tests
+
+MiniSolver includes a comprehensive test suite using GoogleTest.
+
+```bash
+# Build tests
+mkdir build && cd build
+cmake ..
+make -j4
+
+# Run all tests
+ctest --verbose
+# Or run specific test binaries
+./test_matrix
+./test_autodiff
+./test_riccati
+./test_linesearch
+./test_solver
+```
+
 ## 📝 Defining Your Own OCP
 
 MiniSolver separates model definition from the solver core. You define your OCP in Python, and we generate the fast C++ code.
@@ -144,7 +164,7 @@ int main() {
     // Enable Advanced Features
     solver.config.enable_soc = true;
     solver.config.barrier_strategy = BarrierStrategy::MEHROTRA;
-
+    
     // Solve
     solver.solve();
 }

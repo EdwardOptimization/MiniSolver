@@ -7,6 +7,7 @@
 #include "core/types.h"
 #include "core/solver_options.h"
 #include "core/trajectory.h"
+#include "core/logger.h" // [NEW] Needed for MLOG_DEBUG
 #include "algorithms/linear_solver.h"
 #include "solver/line_search.h" // [NEW] Needed for fraction_to_boundary_rule
 
@@ -283,15 +284,21 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         return {theta, phi};
     }
     
-    bool is_acceptable(double theta, double phi, const SolverConfig& config) {
-        // Sufficient decrease w.r.t current point (optional but good)
+    bool is_acceptable(double theta, double phi, double theta_0, double phi_0, const SolverConfig& config) {
+        // Check against current point (Sufficient Decrease)
+        // Condition: theta <= (1-gamma)*theta_0 OR phi <= phi_0 - gamma*theta_0
+        bool sufficient_decrease = (theta <= (1.0 - config.filter_gamma_theta) * theta_0) ||
+                                   (phi <= phi_0 - config.filter_gamma_phi * theta_0);
+        
+        if (!sufficient_decrease) return false;
+
         // Check against filter
         for(const auto& entry : filter) {
             double theta_j = entry.first;
             double phi_j = entry.second;
-            bool sufficient_theta = theta < (1.0 - config.filter_gamma_theta) * theta_j;
-            bool sufficient_phi = phi < phi_j - config.filter_gamma_phi * theta_j;
-            if (!sufficient_theta && !sufficient_phi) return false; 
+            bool sufficient_wrt_filter = (theta <= (1.0 - config.filter_gamma_theta) * theta_j) ||
+                                         (phi <= phi_j - config.filter_gamma_phi * theta_j);
+            if (!sufficient_wrt_filter) return false; 
         }
         return true;
     }
@@ -363,7 +370,7 @@ public:
             }
             
             auto m_alpha = compute_metrics(candidate, N, mu, config);
-            if (is_acceptable(m_alpha.first, m_alpha.second, config)) {
+            if (is_acceptable(m_alpha.first, m_alpha.second, theta_0, phi_0, config)) {
                 accepted = true;
             }
             
@@ -419,7 +426,7 @@ public:
                     }
                     
                     auto m_soc = compute_metrics(candidate, N, mu, config);
-                    if (is_acceptable(m_soc.first, m_soc.second, config)) {
+                    if (is_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config)) {
                         if (config.print_level >= PrintLevel::DEBUG) 
                              MLOG_DEBUG("SOC Accepted.");
                         accepted = true;

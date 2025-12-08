@@ -28,7 +28,7 @@ namespace minisolver {
         // So we want the linear system J dx_soc = -r_soc.
         // This means we should replace `g_val` in r_prim with `soc_kp->g_val`.
         // Note: s is from base point x_k? Yes, we linearize at x_k.
-        
+
         for(int i=0; i<Knot::NC; ++i) {
             double s_i = kp.s(i);
             double lam_i = kp.lam(i);

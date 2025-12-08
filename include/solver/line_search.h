@@ -42,7 +42,7 @@ double fraction_to_boundary_rule(const TrajVector& traj, int N, double tau = 0.9
                  if (i < ModelType::constraint_types.size()) {
                     type = ModelType::constraint_types[i];
                     w = ModelType::constraint_weights[i];
-                 }
+                }
             }
             
             // For L1, we explicitly track soft_s and soft_dual

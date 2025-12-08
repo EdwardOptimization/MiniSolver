@@ -75,6 +75,7 @@ struct SolverConfig {
     // --- Convergence Tolerances ---
     double tol_grad = 1e-4;     
     double tol_con = 1e-4;      
+    double tol_dual = 1e-4; // [NEW] Dual Infeasibility Tolerance
     double tol_mu = 1e-5;       
 
     // --- Line Search & Robustness ---

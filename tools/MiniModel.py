@@ -20,7 +20,7 @@ class OptimalControlModel:
         
         # Flags
         self.use_rk4 = True
-        
+
         # Special Constraints logic
         # Store tuples: (type, data_dict)
         self.special_constraints = []
@@ -93,7 +93,7 @@ class OptimalControlModel:
                 expr = constraint.lhs - constraint.rhs
             elif isinstance(constraint, sp.GreaterThan): # lhs >= rhs -> rhs - lhs <= 0
                 expr = constraint.rhs - constraint.lhs
-            
+                
             # Add to constraints list
             self.constraints.append(expr)
             idx = len(self.constraints) - 1
@@ -157,12 +157,12 @@ class OptimalControlModel:
                 })
                 
             else:
-                # Reformulate: sqrt(quad_term + eps) >= sqrt(rhs)
-                # -> sqrt(rhs) - sqrt(quad_term + eps) <= 0
+            # Reformulate: sqrt(quad_term + eps) >= sqrt(rhs)
+            # -> sqrt(rhs) - sqrt(quad_term + eps) <= 0
                 epsilon = 1e-6 # Tighter eps
-                robust_dist = sp.sqrt(quad_term + epsilon)
-                robust_rhs = sp.sqrt(rhs)
-                self.constraints.append(robust_rhs - robust_dist)
+            robust_dist = sp.sqrt(quad_term + epsilon)
+            robust_rhs = sp.sqrt(rhs)
+            self.constraints.append(robust_rhs - robust_dist)
         else:
             # Standard form
             if sense == '<=':
@@ -338,7 +338,7 @@ class OptimalControlModel:
             
             A_expr = x_next_expr.jacobian(x_vec)
             B_expr = x_next_expr.jacobian(u_vec)
-            
+        
             # CSE
             repl_dyn, reduced_dyn = sp.cse([x_next_expr, A_expr, B_expr], symbols=sp.numbered_symbols("tmp_d"))
             
@@ -463,7 +463,7 @@ class OptimalControlModel:
         code_soft = f"    static constexpr std::array<double, NC> constraint_weights = {soft_weights_str};\n"
         code_soft += f"    static constexpr std::array<int, NC> constraint_types = {soft_types_str};\n"
         code_constants += "\n\n" + code_soft
-
+        
         # Name Arrays
         code_names = f"static constexpr std::array<const char*, NX> state_names = {{\n"
         for s in self.states: code_names += f'        "{s.name}",\n'
@@ -556,7 +556,7 @@ class OptimalControlModel:
         
         if len(reduced_cost) > 8:
             code_assign += f"\n        kp.cost = {sp.ccode(reduced_cost[8])};\n"
-        
+            
         code_cost_impl += code_unpack + code_cse + code_assign
         code_cost_impl += "    }\n\n"
         

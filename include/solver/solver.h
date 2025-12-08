@@ -336,8 +336,8 @@ public:
         line_search->reset();
     }
 
-    bool check_convergence(double max_viol) {
-        if(mu <= config.mu_min && max_viol <= config.tol_con) return true;
+    bool check_convergence(double max_viol, double max_dual) {
+        if(mu <= config.mu_min && max_viol <= config.tol_con && max_dual <= config.tol_dual) return true;
         return false;
     }
 
@@ -452,7 +452,7 @@ public:
         }
         return false;
     }
-
+    
     bool feasibility_restoration() {
         if (config.print_level >= PrintLevel::DEBUG) 
             MLOG_DEBUG("Entering Feasibility Restoration Phase.");
@@ -573,13 +573,24 @@ public:
         // Final Feasibility Check
         auto& traj = trajectory.active();
         double max_viol = 0.0;
+        double max_dual = 0.0;
+        bool any_nan = false;
         for(int k=0; k<=N; ++k) {
              for(int i=0; i<NC; ++i) {
                  double v = std::abs(traj[k].g_val(i) + traj[k].s(i));
+                 if (std::isnan(v)) any_nan = true;
                  if(v > max_viol) max_viol = v;
              }
+             double g_norm = MatOps::norm_inf(traj[k].q_bar);
+             double r_norm = MatOps::norm_inf(traj[k].r_bar);
+             if(g_norm > max_dual) max_dual = g_norm;
+             if(r_norm > max_dual) max_dual = r_norm;
         }
         
+        if (any_nan) return SolverStatus::NUMERICAL_ERROR;
+        // If we reached here (MaxIter), check if we are at least feasible and stationary enough
+        // to call it "FEASIBLE" (suboptimal but safe) or even "SOLVED" (if we just missed the loop check)
+        if (check_convergence(max_viol, max_dual)) return SolverStatus::SOLVED;
         if (max_viol <= config.tol_con) return SolverStatus::FEASIBLE;
         
         return SolverStatus::MAX_ITER;
@@ -592,6 +603,7 @@ public:
         timer.start("Derivatives");
         double max_kkt_error = 0.0;
         double max_prim_inf = 0.0;
+        double max_dual_inf = 0.0; 
         double total_gap = 0.0;
         int total_con = 0;
 
@@ -618,8 +630,17 @@ public:
             }
             total_gap += traj[k].s.dot(traj[k].lam);
             total_con += NC;
+            
+            // Approximate Dual Inf from q_bar/r_bar (Last Linear Solve Residuals)
+            double g_norm = MatOps::norm_inf(traj[k].q_bar);
+            double r_norm = MatOps::norm_inf(traj[k].r_bar);
+            if(g_norm > max_dual_inf) max_dual_inf = g_norm;
+            if(r_norm > max_dual_inf) max_dual_inf = r_norm;
         }
         timer.stop();
+        
+        // Initial convergence check (Primal + Dual + Mu)
+        if(check_convergence(max_prim_inf, max_dual_inf)) return SolverStatus::SOLVED;
 
         // Check for Numerical Instability (NaN/Inf)
         if (has_nans(traj)) {
@@ -808,12 +829,19 @@ public:
         }
         timer.stop();
 
+        print_iteration_log(alpha); // [FIX] Restore logging
+
         // Use Multiple Shooting: No forced rollout at the end of step
         // Trajectory is allowed to be discontinuous (Defect != 0) until convergence
         
-        // Final check after step update
-        if(check_convergence(max_prim_inf)) return SolverStatus::SOLVED;
-
+        // Final check after step update - NO, we checked at start.
+        // If we want to return SOLVED here, we need to check again.
+        // But max_prim_inf is from START of step (x_k).
+        // If x_k was feasible, we returned SOLVED at start.
+        // So here we just return UNSOLVED to continue loop.
+        // UNLESS we want to check if the step we just took made it feasible?
+        // But we don't have new max_prim_inf.
+        
         return SolverStatus::UNSOLVED;
     }
 
