@@ -80,8 +80,10 @@ namespace minisolver {
                     r_z += dsoft_s_i * (-dlam_aff_i);
                 }
                 
-                effective_r_prim = r_eq + r_y/lam_i - r_z/(w - lam_i);
-                grad_mod(i) = lam_i - sigma_val * effective_r_prim;
+                // Corrected Signs:
+                // grad_mod = lam + sigma * (r_eq - r_y/lam + r_z/(w-lam))
+                double term_correction = r_eq - r_y/lam_i + r_z/(w - lam_i);
+                grad_mod(i) = lam_i + sigma_val * term_correction;
             }
             else {
                 // Standard / L2
@@ -89,11 +91,11 @@ namespace minisolver {
                 if (type == 2 && w > 1e-6) {
                     double r_prim_L2 = g_val_i + s_i - lam_i/w;
                     term2 = sigma_val * (r_y / lam_i);
-                    grad_mod(i) = sigma_val * r_prim_L2 - term2;
+                    grad_mod(i) = sigma_val * r_prim_L2 - term2 + lam_i;
                 } else {
                     double r_eq = g_val_i + s_i;
                     term2 = r_y / s_i;
-                    grad_mod(i) = sigma_val * r_eq - term2;
+                    grad_mod(i) = sigma_val * r_eq - term2 + lam_i;
                 }
             }
         }
@@ -161,7 +163,10 @@ namespace minisolver {
                 
                 double r_eq = g_val_i + s_i - soft_s_i;
                 double r_z = soft_s_i * (w - lam_i) - mu;
-                double eff_r = r_eq + r_y/lam_i - r_z/(w - lam_i);
+                
+                // Corrected Signs for dlam recovery
+                // dlam = sigma * (C dx + r_eq - r_y/lam + r_z/(w-lam))
+                double eff_r = r_eq - r_y/lam_i + r_z/(w - lam_i);
                 
                 double dlam = sigma_val * (constraint_step(i) + eff_r);
                 kp.dlam(i) = dlam;

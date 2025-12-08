@@ -410,7 +410,10 @@ public:
                 if(viol > max_prim_inf) max_prim_inf = viol;
                 if(kp.s(i) < min_slack) min_slack = kp.s(i);
             }
-            double g_norm = MatOps::norm_inf(kp.q_bar);
+            // q_bar contains Vx (cost-to-go gradient / dynamics multiplier).
+            // It is NOT a residual and should not be zero.
+            // Only r_bar (control gradient) should be zero.
+            double g_norm = 0.0; // MatOps::norm_inf(kp.q_bar);
             double r_norm = MatOps::norm_inf(kp.r_bar);
             double dual = std::max(g_norm, r_norm);
             if(dual > max_dual_inf) max_dual_inf = dual;
@@ -581,9 +584,8 @@ public:
                  if (std::isnan(v)) any_nan = true;
                  if(v > max_viol) max_viol = v;
              }
-             double g_norm = MatOps::norm_inf(traj[k].q_bar);
+             // double g_norm = MatOps::norm_inf(traj[k].q_bar);
              double r_norm = MatOps::norm_inf(traj[k].r_bar);
-             if(g_norm > max_dual) max_dual = g_norm;
              if(r_norm > max_dual) max_dual = r_norm;
         }
         
@@ -622,7 +624,26 @@ public:
             }
             
             for(int i=0; i<NC; ++i) {
-                double viol = std::abs(traj[k].g_val(i) + traj[k].s(i)); 
+                // Correct Primal Inf calculation for Soft Constraints
+                double viol = 0.0;
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                     if (i < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                     }
+                }
+
+                if (type == 1 && w > 1e-6) { // L1
+                     viol = std::abs(traj[k].g_val(i) + traj[k].s(i) - traj[k].soft_s(i));
+                } else if (type == 2 && w > 1e-6) { // L2
+                     // g + s - lam/w = 0
+                     viol = std::abs(traj[k].g_val(i) + traj[k].s(i) - traj[k].lam(i)/w);
+                } else {
+                     viol = std::abs(traj[k].g_val(i) + traj[k].s(i)); 
+                }
+
                 double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu); 
                 if(viol > max_kkt_error) max_kkt_error = viol;
                 if(comp > max_kkt_error) max_kkt_error = comp;
@@ -631,10 +652,9 @@ public:
             total_gap += traj[k].s.dot(traj[k].lam);
             total_con += NC;
             
-            // Approximate Dual Inf from q_bar/r_bar (Last Linear Solve Residuals)
-            double g_norm = MatOps::norm_inf(traj[k].q_bar);
+            // Approximate Dual Inf from r_bar (Control Gradient Stationarity)
+            // Note: q_bar is Cost-to-Go gradient (lambda), which is NOT zero in general.
             double r_norm = MatOps::norm_inf(traj[k].r_bar);
-            if(g_norm > max_dual_inf) max_dual_inf = g_norm;
             if(r_norm > max_dual_inf) max_dual_inf = r_norm;
         }
         timer.stop();
