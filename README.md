@@ -179,4 +179,4 @@ int main() {
 *   `tools/`: Python DSL (`MiniModel.py`), benchmark tools, auto-tuner, and replay tools.
 
 ## 🤝 License
-MIT
+Apache 2.0
