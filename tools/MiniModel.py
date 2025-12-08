@@ -105,7 +105,7 @@ class OptimalControlModel:
                     'weight': weight
                 })
 
-    def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside', linearize_at_boundary=False):
+    def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside', linearize_at_boundary=True):
         """
         Add a quadratic constraint: (x-center)^T Q (x-center) {sense} rhs
         """
@@ -160,9 +160,9 @@ class OptimalControlModel:
             # Reformulate: sqrt(quad_term + eps) >= sqrt(rhs)
             # -> sqrt(rhs) - sqrt(quad_term + eps) <= 0
                 epsilon = 1e-6 # Tighter eps
-            robust_dist = sp.sqrt(quad_term + epsilon)
-            robust_rhs = sp.sqrt(rhs)
-            self.constraints.append(robust_rhs - robust_dist)
+                robust_dist = sp.sqrt(quad_term + epsilon)
+                robust_rhs = sp.sqrt(rhs)
+                self.constraints.append(robust_rhs - robust_dist)
         else:
             # Standard form
             if sense == '<=':
