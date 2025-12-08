@@ -12,11 +12,11 @@ struct CarModel {
     // --- Constants ---
     static const int NX=4;
     static const int NU=2;
-    static const int NC=5;
+    static const int NC=4;
     static const int NP=13;
 
-    static constexpr std::array<double, NC> constraint_weights = {0.0, 0.0, 0.0, 0.0, 0.0};
-    static constexpr std::array<int, NC> constraint_types = {0, 0, 0, 0, 0};
+    static constexpr std::array<double, NC> constraint_weights = {0.0, 0.0, 0.0, 0.0};
+    static constexpr std::array<int, NC> constraint_types = {0, 0, 0, 0};
 
 
     // --- Name Arrays (for Map Construction) ---
@@ -360,23 +360,13 @@ struct CarModel {
         T w_steer = kp.p(12);
 
         // --- Special Constraints Pre-Calculation ---
-        T d2 = pow(-obs_x + x, 2) + pow(-obs_y + y, 2);
-        T rhs = pow(car_rad + obs_rad, 2);
-        T scale = sqrt(rhs / (d2 + 1e-9));
-        T xp_0_0 = obs_x + scale*(-obs_x + x);
-        T xp_0_1 = obs_y + scale*(-obs_y + y);
-        T xp_0_2 = scale*theta;
-        T xp_0_3 = scale*v;
 
-        T tmp_c0 = 2*obs_x - 2*xp_0_0;
-        T tmp_c1 = 2*obs_y - 2*xp_0_1;
 
         // g_val
         kp.g_val(0,0) = acc - 3.0;
         kp.g_val(1,0) = -acc - 3.0;
         kp.g_val(2,0) = steer - 0.5;
         kp.g_val(3,0) = -steer - 0.5;
-        kp.g_val(4,0) = tmp_c0*(x - xp_0_0) + tmp_c1*(-xp_0_1 + y);
 
         // C
         kp.C(0,0) = 0;
@@ -395,10 +385,6 @@ struct CarModel {
         kp.C(3,1) = 0;
         kp.C(3,2) = 0;
         kp.C(3,3) = 0;
-        kp.C(4,0) = tmp_c0;
-        kp.C(4,1) = tmp_c1;
-        kp.C(4,2) = 0;
-        kp.C(4,3) = 0;
 
         // D
         kp.D(0,0) = 1;
@@ -409,8 +395,6 @@ struct CarModel {
         kp.D(2,1) = 1;
         kp.D(3,0) = 0;
         kp.D(3,1) = -1;
-        kp.D(4,0) = 0;
-        kp.D(4,1) = 0;
 
     }
 
@@ -440,7 +424,6 @@ struct CarModel {
         T lam_1 = kp.lam(1);
         T lam_2 = kp.lam(2);
         T lam_3 = kp.lam(3);
-        T lam_4 = kp.lam(4);
 
         T tmp_j0 = 2*w_theta;
         T tmp_j1 = 2*w_acc;

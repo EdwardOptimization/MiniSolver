@@ -49,8 +49,8 @@ struct SolverConfig {
     double default_dt = 0.1;
 
     // --- Barrier Strategy ---
-    // MEHROTRA is generally the fastest (quadratic convergence)
-    BarrierStrategy barrier_strategy = BarrierStrategy::MEHROTRA; 
+    // ADAPTIVE is generally the most robust and fast for general nonlinear problems
+    BarrierStrategy barrier_strategy = BarrierStrategy::ADAPTIVE; 
     
     double mu_init = 1e-1;      
     double mu_min = 1e-6;       // Tighter tolerance for high precision
@@ -112,7 +112,7 @@ struct SolverConfig {
     PrintLevel print_level = PrintLevel::ITER; 
 
     // --- Advanced Features ---
-    HessianApproximation hessian_approximation = HessianApproximation::EXACT;
+    HessianApproximation hessian_approximation = HessianApproximation::GAUSS_NEWTON; // Default to GN for speed
     
     bool enable_iterative_refinement = false;
     int max_refinement_steps = 1;
@@ -134,8 +134,8 @@ struct SolverConfig {
     
     // Feasibility Logic (Heuristics)
     // Disabled by default for PURE IPM behavior. Enable only if needed.
-    bool enable_slack_reset = false; 
-    bool enable_feasibility_restoration = false;
+    bool enable_slack_reset = true; // Enable by default for robustness
+    bool enable_feasibility_restoration = true; // Enable by default
     bool enable_soc = true; // Enable SOC by default for robust handling of nonlinearities 
 };
 

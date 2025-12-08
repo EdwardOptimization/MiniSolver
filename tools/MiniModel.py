@@ -157,8 +157,8 @@ class OptimalControlModel:
                 })
                 
             else:
-            # Reformulate: sqrt(quad_term + eps) >= sqrt(rhs)
-            # -> sqrt(rhs) - sqrt(quad_term + eps) <= 0
+                # Reformulate: sqrt(quad_term + eps) >= sqrt(rhs)
+                # -> sqrt(rhs) - sqrt(quad_term + eps) <= 0
                 epsilon = 1e-6 # Tighter eps
                 robust_dist = sp.sqrt(quad_term + epsilon)
                 robust_rhs = sp.sqrt(rhs)
