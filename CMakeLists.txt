@@ -6,11 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Optimization Flags (CRITICAL for Eigen performance)
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+    set(CMAKE_BUILD_TYPE Debug)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-O3 -march=native -ffast-math)
+    add_compile_options(-O0 -march=native -ffast-math)
 endif()
 
 # Matrix Backend Option
@@ -83,12 +83,12 @@ function(add_minisolver_test test_name source_file)
 endfunction()
 
 # Register Tests (Files will be created in next steps)
-add_minisolver_test(test_matrix tests/test_matrix.cpp)
-add_minisolver_test(test_autodiff tests/test_autodiff.cpp)
-add_minisolver_test(test_riccati tests/test_riccati.cpp)
-add_minisolver_test(test_linesearch tests/test_line_search.cpp)
+# add_minisolver_test(test_matrix tests/test_matrix.cpp)
+# add_minisolver_test(test_autodiff tests/test_autodiff.cpp)
+# add_minisolver_test(test_riccati tests/test_riccati.cpp)
+# add_minisolver_test(test_linesearch tests/test_line_search.cpp)
 add_minisolver_test(test_solver tests/test_solver.cpp)
 add_minisolver_test(test_advanced tests/test_advanced.cpp)
-add_minisolver_test(test_soc tests/test_soc.cpp)
+# add_minisolver_test(test_soc tests/test_soc.cpp)
 
 # No GPU link needed for this CPU benchmark

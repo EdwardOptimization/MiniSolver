@@ -167,7 +167,7 @@ public:
                 
                 candidate[k].p = active[k].p; 
                 
-                double current_dt = dt_traj[k];
+                double current_dt = (k < N) ? dt_traj[k] : 0.0;
                 
                 // Optional Rollout (Single Shooting)
                 if (config.enable_line_search_rollout && k < N) {
@@ -364,7 +364,7 @@ public:
                 candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
                 candidate[k].p = active[k].p; 
                 
-                double current_dt = dt_traj[k];
+                double current_dt = (k < N) ? dt_traj[k] : 0.0;
                 
                 // Optional Rollout
                 if (config.enable_line_search_rollout && k < N) {
@@ -417,7 +417,7 @@ public:
                         candidate[k].lam += (*soc_data)[k].dlam;
                         
                         // Re-evaluate dynamics/constraints for SOC candidate
-                        double current_dt = dt_traj[k];
+                        double current_dt = (k < N) ? dt_traj[k] : 0.0;
                         if (config.enable_line_search_rollout && k < N) {
                              if (k==0) candidate[0].x = active[0].x; // Base doesn't change? Wait, SOC modifies base? No.
                              // SOC modifies the trial point. 

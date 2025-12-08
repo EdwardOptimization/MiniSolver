@@ -52,13 +52,13 @@ void save_trajectory_csv(const std::string& filename,
 }
 
 int main(int argc, char** argv) {
-    int N = 60;
+    int N = 50;
     Backend mode = Backend::CPU_SERIAL; 
 
     // --- Configuration ---
     // Use default "Pure IPM" config which should be fast and general
     SolverConfig config;
-    config.print_level = PrintLevel::ITER; // Show progress
+    config.print_level = PrintLevel::DEBUG; // Show progress
     
     // [FIX] Enable RK4 and Restoration to recover stability
     config.integrator = IntegratorType::RK4_EXPLICIT; 
@@ -76,11 +76,11 @@ int main(int argc, char** argv) {
     std::cout << ">> Initializing MiniSolver (N=" << N << ")...\n";
     std::cout << ">> Features: Default Pure IPM (Mehrotra + Filter)\n";
     
-    // Instantiate with MAX_N = 100
-    MiniSolver<CarModel, 100> solver(N, mode, config);
+    // Instantiate with MAX_N = 50
+    MiniSolver<CarModel, 50> solver(N, mode, config);
 
     std::vector<double> dts(N);
-    for(int k=0; k<N; ++k) dts[k] = (k < 20) ? 0.05 : 0.2;
+    for(int k=0; k<N; ++k) dts[k] = 0.1;
     solver.set_dt(dts);
 
     // Scenario
@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
 
     std::cout << ">> Solving (Cold Start)...\n";
     // Optional: Save case before solving to capture inputs
-    // SolverSerializer<CarModel, 100>::save_case("debug_case.dat", solver);
+    // SolverSerializer<CarModel, 50>::save_case("debug_case.dat", solver);
     
     SolverStatus status = solver.solve(); 
     std::cout << ">> Final Status: " << status_to_string(status) << "\n";
