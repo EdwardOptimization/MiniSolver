@@ -29,7 +29,6 @@ enum class LineSearchType {
     FILTER  
 };
 
-
 enum class HessianApproximation {
     EXACT,          // Full Hessian (Objective + Constraints)
     GAUSS_NEWTON    // Gauss-Newton (Objective J^T J only), ignore constraint curvature

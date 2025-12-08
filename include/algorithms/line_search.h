@@ -87,11 +87,6 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
             
             // Inequality Violation
             for(int i=0; i<NC; ++i) {
-                total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i));
-                // For L1 soft: g(x) - s_soft + s_hard = 0
-                // We need to penalize this residual.
-                // Standard code above uses g+s. For L1, it should be g + s_hard - s_soft.
-                // How to detect?
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
@@ -100,8 +95,15 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                         w = Model::constraint_weights[i];
                      }
                 }
+
                 if (type == 1 && w > 1e-6) {
                     total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                }
+                else if (type == 2 && w > 1e-6) {
+                    // L2 Soft: No hard violation penalty (handled in Cost)
+                }
+                else {
+                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i));
                 }
             }
             
@@ -256,7 +258,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
             
             // Infeasibility (Theta)
             for(int i=0; i<NC; ++i) {
-                // Correct residual for L1
+                // Correct residual for L1/L2
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
@@ -267,8 +269,21 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
                 
                 if (type == 1 && w > 1e-6) {
+                    // L1: Check extended system residual
                     theta += std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
-                } else {
+                } 
+                else if (type == 2 && w > 1e-6) {
+                    // L2: Soft constraint means no hard infeasibility.
+                    // The penalty is in the objective (Phi).
+                    // However, we still have the equality g + s - lam/w = 0 in KKT?
+                    // No, primal form is unconstrained (penalty).
+                    // Ideally theta contribution is 0.
+                    // But to keep 's' consistent with 'g', we might want to check g+s?
+                    // If we treat it as unconstrained, theta=0 for this index.
+                    // Check if Model added penalty to Cost. Yes.
+                }
+                else {
+                    // Hard
                     theta += std::abs(kp.g_val(i) + kp.s(i));
                 }
             }
