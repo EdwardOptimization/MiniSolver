@@ -9,7 +9,7 @@
 #include "core/trajectory.h"
 #include "core/logger.h" // [NEW] Needed for MLOG_DEBUG
 #include "algorithms/linear_solver.h"
-#include "solver/line_search.h" // [NEW] Needed for fraction_to_boundary_rule
+#include "solver/line_search_utils.h" // [NEW] Needed for fraction_to_boundary_rule
 
 namespace minisolver {
 

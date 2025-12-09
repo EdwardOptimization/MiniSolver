@@ -534,6 +534,7 @@ public:
 
     SolverStatus solve() {
         current_iter = 0;
+        reg = config.reg_init; // [FIX] Reset regularization for fresh solve
         
         // --- Initialization of Slacks ---
         // Ensure slacks are consistent with initial constraints to avoid artificial PrimalInf
