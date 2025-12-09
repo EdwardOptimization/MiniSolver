@@ -26,6 +26,9 @@ else()
 endif()
 
 # --- Dependencies ---
+# if(POLICY CMP0146)
+#   cmake_policy(SET CMP0146 OLD)
+# endif()
 # find_package(Eigen3 REQUIRED) -> Moved up
 find_package(CUDA QUIET)
 
@@ -67,6 +70,7 @@ include(FetchContent)
 FetchContent_Declare(
   googletest
   URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 # For Windows: Prevent overriding the parent project's compiler/linker settings
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)

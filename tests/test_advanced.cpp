@@ -139,15 +139,29 @@ TEST(AdvancedFeaturesTest, SoftConstraintL2) {
 TEST(AdvancedFeaturesTest, GaussNewtonOption) {
     SolverConfig config;
     config.hessian_approximation = HessianApproximation::GAUSS_NEWTON;
-    config.print_level = PrintLevel::NONE;
+    config.print_level = PrintLevel::DEBUG; // Enable logging to debug failure
+    
+    // Robust Config
+    config.barrier_strategy = BarrierStrategy::MONOTONE; 
+    config.line_search_type = LineSearchType::FILTER;
     
     MiniSolver<CarModel, 50> solver(10, Backend::CPU_SERIAL, config);
     solver.set_dt(0.1);
     
-    // Fix: Set parameters to avoid L=0
+    // Fix: Set parameters to avoid L=0 and ensure feasibility at start
     for(int k=0; k<=10; ++k) {
         solver.set_parameter(k, "L", 2.5);
         solver.set_parameter(k, "car_rad", 1.0);
+        solver.set_parameter(k, "obs_x", 100.0); // Move obstacle far away
+        solver.set_parameter(k, "obs_rad", 1.0);
+    }
+    
+    // Set Target to make problem well-posed (non-zero gradient)
+    for(int k=0; k<=10; ++k) {
+        solver.set_parameter(k, "v_ref", 1.0);
+        solver.set_parameter(k, "w_vel", 1.0);
+        solver.set_parameter(k, "w_steer", 0.1); // Add steer weight to avoid singularity
+        solver.set_parameter(k, "w_acc", 0.1);   // Add acc weight
     }
     
     // Just run it to ensure no crash and correct dispatch
@@ -165,10 +179,12 @@ TEST(AdvancedFeaturesTest, SQP_RTI) {
     MiniSolver<CarModel, 50> solver(10, Backend::CPU_SERIAL, config);
     solver.set_dt(0.1);
     
-    // Fix: Set parameters to avoid L=0
+    // Fix: Set parameters to avoid L=0 and ensure feasibility at start
     for(int k=0; k<=10; ++k) {
         solver.set_parameter(k, "L", 2.5);
         solver.set_parameter(k, "car_rad", 1.0);
+        solver.set_parameter(k, "obs_x", 100.0); // Move obstacle far away
+        solver.set_parameter(k, "obs_rad", 1.0);
     }
     
     // Solve

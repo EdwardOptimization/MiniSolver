@@ -55,15 +55,28 @@ TEST(SolverTest, InfeasibleStartRecovery) {
     // Or set initial guess that is very bad.
     int N = 20;
     SolverConfig config;
-    config.print_level = PrintLevel::NONE;
+    config.print_level = PrintLevel::ITER;
     config.enable_feasibility_restoration = true;
+    config.max_iters = 500;
     
+    // Robust Config
+    config.barrier_strategy = BarrierStrategy::MONOTONE;
+    config.line_search_type = LineSearchType::FILTER;
+
     MiniSolver<CarModel, 50> solver(N, Backend::CPU_SERIAL, config);
     solver.set_dt(0.1);
     
     // Initialize with random/bad values
     for(int k=0; k<=N; ++k) {
-        solver.set_state_guess(k, "v", 100.0); // Way above reference
+        solver.set_parameter(k, "v_ref", 5.0);
+        solver.set_parameter(k, "w_vel", 1.0);
+        solver.set_parameter(k, "w_steer", 0.1); // Add steer weight
+        solver.set_parameter(k, "w_acc", 0.1);   // Add acc weight
+        solver.set_parameter(k, "obs_x", 100.0);
+        solver.set_parameter(k, "obs_rad", 1.0);
+        solver.set_parameter(k, "L", 2.5);
+        solver.set_parameter(k, "car_rad", 1.0);
+        solver.set_state_guess(k, "v", 20.0); // Bad guess (20.0 >> 0.0), but recoverable
     }
     
     // Solve

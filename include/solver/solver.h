@@ -485,11 +485,6 @@ public:
                 }
             }
             
-            if (config.line_search_type == LineSearchType::FILTER) {
-                 success = true;
-                 break;
-            }
-
             // Restoration linear solve
             if(!linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config)) {
                 break;
@@ -517,8 +512,21 @@ public:
                 traj[k].s += alpha * traj[k].ds;
                 traj[k].lam += alpha * traj[k].dlam;
             }
-            rollout_dynamics();
+            // rollout_dynamics(); // [FIX] Don't force rollout in restoration. Allow defects to be handled by solver.
         }
+        
+        // [FIX] Reset Lagrange Multipliers for the original problem to avoid dual contamination
+        // form the restoration phase (which solves a different problem).
+        for(int k=0; k<=N; ++k) {
+             for(int i=0; i<NC; ++i) {
+                  // Ensure s is positive
+                  if(traj[k].s(i) < 1e-9) traj[k].s(i) = 1e-9;
+                  
+                  // Reset lam to be consistent with the original barrier parameter
+                  traj[k].lam(i) = saved_mu / traj[k].s(i);
+             }
+        }
+
         mu = saved_mu;
         reg = saved_reg;
         return success;
