@@ -88,6 +88,8 @@ public:
     double mu; 
     double reg;
     int current_iter = 0;
+
+    bool is_warm_started = false;
     
     // Lookup Maps
     std::unordered_map<std::string, int> state_map;
@@ -334,6 +336,7 @@ public:
         }
         mu = config.mu_init;
         line_search->reset();
+        is_warm_started = true;
     }
 
     bool check_convergence(double max_viol, double max_dual) {
@@ -351,8 +354,8 @@ public:
                 break;
             case BarrierStrategy::ADAPTIVE: {
                 double target = avg_gap * config.mu_safety_margin; 
-                double forced = mu * 0.9; 
-                mu = std::max(config.mu_min, std::min(forced, target));
+                // Removed forced decrease to allow mu to hold steady if needed for convergence
+                mu = std::max(config.mu_min, std::min(mu, target));
                 break;
             }
             case BarrierStrategy::MEHROTRA: {
@@ -549,8 +552,9 @@ public:
                   // Ensure s is positive
                   if(traj[k].s(i) < 1e-9) traj[k].s(i) = 1e-9;
                   
-                  // Reset lam to be consistent with the original barrier parameter
-                  traj[k].lam(i) = saved_mu / traj[k].s(i);
+                  // [FIX] Preserve dual info from restoration if valuable, but ensure complementarity lower bound
+                  double reset_val = saved_mu / traj[k].s(i);
+                  traj[k].lam(i) = std::max(traj[k].lam(i), reset_val);
              }
         }
 
@@ -564,8 +568,22 @@ public:
         reg = config.reg_init; // [FIX] Reset regularization for fresh solve
         
         // --- Initialization of Slacks ---
-        // Ensure slacks are consistent with initial constraints to avoid artificial PrimalInf
-        {
+        // Only initialize if not warm started or if data is invalid
+        bool need_init = !is_warm_started;
+        
+        if (is_warm_started) {
+             // Check for NaNs or bad values
+             auto& traj = trajectory.active();
+             for(int k=0; k<=N; ++k) {
+                 if (traj[k].s.minCoeff() <= 0 || traj[k].lam.minCoeff() <= 0 || has_nans(traj)) {
+                     need_init = true;
+                     break;
+                 }
+             }
+        }
+        is_warm_started = false; // Reset flag
+
+        if (need_init) {
             auto& traj = trajectory.active();
             for(int k=0; k<=N; ++k) {
                  double current_dt = (k < N) ? dt_traj[k] : 0.0;
@@ -913,16 +931,21 @@ public:
 
         print_iteration_log(alpha); // [FIX] Restore logging
 
-        // Use Multiple Shooting: No forced rollout at the end of step
-        // Trajectory is allowed to be discontinuous (Defect != 0) until convergence
-        
-        // Final check after step update - NO, we checked at start.
-        // If we want to return SOLVED here, we need to check again.
-        // But max_prim_inf is from START of step (x_k).
-        // If x_k was feasible, we returned SOLVED at start.
-        // So here we just return UNSOLVED to continue loop.
-        // UNLESS we want to check if the step we just took made it feasible?
-        // But we don't have new max_prim_inf.
+        // [FIX] Final Convergence Check using Step Size and Residuals
+        // Avoids wasting a full derivative computation in next step if we are already done.
+        if (mu <= config.mu_min && alpha > 1e-5) {
+             // Check stationarity via step size
+             double max_dx = 0.0;
+             for(int k=0; k<=N; ++k) {
+                 double dx_norm = trajectory.active()[k].dx.template lpNorm<Eigen::Infinity>();
+                 if (dx_norm > max_dx) max_dx = dx_norm;
+             }
+             double actual_step = alpha * max_dx;
+             // If step was small and we were feasible (checked at start), we are likely converged
+             if (actual_step < config.tol_dual && max_prim_inf < config.tol_con) {
+                 return SolverStatus::SOLVED;
+             }
+        }
         
         return SolverStatus::UNSOLVED;
     }

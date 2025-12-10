@@ -2,7 +2,12 @@
 
 // Configuration Macro
 // CMake usually defines USE_EIGEN via add_definitions(-DUSE_EIGEN)
-// Here we provide a default fallback if nothing is defined.
+// Ensure Custom Matrix takes precedence if both are defined
+#ifdef USE_CUSTOM_MATRIX
+    #ifdef USE_EIGEN
+        #undef USE_EIGEN
+    #endif
+#endif
 
 #if !defined(USE_CUSTOM_MATRIX) && !defined(USE_EIGEN)
 #define USE_EIGEN

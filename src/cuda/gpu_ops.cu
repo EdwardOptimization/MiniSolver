@@ -3,7 +3,7 @@
 #include <thrust/device_vector.h>
 #include <thrust/copy.h>
 
-namespace roboopt {
+namespace minisolver {
 
 // MPX Functor
 template<int N>
@@ -54,7 +54,24 @@ void gpu_dispatch_solve(std::vector<GpuLinearOp<NX>>& h_ops, Backend mode) {
     thrust::copy(d_ops.begin(), d_ops.end(), h_ops.begin());
 }
 
-// Explicit Instantiation for CarModel (NX=4)
-template void gpu_dispatch_solve<4>(std::vector<GpuLinearOp<4>>&, Backend);
+// Explicit Instantiation for Common Model Sizes
+// Using macro to cover a range of dimensions (1 to 12) to support various models
+#define INSTANTIATE_GPU_SOLVE(N) \
+    template void gpu_dispatch_solve<N>(std::vector<GpuLinearOp<N>>&, Backend);
+
+INSTANTIATE_GPU_SOLVE(1)
+INSTANTIATE_GPU_SOLVE(2)
+INSTANTIATE_GPU_SOLVE(3)
+INSTANTIATE_GPU_SOLVE(4)  // CarModel
+INSTANTIATE_GPU_SOLVE(5)
+INSTANTIATE_GPU_SOLVE(6)  // BicycleExtModel
+INSTANTIATE_GPU_SOLVE(7)
+INSTANTIATE_GPU_SOLVE(8)
+INSTANTIATE_GPU_SOLVE(9)
+INSTANTIATE_GPU_SOLVE(10)
+INSTANTIATE_GPU_SOLVE(11)
+INSTANTIATE_GPU_SOLVE(12)
+
+#undef INSTANTIATE_GPU_SOLVE
 
 }

@@ -43,7 +43,15 @@ enum class PrintLevel {
     DEBUG   // Detailed internal state
 };
 
+enum class Backend {
+    CPU_SERIAL,
+    GPU_MPX,
+    GPU_PCR
+};
+
 struct SolverConfig {
+    Backend backend = Backend::CPU_SERIAL;
+
     // --- Integration ---
     // RK4 is a good balance for general nonlinear problems
     IntegratorType integrator = IntegratorType::RK4_EXPLICIT;

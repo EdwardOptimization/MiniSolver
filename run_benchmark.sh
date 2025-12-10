@@ -17,19 +17,12 @@ cmake ..
 # I'll try to update CMakeLists.txt instead.
 cd ..
 
-# Append benchmark target to CMakeLists if not present
-if ! grep -q "benchmark_solver" CMakeLists.txt; then
-    echo "Adding benchmark_solver to CMakeLists.txt..."
-    cat <<EOF >> CMakeLists.txt
+# Benchmark target is already in CMakeLists.txt
+# We just need to ensure build directory exists and cmake is run
 
-# Benchmark Tool
-add_executable(benchmark_solver tools/benchmark_solver.cpp)
-# No GPU link needed for this CPU benchmark
-EOF
-fi
-
+echo ">> Config & Build..."
 cd build
-cmake ..
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make benchmark_solver -j4
 
 echo ">> Running Benchmark..."
