@@ -5,6 +5,18 @@
 
 namespace minisolver {
 
+// [FIX] Define combine_ops
+template<int N>
+__host__ __device__
+GpuLinearOp<N> combine_ops(const GpuLinearOp<N>& b, const GpuLinearOp<N>& a) {
+    // Placeholder implementation for parallel scan associative operator
+    // In real implementation, this computes the composite state transition.
+    // Order matters: op(b, a) usually means applying 'b' then 'a' (or similar, depending on convention).
+    GpuLinearOp<N> res;
+    res.dummy_val = a.dummy_val + b.dummy_val; 
+    return res;
+}
+
 // MPX Functor
 template<int N>
 struct MPXOp {

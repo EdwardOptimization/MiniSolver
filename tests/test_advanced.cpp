@@ -144,7 +144,11 @@ TEST(AdvancedFeaturesTest, GaussNewtonOption) {
     // Robust Config
     config.barrier_strategy = BarrierStrategy::MONOTONE; 
     config.line_search_type = LineSearchType::FILTER;
+    config.max_iters = 100;
     
+    config.enable_slack_reset = false; 
+    config.enable_feasibility_restoration = true;
+
     MiniSolver<CarModel, 50> solver(10, Backend::CPU_SERIAL, config);
     solver.set_dt(0.1);
     

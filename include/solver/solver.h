@@ -89,6 +89,9 @@ public:
     double reg;
     int current_iter = 0;
 
+    // [New] Continuous Slack Reset count, prevent infinite loop
+    int slack_reset_consecutive_count = 0;
+
     bool is_warm_started = false;
     
     // Lookup Maps
@@ -307,6 +310,10 @@ public:
         }
         int count = std::min((int)dts.size(), N);
         for(int i=0; i<count; ++i) dt_traj[i] = dts[i];
+        
+        // [FIX] Initialize remaining steps to avoid garbage values
+        double fill_val = (count > 0) ? dts[count-1] : config.default_dt;
+        for(int i=count; i<MAX_N; ++i) dt_traj[i] = fill_val;
     }
     
     void set_dt(double dt) {
@@ -565,6 +572,8 @@ public:
 
     SolverStatus solve() {
         current_iter = 0;
+        slack_reset_consecutive_count = 0; 
+        
         reg = config.reg_init; // [FIX] Reset regularization for fresh solve
         
         // --- Initialization of Slacks ---
@@ -892,40 +901,87 @@ public:
         timer.start("Line Search");
         double alpha = line_search->search(trajectory, *linear_solver, dt_traj, mu, reg, config);
         
-        if (alpha <= 1e-8) {
-             // Step 1: Slack Reset
-             bool recovered = false;
-             if (config.enable_slack_reset && alpha < config.slack_reset_trigger) {
-                 if (config.print_level >= PrintLevel::DEBUG) 
-                    MLOG_DEBUG("Triggering Slack Reset.");
-                 for(int k=0; k<=N; ++k) {
-                     auto& kp = traj[k];
-                     for(int i=0; i<NC; ++i) {
-                         double min_s = std::abs(kp.g_val(i)) + std::sqrt(mu);
-                         if (kp.s(i) < min_s) {
-                             kp.s(i) = min_s;
-                             // Fix: Don't kill dual variable if it was active. 
-                             // Keep lam at least what it was, or consistent with mu_init (restarting barrier)
-                             // kp.lam(i) = mu / kp.s(i); // This was the bug causing constraint loss
-                             kp.lam(i) = std::max(kp.lam(i), config.mu_init / kp.s(i));
-                         }
-                     }
-                 }
-                 // Try one linear solve step to see if we can move
-                 recovered = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
-             }
-             
-             // Step 2: Feasibility Restoration
-             if (!recovered && config.enable_feasibility_restoration) {
-                 recovered = feasibility_restoration();
-             }
+        // If step size is valid, reset the counter
+        if (alpha > 1e-8) {
+            slack_reset_consecutive_count = 0;
+        }
+        else {
+            // Alpha <= 1e-8 (Step size too small / Stagnation)
 
-             if (!recovered) {
-                 // Both Slack Reset and Feasibility Restoration failed (or were disabled)
-                 timer.stop();
-                 print_iteration_log(alpha); // Log the fail state
-                 return SolverStatus::PRIMAL_INFEASIBLE;
-             }
+            // 1. Check if stagnated at a feasible solution satisfying tolerances (Optimality check)
+            //    This prevents triggering incorrect restoration mechanisms due to numerical noise near a perfect solution
+            if (max_prim_inf <= config.tol_con) {
+                // Further check dual feasibility to distinguish between SOLVED and FEASIBLE
+                if (max_dual_inf <= config.tol_dual) {
+                    if (config.print_level >= PrintLevel::INFO) {
+                        MLOG_INFO("Line search stagnated at optimal point (PrimInf: " << max_prim_inf 
+                                << ", DualInf: " << max_dual_inf << "). Terminating as SOLVED.");
+                    }
+                    timer.stop();
+                    return SolverStatus::SOLVED;
+                } else {
+                    if (config.print_level >= PrintLevel::INFO) {
+                        MLOG_INFO("Line search stagnated at feasible point (PrimInf: " << max_prim_inf 
+                                << "). Terminating as FEASIBLE.");
+                    }
+                    timer.stop();
+                    return SolverStatus::FEASIBLE;
+                }
+            }
+
+            // 2. Step 1: Slack Reset (With counter protection)
+            bool recovered = false;
+            
+            // Logic explanation:
+            // Only allow attempt when slack_reset_consecutive_count < 1.
+            // This means if SlackReset was used in the last iteration but Alpha=0 still (dead loop),
+            // this time we force skipping Step 1 and go directly to Step 2 (Restoration).
+            if (config.enable_slack_reset && 
+                alpha < config.slack_reset_trigger && 
+                slack_reset_consecutive_count < 1) 
+            {
+                if (config.print_level >= PrintLevel::DEBUG) 
+                MLOG_DEBUG("Triggering Slack Reset (Attempt " << slack_reset_consecutive_count + 1 << ").");
+                
+                for(int k=0; k<=N; ++k) {
+                    auto& kp = traj[k];
+                    for(int i=0; i<NC; ++i) {
+                        double min_s = std::abs(kp.g_val(i)) + std::sqrt(mu);
+                        if (kp.s(i) < min_s) {
+                            kp.s(i) = min_s;
+                            // Maintain consistency of dual variables, prevent aggressive reset
+                            kp.lam(i) = std::max(kp.lam(i), config.mu_init / kp.s(i));
+                        }
+                    }
+                }
+                // Try one solve to see if a valid direction can be obtained
+                recovered = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
+                
+                if (recovered) {
+                    // Mark: If this Reset failed to get us out of trouble, disallow it next time
+                    slack_reset_consecutive_count++;
+                }
+            }
+            else if (config.enable_slack_reset && slack_reset_consecutive_count >= 1) {
+                if (config.print_level >= PrintLevel::DEBUG) 
+                MLOG_DEBUG("Skipping Slack Reset to prevent cycle. Forcing Restoration.");
+            }
+            
+            // 3. Step 2: Feasibility Restoration (If Step 1 failed or was skipped)
+            if (!recovered && config.enable_feasibility_restoration) {
+                recovered = feasibility_restoration();
+                // If restoration succeeded (state x moved), we can reset the counter, allowing SlackReset to be used again in the future
+                if (recovered) {
+                    slack_reset_consecutive_count = 0;
+                }
+            }
+
+            if (!recovered) {
+                // Both Slack Reset and Feasibility Restoration failed (or were disabled)
+                timer.stop();
+                print_iteration_log(alpha); // Log the fail state
+                return SolverStatus::PRIMAL_INFEASIBLE;
+            }
         }
         timer.stop();
 
@@ -934,17 +990,17 @@ public:
         // [FIX] Final Convergence Check using Step Size and Residuals
         // Avoids wasting a full derivative computation in next step if we are already done.
         if (mu <= config.mu_min && alpha > 1e-5) {
-             // Check stationarity via step size
-             double max_dx = 0.0;
-             for(int k=0; k<=N; ++k) {
-                 double dx_norm = trajectory.active()[k].dx.template lpNorm<Eigen::Infinity>();
-                 if (dx_norm > max_dx) max_dx = dx_norm;
-             }
-             double actual_step = alpha * max_dx;
-             // If step was small and we were feasible (checked at start), we are likely converged
-             if (actual_step < config.tol_dual && max_prim_inf < config.tol_con) {
-                 return SolverStatus::SOLVED;
-             }
+            // Check stationarity via step size
+            double max_dx = 0.0;
+            for(int k=0; k<=N; ++k) {
+                double dx_norm = trajectory.active()[k].dx.template lpNorm<Eigen::Infinity>();
+                if (dx_norm > max_dx) max_dx = dx_norm;
+            }
+            double actual_step = alpha * max_dx;
+            // If step was small and we were feasible (checked at start), we are likely converged
+            if (actual_step < config.tol_dual && max_prim_inf < config.tol_con) {
+                return SolverStatus::SOLVED;
+            }
         }
         
         return SolverStatus::UNSOLVED;

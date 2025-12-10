@@ -80,37 +80,67 @@ public:
     bool refine(TrajArray& traj, const TrajArray& original_system, int N, double mu, double reg, const SolverConfig& config) override {
         if (!config.enable_iterative_refinement) return true;
         
-        // Use the workspace (original_system) to store the residual 'r' in place of 'b'.
-        TrajArray& workspace = const_cast<TrajArray&>(original_system);
-
-        // 1. Compute Residuals: r = b - A*x
-        // We compute the residual of the Linear System Ax=b.
-        // A,b are stored in 'workspace' (which contains Q, R, A, B, q, r).
-        // x is in 'traj' (dx, du, ds, dlam).
+        // [FIX] Implemented Linear Rollout Refinement (Defect Correction)
+        // This pass enforces strict dynamic feasibility of the linear solution:
+        // dx_{k+1} = A dx_k + B du_k + defect
+        // It propagates the calculation error accumulated during the backward/forward Riccati pass.
         
-        // This is a simplified implementation focusing on stationarity residuals.
-        // Proper IR requires full KKT residual computation.
+        MSVec<double, Model::NX> delta_x;
+        delta_x.setZero(); // Initial state correction is zero (x0 fixed)
         
-        // Placeholder for KKT residual logic:
-        // calculate_kkt_residuals(workspace, traj, N); 
+        MSVec<double, Model::NU> delta_u;
         
-        // 2. Solve for correction delta_x
-        // We reuse the factorized system if possible, or re-factorize.
-        // Since Riccati factorizes in-place (destroying A), we have to re-solve.
-        // But 'workspace' has the original A! So we CAN solve.
+        // Use workspace (original_system) to access A, B matrices
+        const TrajArray& sys = original_system;
         
-        bool success = cpu_serial_solve<TrajArray, Model>(workspace, N, mu, reg, InertiaStrategy::REGULARIZATION, config);
+        double max_defect = 0.0;
         
-        // 3. Update solution
-        if (success) {
-            for(int k=0; k<=N; ++k) {
-                traj[k].dx += workspace[k].dx;
-                traj[k].du += workspace[k].du;
-                traj[k].ds += workspace[k].ds;
-                traj[k].dlam += workspace[k].dlam;
-            }
+        for(int k=0; k<N; ++k) {
+            // 1. Compute Control Correction via Feedback
+            // du_new = K * (dx + delta_x) + d - du_old
+            // Since du_old = K * dx + d, then:
+            // delta_u = K * delta_x
+            delta_u.noalias() = traj[k].K * delta_x;
+            
+            // 2. Compute Dynamic Defect of the current solution
+            // expected_next = A * dx + B * du + (f_resid - x_next_base)
+            // defect = expected_next - dx_next_actual
+            
+            // Reconstruct the affine term (linearization defect)
+            // In Riccati: defect_term = sys[k].f_resid - sys[k+1].x;
+            MSVec<double, Model::NX> linearization_defect = sys[k].f_resid - sys[k+1].x;
+            
+            MSVec<double, Model::NX> predicted_dx_next;
+            predicted_dx_next.noalias() = sys[k].A * traj[k].dx;
+            predicted_dx_next.noalias() += sys[k].B * traj[k].du;
+            predicted_dx_next += linearization_defect;
+            
+            MSVec<double, Model::NX> error = predicted_dx_next - traj[k+1].dx;
+            double err_norm = error.template lpNorm<Eigen::Infinity>();
+            if(err_norm > max_defect) max_defect = err_norm;
+            
+            // 3. Propagate Correction
+            // delta_x_{k+1} = A * delta_x + B * delta_u + error
+            // This ensures (dx + delta_x)_{k+1} matches the dynamics of (dx+delta_x)_k
+            MSVec<double, Model::NX> delta_x_next;
+            delta_x_next.noalias() = sys[k].A * delta_x;
+            delta_x_next.noalias() += sys[k].B * delta_u;
+            delta_x_next += error;
+            
+            // 4. Apply to Trajectory
+            traj[k].dx += delta_x;
+            traj[k].du += delta_u;
+            
+            delta_x = delta_x_next;
         }
         
+        // Apply last state correction
+        traj[N].dx += delta_x;
+        
+        if (config.print_level >= PrintLevel::DEBUG) {
+            MLOG_DEBUG("Iterative Refinement: Max dynamic defect corrected = " << max_defect);
+        }
+
         return true; 
     }
 };

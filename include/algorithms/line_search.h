@@ -395,6 +395,8 @@ public:
                      MLOG_DEBUG("Step rejected. Attempting SOC.");
                 
                 auto soc_data = std::make_unique<TrajArray>();
+                *soc_data = active; // [FIX] Copy system matrices from active trajectory
+                
                 // [NEW] Use solve_soc
                 // Note: solve_soc takes 'soc_rhs_traj'. We want to pass the current trial point 'candidate' as RHS source.
                 // soc_data will store the correction step.

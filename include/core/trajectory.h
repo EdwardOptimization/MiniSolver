@@ -72,6 +72,7 @@ public:
             traj[k].u = traj[k+1].u;
             traj[k].s = traj[k+1].s;
             traj[k].lam = traj[k+1].lam;
+            traj[k].p = traj[k+1].p; // [FIX] Shift parameters
             // Parameters (p) should usually NOT be shifted if they are time-dependent (like reference),
             // but for autonomous systems, we might shift. 
             // Standard MPC: Shift guess (x,u), but keep parameters aligned with absolute time or update them externally.
@@ -82,6 +83,7 @@ public:
         traj[N].u = traj[N-1].u;
         traj[N].s = traj[N-1].s;
         traj[N].lam = traj[N-1].lam;
+        traj[N].p = traj[N-1].p; // [FIX] Duplicate last parameter
     }
     
     int size() const { return N + 1; }
