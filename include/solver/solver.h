@@ -416,7 +416,26 @@ public:
             const auto& kp = traj[k];
             total_cost += kp.cost;
             for(int i=0; i<NC; ++i) {
-                double viol = std::abs(kp.g_val(i) + kp.s(i));
+                double viol;
+                // [FIX] Detect Soft Constraint Type properly
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                     if (i < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                     }
+                }
+
+                if (type == 1 && w > 1e-6) { // L1
+                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                } else if (type == 2 && w > 1e-6) { // L2
+                     // [FIX] L2 residual is g + s - lam/w
+                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i)/w);
+                } else {
+                     viol = std::abs(kp.g_val(i) + kp.s(i));
+                }
+
                 if(viol > max_prim_inf) max_prim_inf = viol;
                 if(kp.s(i) < min_slack) min_slack = kp.s(i);
             }
