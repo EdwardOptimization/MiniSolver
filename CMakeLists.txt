@@ -26,10 +26,9 @@ else()
 endif()
 
 # --- Dependencies ---
-# if(POLICY CMP0146)
-#   cmake_policy(SET CMP0146 OLD)
-# endif()
-# find_package(Eigen3 REQUIRED) -> Moved up
+if(POLICY CMP0146)
+  cmake_policy(SET CMP0146 OLD)
+endif()
 find_package(CUDA QUIET)
 
 include_directories(include)
@@ -95,5 +94,6 @@ add_minisolver_test(test_solver tests/test_solver.cpp)
 add_minisolver_test(test_advanced tests/test_advanced.cpp)
 add_minisolver_test(test_soft_constraints tests/test_soft_constraints.cpp)
 add_minisolver_test(test_soc tests/test_soc.cpp)
+add_minisolver_test(test_ir tests/test_ir.cpp)
 
 # No GPU link needed for this CPU benchmark

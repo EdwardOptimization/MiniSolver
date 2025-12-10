@@ -22,6 +22,18 @@ This document is for contributors and maintainers of **MiniSolver**. It document
 *   In Line Search, we generate trial trajectories. Copying the entire `std::vector` or `std::array` (60 knots * 2KB) is expensive (~120KB memcpy).
 *   We use two buffers (`traj_memory_A`, `traj_memory_B`) and swap `traj_ptr` and `candidate_ptr`.
 
+### 4. Zero-Malloc Iterative Refinement
+**Problem**: Iterative Refinement (IR) requires saving a copy of the original linear system (A, b) to compute residuals $r = b - Ax$. Riccati solves in-place, destroying A and b. Allocating a copy violates "Zero-Malloc".
+**Solution**: We utilize the **Candidate Buffer** (normally used for Line Search trial steps) as temporary storage for the backup.
+1.  **Backup**: Before `solve()`, copy `active` trajectory (containing A, b) to `candidate`.
+2.  **Solve**: Run Riccati on `active` (A, b -> L, D, x).
+3.  **Refine**: 
+    *   Compute residual using `candidate` (A, b) and `active` (x).
+    *   Store residual in `candidate` (overwrite b).
+    *   Run Riccati on `candidate` to find correction $\delta x$.
+    *   Update `active`: $x \leftarrow x + \delta x$.
+**Benefit**: High precision and robustness against regularization errors without extra memory.
+
 ---
 
 ## 🪤 The "Gotchas" (Post-Mortem Analysis)

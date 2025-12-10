@@ -23,10 +23,8 @@ public:
     // [NEW] Iterative Refinement
     // Solves K * dx_corr = r - K * dx
     // Uses the existing factorization (if available/stored) or re-solves.
-    // For Riccati, since we don't store factors explicitly in this lightweight version, 
-    // "Refinement" might mean re-running the backward pass with the residual as RHS.
-    // This is expensive (O(N)), but can recover precision lost by regularization.
-    virtual bool refine(TrajArray& traj, int N, double mu, double reg, const SolverConfig& config) {
+    // For Riccati, we use the original_system (candidate buffer) to re-run the solve on residuals.
+    virtual bool refine(TrajArray& traj, const TrajArray& original_system, int N, double mu, double reg, const SolverConfig& config) {
         return false; 
     }
 };

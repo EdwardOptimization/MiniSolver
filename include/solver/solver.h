@@ -486,6 +486,33 @@ public:
             }
             
             // Restoration linear solve
+            // [ALADIN-Inspired] Augmented Lagrangian Restoration
+            // Minimizing 0.5*||dx||^2 + 0.5*rho*||C*dx + D*du + g + s||^2
+            // This pulls the solution towards the constraint manifold more aggressively than simple min-norm.
+            if (config.barrier_strategy != BarrierStrategy::MEHROTRA) { 
+                 double rho = 1000.0; // Penalty weight from ALADIN concepts
+                 for(int k=0; k<=N; ++k) {
+                     auto& kp = traj[k];
+                     
+                     // Q += rho * C^T * C
+                     kp.Q.noalias() += rho * kp.C.transpose() * kp.C;
+                     
+                     // R += rho * D^T * D
+                     kp.R.noalias() += rho * kp.D.transpose() * kp.D;
+                     
+                     // H += rho * D^T * C (Cross term)
+                     kp.H.noalias() += rho * kp.D.transpose() * kp.C;
+                     
+                     // q += rho * C^T * g_val
+                     // Note: Restoration usually ignores 's' in the quadratic penalty approximation 
+                     // or treats it as fixed residuals g_val.
+                     kp.q.noalias() += rho * kp.C.transpose() * kp.g_val;
+                     
+                     // r += rho * D^T * g_val
+                     kp.r.noalias() += rho * kp.D.transpose() * kp.g_val;
+                 }
+            }
+
             if(!linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config)) {
                 break;
             }
@@ -693,6 +720,19 @@ public:
         timer.start("Linear Solve");
         bool solve_success = false;
         
+        // [NEW] Zero-Malloc Iterative Refinement Preparation
+        // If IR is enabled, we backup the current active trajectory (linearized system)
+        // to the candidate buffer. This allows us to access the original matrices (Q, R, A, B...)
+        // during the refinement step, even after the Riccati solver overwrites them in 'active'.
+        bool do_refinement = config.enable_iterative_refinement && (current_iter % config.max_refinement_steps == 0); // Example trigger
+        if (config.enable_iterative_refinement) {
+             trajectory.prepare_candidate();
+             auto& backup = trajectory.candidate();
+             // Copy active to candidate. Since TrajArray is std::array<Knot>, this is a contiguous copy.
+             // But Knot contains Eigen matrices. std::copy should handle it correctly via assignment operators.
+             std::copy(traj.begin(), traj.end(), backup.begin());
+        }
+        
         // Mehrotra Predictor-Corrector Logic
         if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
             // 1. Affine Step (Predictor)
@@ -756,6 +796,11 @@ public:
             }
             mu_aff = total_comp / std::max(1, total_dim);
             
+            // DEBUG PRINT
+            if (config.print_level >= PrintLevel::DEBUG) {
+                 MLOG_INFO("Mehrotra Debug: mu_curr=" << mu_curr << ", mu_aff=" << mu_aff << ", alpha_aff=" << alpha_aff);
+            }
+
             // Aggressive Update: Use sigma^k with k >= 1
             // Heuristic: If affine step is good (large alpha_aff), be aggressive.
             // If alpha_aff is small, be conservative.
@@ -766,11 +811,11 @@ public:
             // If alpha_aff close to 1, we can reduce mu significantly
             if (config.enable_aggressive_barrier) {
                 if (alpha_aff > 0.9) {
-                    sigma = std::min(sigma, 0.1); // Force at least 10x reduction
+                    sigma = std::min(sigma, 0.01); // [AGGRESSIVE] Force 100x reduction if direction is good (was 0.1)
                 }
                 // If we are far from solution (large gap), allow faster drop
                 if (mu_curr > 1.0) {
-                    sigma = std::min(sigma, 0.2); 
+                    sigma = std::min(sigma, 0.1); // [AGGRESSIVE] Was 0.2
                 }
             }
             
@@ -815,6 +860,13 @@ public:
         if (solve_success && reg > config.reg_min) {
              reg = std::max(config.reg_min, reg / config.reg_scale_down);
         }
+        
+        // [NEW] Iterative Refinement
+        if (solve_success && config.enable_iterative_refinement) {
+             // Pass 'traj' (which contains solution dx, du) and 'candidate' (which contains original system)
+             linear_solver->refine(traj, trajectory.candidate(), N, mu, reg, config);
+        }
+        
         timer.stop();
 
         if (!solve_success) return SolverStatus::NUMERICAL_ERROR;

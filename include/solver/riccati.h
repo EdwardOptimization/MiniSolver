@@ -10,6 +10,29 @@
 namespace minisolver {
 
     template<typename Knot, typename ModelType>
+    void compute_kkt_residual(Knot& kp, double mu, const minisolver::SolverConfig& config,
+                              MSVec<double, Knot::NX>& r_Lx,
+                              MSVec<double, Knot::NU>& r_Lu,
+                              const MSVec<double, Knot::NX>& lam_x_next) {
+        
+        // KKT Stationarity:
+        // Lx = q + A' lam_x_next + C' lam_c (where lam_c is modified barrier dual)
+        // Lu = r + B' lam_x_next + D' lam_c
+        
+        // Use current lambda from knot point
+        MSVec<double, Knot::NC> lam_total = kp.lam;
+        
+        // Standard KKT residual calculation
+        if constexpr (Knot::NC > 0) {
+             r_Lx = kp.q + kp.A.transpose() * lam_x_next + kp.C.transpose() * lam_total;
+             r_Lu = kp.r + kp.B.transpose() * lam_x_next + kp.D.transpose() * lam_total;
+        } else {
+             r_Lx = kp.q + kp.A.transpose() * lam_x_next;
+             r_Lu = kp.r + kp.B.transpose() * lam_x_next;
+        }
+    }
+
+    template<typename Knot, typename ModelType>
     void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverConfig& config, const Knot* aff_kp = nullptr, const Knot* soc_kp = nullptr) {
         MSVec<double, Knot::NC> sigma;
         MSVec<double, Knot::NC> grad_mod;
@@ -130,7 +153,7 @@ namespace minisolver {
     }
 
     template<typename Knot, typename ModelType>
-    void recover_dual_search_directions(Knot& kp, double mu, const minisolver::SolverConfig& config, const Knot* soc_kp = nullptr) {
+    void recover_dual_search_directions(Knot& kp, double mu, const minisolver::SolverConfig& config, const Knot* soc_kp = nullptr, const Knot* aff_kp = nullptr) {
         // Use soc_kp->g_val if available
         
         MSVec<double, Knot::NC> constraint_step = kp.C * kp.dx + kp.D * kp.du;
@@ -150,6 +173,7 @@ namespace minisolver {
             
             double lam_i = kp.lam(i);
             double r_y = s_i * lam_i - mu; 
+            if (aff_kp) r_y += aff_kp->ds(i) * aff_kp->dlam(i);
             
             double g_val_i = (soc_kp) ? soc_kp->g_val(i) : kp.g_val(i);
 
@@ -163,6 +187,9 @@ namespace minisolver {
                 
                 double r_eq = g_val_i + s_i - soft_s_i;
                 double r_z = soft_s_i * (w - lam_i) - mu;
+                if (aff_kp) {
+                    r_z += aff_kp->dsoft_s(i) * (-aff_kp->dlam(i));
+                }
                 
                 // Corrected Signs for dlam recovery
                 // dlam = sigma * (C dx + r_eq - r_y/lam + r_z/(w-lam))
@@ -353,11 +380,13 @@ namespace minisolver {
             traj[k+1].dx += defect;
             
             const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
-            recover_dual_search_directions<Knot, ModelType>(kp, mu, config, soc_kp); 
+            const Knot* aff_kp = (affine_traj) ? &((*affine_traj)[k]) : nullptr;
+            recover_dual_search_directions<Knot, ModelType>(kp, mu, config, soc_kp, aff_kp); 
         }
         
         const Knot* soc_kp_N = (soc_traj) ? &((*soc_traj)[N]) : nullptr;
-        recover_dual_search_directions<Knot, ModelType>(traj[N], mu, config, soc_kp_N); 
+        const Knot* aff_kp_N = (affine_traj) ? &((*affine_traj)[N]) : nullptr;
+        recover_dual_search_directions<Knot, ModelType>(traj[N], mu, config, soc_kp_N, aff_kp_N); 
         
         return true;
     }

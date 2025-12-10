@@ -37,6 +37,7 @@ enum class HessianApproximation {
 // Print Levels
 enum class PrintLevel {
     NONE,   // Silent
+    WARN,   // Warnings and Errors only
     INFO,   // Start/End summary only
     ITER,   // One line per iteration
     DEBUG   // Detailed internal state
@@ -44,7 +45,7 @@ enum class PrintLevel {
 
 struct SolverConfig {
     // --- Integration ---
-    // RK2 is a good balance for general nonlinear problems
+    // RK4 is a good balance for general nonlinear problems
     IntegratorType integrator = IntegratorType::RK4_EXPLICIT;
     double default_dt = 0.1;
 

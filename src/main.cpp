@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
     config.enable_slack_reset = true;
     
     // Revert to Monotone + IgnoreSingular for robustness
-    config.barrier_strategy = BarrierStrategy::MONOTONE;
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
     config.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR;
     
     // Adjust tolerances for demo
