@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "solver/solver.h"
+#include "minisolver/solver/solver.h"
 #include <array>
 #include <iostream>
 

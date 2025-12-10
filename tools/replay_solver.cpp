@@ -4,9 +4,9 @@
 #include <iomanip>
 
 // Include the Model you want to replay (e.g. CarModel)
-#include "model/car_model.h"
-#include "solver/solver.h"
-#include "core/serializer.h"
+#include "../examples/01_car_tutorial/generated/car_model.h"
+#include "minisolver/solver/solver.h"
+#include "minisolver/core/serializer.h"
 
 using namespace minisolver;
 

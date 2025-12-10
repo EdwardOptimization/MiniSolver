@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "core/matrix_defs.h"
+#include "minisolver/core/matrix_defs.h"
 #include <cmath>
 
 using namespace minisolver;

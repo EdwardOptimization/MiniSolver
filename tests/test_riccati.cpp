@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "algorithms/riccati_solver.h"
-#include "model/car_model.h"
+#include "minisolver/algorithms/riccati_solver.h"
+#include "../examples/01_car_tutorial/generated/car_model.h"
 
 using namespace minisolver;
 

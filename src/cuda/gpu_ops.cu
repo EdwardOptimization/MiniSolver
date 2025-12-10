@@ -1,4 +1,4 @@
-#include "solver/backend_interface.h"
+#include "minisolver/solver/backend_interface.h"
 #include <thrust/scan.h>
 #include <thrust/device_vector.h>
 #include <thrust/copy.h>

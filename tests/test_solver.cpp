@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "solver/solver.h"
-#include "model/car_model.h"
+#include "minisolver/solver/solver.h"
+#include "../examples/01_car_tutorial/generated/car_model.h"
 #include <vector>
 
 using namespace minisolver;

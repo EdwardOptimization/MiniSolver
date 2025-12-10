@@ -8,9 +8,9 @@
 #include <cmath>
 #include <functional>
 
-#include "model/car_model.h"
-#include "model/scenario.h"
-#include "solver/solver.h"
+#include "../examples/01_car_tutorial/generated/car_model.h"
+
+#include "minisolver/solver/solver.h"
 
 using namespace minisolver;
 
