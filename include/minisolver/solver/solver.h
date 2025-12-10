@@ -88,6 +88,8 @@ public:
     double mu; 
     double reg;
     int current_iter = 0;
+    double last_prim_inf = 0.0;
+    double last_dual_inf = 0.0;
 
     // Continuous Slack Reset count, prevent infinite loop
     int slack_reset_consecutive_count = 0;
@@ -407,36 +409,17 @@ public:
         }
 
         double total_cost = 0.0;
-        double max_prim_inf = 0.0;
         double max_dual_inf = 0.0;
         double min_slack = 1e9;
         auto& traj = trajectory.active();
+
+        // Use helper for Primal Inf
+        double max_prim_inf = compute_max_violation(traj);
 
         for(int k=0; k<=N; ++k) {
             const auto& kp = traj[k];
             total_cost += kp.cost;
             for(int i=0; i<NC; ++i) {
-                double viol;
-                // [FIX] Detect Soft Constraint Type properly
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                     if (i < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                     }
-                }
-
-                if (type == 1 && w > 1e-6) { // L1
-                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
-                } else if (type == 2 && w > 1e-6) { // L2
-                     // [FIX] L2 residual is g + s - lam/w
-                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i)/w);
-                } else {
-                     viol = std::abs(kp.g_val(i) + kp.s(i));
-                }
-
-                if(viol > max_prim_inf) max_prim_inf = viol;
                 if(kp.s(i) < min_slack) min_slack = kp.s(i);
             }
             // q_bar contains Vx (cost-to-go gradient / dynamics multiplier).
@@ -618,9 +601,67 @@ public:
                  Model::compute(traj[k], config.integrator, current_dt);
                  for(int i=0; i<NC; ++i) {
                      double g = traj[k].g_val(i);
-                     double s_val = std::max(1.0, -g);
-                     traj[k].s(i) = s_val;
-                     traj[k].lam(i) = mu / s_val;
+                     double w = 0.0;
+                     int type = 0;
+                     if constexpr (NC > 0) {
+                         if (i < Model::constraint_types.size()) {
+                            type = Model::constraint_types[i];
+                            w = Model::constraint_weights[i];
+                         }
+                     }
+
+                     if (type == 1 && w > 1e-6) { // L1 Soft Constraint
+                         // Central Path: 
+                         // 1) g + s - soft_s = 0
+                         // 2) s * lam = mu
+                         // 3) soft_s * (w - lam) = mu
+                         // Reduce to quadratic in lam: g*lam^2 - (g*w - 2*mu)*lam - mu*w = 0
+                         double a = g;
+                         double b = -(g * w - 2 * mu);
+                         double c = -mu * w;
+                         
+                         double lam_val;
+                         if (std::abs(a) < 1e-9) {
+                             // Linear case (g approx 0): -(-2mu)lam - mu*w = 0 -> 2mu*lam = mu*w -> lam = w/2
+                             lam_val = w / 2.0;
+                         } else {
+                             double delta = b*b - 4*a*c;
+                             if (delta < 0) delta = 0;
+                             if (a > 0) { // g > 0, expect lam near w
+                                 lam_val = (-b + std::sqrt(delta)) / (2*a);
+                             } else { // g < 0, expect lam near 0
+                                 lam_val = (-b - std::sqrt(delta)) / (2*a); // a is negative, so (-b - positive) / negative -> positive
+                             }
+                         }
+                         
+                         // Clamp for safety
+                         lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
+                         
+                         traj[k].lam(i) = lam_val;
+                         traj[k].s(i) = mu / lam_val;
+                         traj[k].soft_s(i) = mu / (w - lam_val);
+                     } 
+                     else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
+                         // Central Path:
+                         // 1) g + s - lam/w = 0
+                         // 2) s * lam = mu
+                         // Reduce to quadratic in lam: lam^2 - g*w*lam - mu*w = 0
+                         double b = -g * w;
+                         double c = -mu * w;
+                         // lam = (-b + sqrt(b^2 - 4ac)) / 2a, here a=1
+                         // lam = (g*w + sqrt(g^2*w^2 + 4*mu*w)) / 2
+                         double delta = b*b - 4*c; // b^2 + 4*mu*w > 0 always
+                         double lam_val = (-b + std::sqrt(delta)) / 2.0;
+                         
+                         traj[k].lam(i) = std::max(1e-8, lam_val);
+                         traj[k].s(i) = mu / traj[k].lam(i);
+                         // soft_s not used in L2
+                     } 
+                     else { // Hard Constraint
+                         double s_val = std::max(1e-6, -g);
+                         traj[k].s(i) = s_val;
+                         traj[k].lam(i) = mu / s_val;
+                     }
                  }
             }
         }
@@ -663,35 +704,8 @@ public:
             }
 
             // 2. Retrieve current feasibility
-            double current_max_viol = 0.0;
-            for(int k=0; k<=N; ++k) {
-                const auto& kp = active_traj[k];
-                for(int i=0; i<NC; ++i) {
-                    double viol = 0.0;
-                    
-                    // Complete soft constraint compatibility check
-                    double w = 0.0;
-                    int type = 0;
-                    if constexpr (NC > 0) {
-                         if (i < Model::constraint_types.size()) {
-                            type = Model::constraint_types[i];
-                            w = Model::constraint_weights[i];
-                         }
-                    }
-
-                    if (type == 1 && w > 1e-6) { // L1
-                         viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
-                    } else if (type == 2 && w > 1e-6) { // L2
-                         // For L2, the residual is g + s - lam/w
-                         viol = std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i)/w);
-                    } else { // Hard
-                         viol = std::abs(kp.g_val(i) + kp.s(i));
-                    }
-                    // -----------------------------------
-
-                    if(viol > current_max_viol) current_max_viol = viol;
-                }
-            }
+            // Use cached value from step() to avoid redundant O(N) calculation
+            double current_max_viol = last_prim_inf;
 
             // 3. Check Condition
             // We only trust cost stagnation if:
@@ -723,21 +737,30 @@ public:
         
         // Final Feasibility Check
         auto& traj = trajectory.active();
-        double max_viol = 0.0;
-        double max_dual = 0.0;
+        
+        // 1. Check for NaNs in constraints/slacks
         bool any_nan = false;
         for(int k=0; k<=N; ++k) {
              for(int i=0; i<NC; ++i) {
-                 double v = std::abs(traj[k].g_val(i) + traj[k].s(i));
-                 if (std::isnan(v)) any_nan = true;
-                 if(v > max_viol) max_viol = v;
+                 if (std::isnan(traj[k].g_val(i)) || std::isnan(traj[k].s(i))) {
+                     any_nan = true; 
+                     break;
+                 }
              }
+             if (any_nan) break;
+        }
+        
+        if (any_nan) return SolverStatus::NUMERICAL_ERROR;
+
+        // 2. Compute consistent metrics using helper
+        double max_viol = compute_max_violation(traj);
+        double max_dual = 0.0;
+
+        for(int k=0; k<=N; ++k) {
              // double g_norm = MatOps::norm_inf(traj[k].q_bar);
              double r_norm = MatOps::norm_inf(traj[k].r_bar);
              if(r_norm > max_dual) max_dual = r_norm;
         }
-        
-        if (any_nan) return SolverStatus::NUMERICAL_ERROR;
         // If we reached here (MaxIter), check if we are at least feasible and stationary enough
         // to call it "FEASIBLE" (suboptimal but safe) or even "SOLVED" (if we just missed the loop check)
         if (check_convergence(max_viol, max_dual)) return SolverStatus::SOLVED;
@@ -772,30 +795,8 @@ public:
             }
             
             for(int i=0; i<NC; ++i) {
-                // Correct Primal Inf calculation for Soft Constraints
-                double viol = 0.0;
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                     if (i < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                     }
-                }
-
-                if (type == 1 && w > 1e-6) { // L1
-                     viol = std::abs(traj[k].g_val(i) + traj[k].s(i) - traj[k].soft_s(i));
-                } else if (type == 2 && w > 1e-6) { // L2
-                     // g + s - lam/w = 0
-                     viol = std::abs(traj[k].g_val(i) + traj[k].s(i) - traj[k].lam(i)/w);
-                } else {
-                     viol = std::abs(traj[k].g_val(i) + traj[k].s(i)); 
-                }
-
                 double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu); 
-                if(viol > max_kkt_error) max_kkt_error = viol;
                 if(comp > max_kkt_error) max_kkt_error = comp;
-                if(viol > max_prim_inf) max_prim_inf = viol;
             }
             total_gap += traj[k].s.dot(traj[k].lam);
             total_con += NC;
@@ -805,6 +806,11 @@ public:
             double r_norm = MatOps::norm_inf(traj[k].r_bar);
             if(r_norm > max_dual_inf) max_dual_inf = r_norm;
         }
+        
+        // Use helper for Primal Inf
+        max_prim_inf = compute_max_violation(traj);
+        if (max_prim_inf > max_kkt_error) max_kkt_error = max_prim_inf;
+        
         timer.stop();
         
         // Initial convergence check (Primal + Dual + Mu)
@@ -1078,7 +1084,8 @@ public:
             // Check stationarity via step size
             double max_dx = 0.0;
             for(int k=0; k<=N; ++k) {
-                double dx_norm = trajectory.active()[k].dx.template lpNorm<Eigen::Infinity>();
+                // [FIX] Use MatOps::norm_inf to support both Eigen and MiniMatrix
+                double dx_norm = MatOps::norm_inf(trajectory.active()[k].dx);
                 if (dx_norm > max_dx) max_dx = dx_norm;
             }
             double actual_step = alpha * max_dx;
@@ -1088,6 +1095,8 @@ public:
             }
         }
         
+        last_prim_inf = max_prim_inf;
+        last_dual_inf = max_dual_inf;
         return SolverStatus::UNSOLVED;
     }
 
@@ -1097,6 +1106,38 @@ public:
             double current_dt = dt_traj[k];
             traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator);
         }
+    }
+
+private:
+    // 辅助函数：计算当前轨迹的最大约束违背量
+    double compute_max_violation(const TrajArray& traj) const {
+        double max_viol = 0.0;
+        for(int k=0; k<=N; ++k) {
+            const auto& kp = traj[k];
+            for(int i=0; i<NC; ++i) {
+                double viol = 0.0;
+                
+                // 获取约束元数据
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                     if (i < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                     }
+                }
+                // 统一的违背量计算逻辑
+                if (type == 1 && w > 1e-6) { // L1
+                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                } else if (type == 2 && w > 1e-6) { // L2
+                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i)/w);
+                } else { // Hard
+                     viol = std::abs(kp.g_val(i) + kp.s(i));
+                }
+                if(viol > max_viol) max_viol = viol;
+            }
+        }
+        return max_viol;
     }
 };
 }

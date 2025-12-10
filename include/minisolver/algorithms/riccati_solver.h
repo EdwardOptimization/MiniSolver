@@ -116,7 +116,8 @@ public:
             predicted_dx_next += linearization_defect;
             
             MSVec<double, Model::NX> error = predicted_dx_next - traj[k+1].dx;
-            double err_norm = error.template lpNorm<Eigen::Infinity>();
+            // [FIX] Use MatOps::norm_inf
+            double err_norm = MatOps::norm_inf(error);
             if(err_norm > max_defect) max_defect = err_norm;
             
             // 3. Propagate Correction

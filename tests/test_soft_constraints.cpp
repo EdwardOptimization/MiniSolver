@@ -104,8 +104,6 @@ TEST(SoftConstraintTest, L1_Convergence) {
     double x_final = solver.get_state(1, 0);
     std::cout << "L1 Final X: " << x_final << std::endl;
     
-    // If bug exists (cost not added), solver might converge to x=10 (ignoring constraint) or x=5 (if hard enforced?)
-    // Actually if L1 logic is broken, behavior is undefined or just ignoring constraint if theta decreases?
     
     EXPECT_NEAR(x_final, 9.5, 1.0e-3); 
 }

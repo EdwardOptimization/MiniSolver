@@ -28,6 +28,25 @@ public:
 
     // Fill
     void setZero() { data.fill(T(0)); }
+    void setOnes() { data.fill(T(1)); } // [FIX] Added setOnes
+    void fill(T val) { data.fill(val); } // [FIX] Added fill
+    
+    T minCoeff() const { // [FIX] Added minCoeff
+        if (R*C == 0) return T(0);
+        T min_val = data[0];
+        for(int i=1; i<R*C; ++i) if(data[i] < min_val) min_val = data[i];
+        return min_val;
+    }
+
+    static MiniMatrix Identity() { // [FIX] Added Identity
+        MiniMatrix res;
+        res.setIdentity();
+        return res;
+    }
+    
+    // Metadata for Templates
+    static constexpr int RowsAtCompileTime = R; // [FIX] Added RowsAtCompileTime
+
     void setIdentity() {
         setZero();
         for(int i=0; i<std::min(R,C); ++i) (*this)(i,i) = T(1);
@@ -40,6 +59,20 @@ public:
     MiniMatrix operator-() const {
         MiniMatrix res;
         for(int i=0; i<R*C; ++i) res.data[i] = -data[i];
+        return res;
+    }
+
+    // Scalar Multiplication (Matrix * Scalar) [FIX] Added
+    MiniMatrix operator*(T scalar) const {
+        MiniMatrix res;
+        for(int i=0; i<R*C; ++i) res.data[i] = data[i] * scalar;
+        return res;
+    }
+
+    // Scalar Multiplication (Scalar * Matrix) [FIX] Added as friend
+    friend MiniMatrix operator*(T scalar, const MiniMatrix& m) {
+        MiniMatrix res;
+        for(int i=0; i<R*C; ++i) res.data[i] = scalar * m.data[i];
         return res;
     }
 

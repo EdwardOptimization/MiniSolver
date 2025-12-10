@@ -6,7 +6,8 @@ mkdir -p build
 # Compile Benchmark with Custom Matrix Backend
 echo ">> Compiling Benchmark (MiniMatrix)..."
 # We define USE_CUSTOM_MATRIX to trigger the #else branch in matrix_defs.h
-g++ -O3 -std=c++17 -march=native -ffast-math -Iinclude -DUSE_CUSTOM_MATRIX tools/benchmark_solver.cpp -o build/benchmark_mini
+# Adjust paths for new location
+g++ -O3 -std=c++17 -march=native -ffast-math -I../../include -Igenerated -DUSE_CUSTOM_MATRIX ../../tools/benchmark_suite/benchmark_suite.cpp -o build/benchmark_mini
 
 # Compile Benchmark with Eigen Backend (Reference)
 echo ">> Compiling Benchmark (Eigen)..."
@@ -15,7 +16,7 @@ EIGEN_PATH="/usr/include/eigen3"
 if [ ! -d "$EIGEN_PATH" ]; then
     EIGEN_PATH="/usr/local/include/eigen3"
 fi
-g++ -O3 -std=c++17 -march=native -ffast-math -Iinclude -I$EIGEN_PATH -DUSE_EIGEN tools/benchmark_solver.cpp -o build/benchmark_eigen
+g++ -O3 -std=c++17 -march=native -ffast-math -I../../include -Igenerated -I$EIGEN_PATH -DUSE_EIGEN ../../tools/benchmark_suite/benchmark_suite.cpp -o build/benchmark_eigen
 
 echo ">> Running Comparison..."
 echo ""

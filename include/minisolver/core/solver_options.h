@@ -107,7 +107,7 @@ struct SolverConfig {
     
     // Watchdog / Heuristics
     double slack_reset_trigger = 1e-3; // Only reset if step is VERY small
-    double warm_start_slack_init = 1e-2; 
+    double warm_start_slack_init = 1e-6; 
 
     // Globalization
     double soc_trigger_alpha = 0.5; 
@@ -121,7 +121,7 @@ struct SolverConfig {
     double restoration_alpha = 0.8; 
 
     // --- General ---
-    int max_iters = 30; // Give it enough room
+    int max_iters = 100; // Give it enough room
     PrintLevel print_level = PrintLevel::ITER; 
 
     // --- Advanced Features ---
