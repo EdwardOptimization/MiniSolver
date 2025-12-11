@@ -71,7 +71,7 @@ int main() {
     config.print_level = PrintLevel::DEBUG; 
     
     // Robustness strategy
-    config.barrier_strategy = BarrierStrategy::MEHROTRA; 
+    config.barrier_strategy = BarrierStrategy::ADAPTIVE; 
     config.line_search_type = LineSearchType::FILTER; 
     config.inertia_strategy = InertiaStrategy::REGULARIZATION;
     
@@ -102,19 +102,19 @@ int main() {
         if(k > 0) current_t += dts[k-1];
         double x_ref = current_t * ExtConfig::TARGET_V; 
         
-        // Simple straight line tracking
+        // Smart reference for obstacle avoidance
         double y_ref_val = 0.0;
-        // if (x_ref > ExtConfig::OBS_X - 10.0 && x_ref < ExtConfig::OBS_X + 10.0) {
-        //    y_ref_val = -2.5; 
-        // }
+        if (x_ref > ExtConfig::OBS_X - 10.0 && x_ref < ExtConfig::OBS_X + 10.0) {
+           y_ref_val = -2.5; 
+        }
 
         solver.set_parameter(k, "v_ref", ExtConfig::TARGET_V);
         solver.set_parameter(k, "x_ref", x_ref);
         solver.set_parameter(k, "y_ref", y_ref_val);
         
-        solver.set_parameter(k, "obs_x", -100.0); // Move obs far away
-        solver.set_parameter(k, "obs_y", -100.0);
-        solver.set_parameter(k, "obs_rad", 0.0);
+        solver.set_parameter(k, "obs_x", ExtConfig::OBS_X);
+        solver.set_parameter(k, "obs_y", ExtConfig::OBS_Y);
+        solver.set_parameter(k, "obs_rad", ExtConfig::OBS_RAD);
         solver.set_parameter(k, "L", 2.5);
         solver.set_parameter(k, "car_rad", ExtConfig::CAR_RAD);
         
@@ -136,7 +136,7 @@ int main() {
         }
         
         // Simple linear guess
-        double y_guess = 0.0;
+        double y_guess = y_ref_val;
         
         solver.set_state_guess(k, "x", x_ref);
         solver.set_state_guess(k, "y", y_guess);
@@ -164,7 +164,7 @@ int main() {
     // For now, let's try WITHOUT rollout_dynamics to see if the warm-started states help.
     // Wait, if defects are large, first iteration might have huge steps.
     // Let's call rollout_dynamics() but with the non-zero control guess we set.
-    solver.rollout_dynamics(); 
+    // solver.rollout_dynamics();  
 
 
     std::cout << ">> Solving...\n";
@@ -176,6 +176,8 @@ int main() {
     std::cout << "\n>> Testing Warm Start (Shift & Solve again)...\n";
     // 1. Shift
     solver.shift_trajectory();
+    
+    solver.is_warm_started = true;
     
     // 2. Update Initial State (Simulate vehicle moving forward)
     // We take the state from k=1 of the previous solution as the new x0

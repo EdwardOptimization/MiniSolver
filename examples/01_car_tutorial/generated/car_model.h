@@ -56,8 +56,6 @@ struct CarModel {
         const MSVec<T, NU>& u_in,
         const MSVec<T, NP>& p_in) 
     {
-        #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
         T theta = x_in(2);
         T v = x_in(3);
         T acc = u_in(0);
@@ -70,7 +68,7 @@ struct CarModel {
         xdot(2) = v*tan(steer)/L;
         xdot(3) = acc;
         return xdot;
-#pragma GCC diagnostic pop
+
     }
 
     // --- Integrator Interface ---
@@ -128,8 +126,6 @@ struct CarModel {
     // --- 1. Compute Dynamics (f_resid, A, B) ---
     template<typename T>
     static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
         T x = kp.x(0);
         T y = kp.x(1);
         T theta = kp.x(2);
@@ -153,30 +149,19 @@ struct CarModel {
                 kp.f_resid(1) = tmp_d3 + y;
                 kp.f_resid(2) = theta + tmp_d6*v;
                 kp.f_resid(3) = acc*dt + v;
+                kp.A.setZero();
                 kp.A(0,0) = 1;
-                kp.A(0,1) = 0;
                 kp.A(0,2) = -tmp_d3;
                 kp.A(0,3) = tmp_d0;
-                kp.A(1,0) = 0;
                 kp.A(1,1) = 1;
                 kp.A(1,2) = tmp_d1;
                 kp.A(1,3) = tmp_d2;
-                kp.A(2,0) = 0;
-                kp.A(2,1) = 0;
                 kp.A(2,2) = 1;
                 kp.A(2,3) = tmp_d6;
-                kp.A(3,0) = 0;
-                kp.A(3,1) = 0;
-                kp.A(3,2) = 0;
                 kp.A(3,3) = 1;
-                kp.B(0,0) = 0;
-                kp.B(0,1) = 0;
-                kp.B(1,0) = 0;
-                kp.B(1,1) = 0;
-                kp.B(2,0) = 0;
+                kp.B.setZero();
                 kp.B(2,1) = tmp_d5*v*(pow(tmp_d4, 2) + 1);
                 kp.B(3,0) = dt;
-                kp.B(3,1) = 0;
                 break;
             }
             case IntegratorType::RK2_EXPLICIT:
@@ -207,22 +192,17 @@ struct CarModel {
                 kp.f_resid(1) = tmp_d13 + y;
                 kp.f_resid(2) = theta + tmp_d6;
                 kp.f_resid(3) = tmp_d0 + v;
+                kp.A.setZero();
                 kp.A(0,0) = 1;
-                kp.A(0,1) = 0;
                 kp.A(0,2) = -tmp_d13;
                 kp.A(0,3) = -tmp_d15*tmp_d16 + tmp_d9;
-                kp.A(1,0) = 0;
                 kp.A(1,1) = 1;
                 kp.A(1,2) = tmp_d10;
                 kp.A(1,3) = tmp_d12 + tmp_d16*tmp_d17;
-                kp.A(2,0) = 0;
-                kp.A(2,1) = 0;
                 kp.A(2,2) = 1;
                 kp.A(2,3) = tmp_d5;
-                kp.A(3,0) = 0;
-                kp.A(3,1) = 0;
-                kp.A(3,2) = 0;
                 kp.A(3,3) = 1;
+                kp.B.setZero();
                 kp.B(0,0) = -tmp_d11*tmp_d18 + tmp_d17;
                 kp.B(0,1) = -tmp_d15*tmp_d20;
                 kp.B(1,0) = tmp_d15 + tmp_d18*tmp_d8;
@@ -230,7 +210,6 @@ struct CarModel {
                 kp.B(2,0) = tmp_d14*tmp_d4;
                 kp.B(2,1) = dt*tmp_d1*tmp_d19;
                 kp.B(3,0) = dt;
-                kp.B(3,1) = 0;
                 break;
             }
             case IntegratorType::RK4_EXPLICIT:
@@ -286,22 +265,17 @@ struct CarModel {
                 kp.f_resid(1) = tmp_d20*tmp_d29 + y;
                 kp.f_resid(2) = theta + tmp_d20*(tmp_d2*tmp_d6 + tmp_d30*tmp_d6 + tmp_d6*v);
                 kp.f_resid(3) = tmp_d16;
+                kp.A.setZero();
                 kp.A(0,0) = 1;
-                kp.A(0,1) = 0;
                 kp.A(0,2) = -tmp_d20*tmp_d29;
                 kp.A(0,3) = tmp_d20*(tmp_d0 + tmp_d15 + tmp_d19 - tmp_d24*tmp_d7 - tmp_d32*tmp_d33 - tmp_d33*tmp_d34 + tmp_d9);
-                kp.A(1,0) = 0;
                 kp.A(1,1) = 1;
                 kp.A(1,2) = tmp_d21;
                 kp.A(1,3) = tmp_d20*(tmp_d10*tmp_d7 + tmp_d22 + tmp_d23 + tmp_d26 + tmp_d28 + tmp_d33*tmp_d35 + tmp_d33*tmp_d36);
-                kp.A(2,0) = 0;
-                kp.A(2,1) = 0;
                 kp.A(2,2) = 1;
                 kp.A(2,3) = tmp_d31*tmp_d6;
-                kp.A(3,0) = 0;
-                kp.A(3,1) = 0;
-                kp.A(3,2) = 0;
                 kp.A(3,3) = 1;
+                kp.B.setZero();
                 kp.B(0,0) = tmp_d20*(dt*tmp_d9 - tmp_d24*tmp_d38 - tmp_d25*tmp_d40 - tmp_d27*tmp_d41 + tmp_d35 + tmp_d36);
                 kp.B(0,1) = tmp_d20*(-tmp_d24*tmp_d44 - tmp_d32*tmp_d43 - tmp_d34*tmp_d45);
                 kp.B(1,0) = tmp_d20*(dt*tmp_d23 + tmp_d10*tmp_d38 + tmp_d14*tmp_d40 + tmp_d18*tmp_d41 + tmp_d32 + tmp_d34);
@@ -309,18 +283,14 @@ struct CarModel {
                 kp.B(2,0) = tmp_d39;
                 kp.B(2,1) = tmp_d20*(tmp_d2*tmp_d42 + tmp_d30*tmp_d42 + tmp_d42*v);
                 kp.B(3,0) = tmp_d31;
-                kp.B(3,1) = 0;
                 break;
             }
         }
-#pragma GCC diagnostic pop
     }
 
     // --- 2. Compute Constraints (g_val, C, D) ---
     template<typename T>
     static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
-        #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
         T x = kp.x(0);
         T y = kp.x(1);
         T acc = kp.u(0);
@@ -377,14 +347,12 @@ struct CarModel {
         kp.D(3,1) = -1;
         kp.D(4,0) = 0;
         kp.D(4,1) = 0;
-#pragma GCC diagnostic pop
+
     }
 
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
     template<typename T, int Mode>
     static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
         T x = kp.x(0);
         T y = kp.x(1);
         T theta = kp.x(2);
@@ -466,7 +434,6 @@ struct CarModel {
         kp.H(1,3) = 0;
 
         kp.cost = pow(acc, 2)*w_acc + pow(steer, 2)*w_steer + pow(theta, 2)*w_theta + w_pos*pow(x - x_ref, 2) + w_pos*pow(y - y_ref, 2) + w_vel*pow(v - v_ref, 2);
-#pragma GCC diagnostic pop
     }
 
 template<typename T>
@@ -498,6 +465,101 @@ template<typename T>
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost_exact(kp); // Exact Hessian
+    }
+
+    // --- 5. Sparse Kernels (Generated) ---
+    // Computes: out = Vxx * A
+    // Exploits sparsity of A defined at compile time.
+    template<typename T>
+    static void mult_Vxx_A(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NX>& out) {
+        out.setZero();
+        // A(0,0) contributes
+        out(0, 0) += Vxx(0, 0) * kp.A(0, 0);
+        out(1, 0) += Vxx(1, 0) * kp.A(0, 0);
+        out(2, 0) += Vxx(2, 0) * kp.A(0, 0);
+        out(3, 0) += Vxx(3, 0) * kp.A(0, 0);
+        // A(1,1) contributes
+        out(0, 1) += Vxx(0, 1) * kp.A(1, 1);
+        out(1, 1) += Vxx(1, 1) * kp.A(1, 1);
+        out(2, 1) += Vxx(2, 1) * kp.A(1, 1);
+        out(3, 1) += Vxx(3, 1) * kp.A(1, 1);
+        // A(0,2) contributes
+        out(0, 2) += Vxx(0, 0) * kp.A(0, 2);
+        out(1, 2) += Vxx(1, 0) * kp.A(0, 2);
+        out(2, 2) += Vxx(2, 0) * kp.A(0, 2);
+        out(3, 2) += Vxx(3, 0) * kp.A(0, 2);
+        // A(1,2) contributes
+        out(0, 2) += Vxx(0, 1) * kp.A(1, 2);
+        out(1, 2) += Vxx(1, 1) * kp.A(1, 2);
+        out(2, 2) += Vxx(2, 1) * kp.A(1, 2);
+        out(3, 2) += Vxx(3, 1) * kp.A(1, 2);
+        // A(2,2) contributes
+        out(0, 2) += Vxx(0, 2) * kp.A(2, 2);
+        out(1, 2) += Vxx(1, 2) * kp.A(2, 2);
+        out(2, 2) += Vxx(2, 2) * kp.A(2, 2);
+        out(3, 2) += Vxx(3, 2) * kp.A(2, 2);
+        // A(0,3) contributes
+        out(0, 3) += Vxx(0, 0) * kp.A(0, 3);
+        out(1, 3) += Vxx(1, 0) * kp.A(0, 3);
+        out(2, 3) += Vxx(2, 0) * kp.A(0, 3);
+        out(3, 3) += Vxx(3, 0) * kp.A(0, 3);
+        // A(1,3) contributes
+        out(0, 3) += Vxx(0, 1) * kp.A(1, 3);
+        out(1, 3) += Vxx(1, 1) * kp.A(1, 3);
+        out(2, 3) += Vxx(2, 1) * kp.A(1, 3);
+        out(3, 3) += Vxx(3, 1) * kp.A(1, 3);
+        // A(2,3) contributes
+        out(0, 3) += Vxx(0, 2) * kp.A(2, 3);
+        out(1, 3) += Vxx(1, 2) * kp.A(2, 3);
+        out(2, 3) += Vxx(2, 2) * kp.A(2, 3);
+        out(3, 3) += Vxx(3, 2) * kp.A(2, 3);
+        // A(3,3) contributes
+        out(0, 3) += Vxx(0, 3) * kp.A(3, 3);
+        out(1, 3) += Vxx(1, 3) * kp.A(3, 3);
+        out(2, 3) += Vxx(2, 3) * kp.A(3, 3);
+        out(3, 3) += Vxx(3, 3) * kp.A(3, 3);
+
+    }
+    // Computes: out = Vxx * B
+    template<typename T>
+    static void mult_Vxx_B(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NU>& out) {
+        out.setZero();
+        // B(0,0) contributes
+        out(0, 0) += Vxx(0, 0) * kp.B(0, 0);
+        out(1, 0) += Vxx(1, 0) * kp.B(0, 0);
+        out(2, 0) += Vxx(2, 0) * kp.B(0, 0);
+        out(3, 0) += Vxx(3, 0) * kp.B(0, 0);
+        // B(1,0) contributes
+        out(0, 0) += Vxx(0, 1) * kp.B(1, 0);
+        out(1, 0) += Vxx(1, 1) * kp.B(1, 0);
+        out(2, 0) += Vxx(2, 1) * kp.B(1, 0);
+        out(3, 0) += Vxx(3, 1) * kp.B(1, 0);
+        // B(2,0) contributes
+        out(0, 0) += Vxx(0, 2) * kp.B(2, 0);
+        out(1, 0) += Vxx(1, 2) * kp.B(2, 0);
+        out(2, 0) += Vxx(2, 2) * kp.B(2, 0);
+        out(3, 0) += Vxx(3, 2) * kp.B(2, 0);
+        // B(3,0) contributes
+        out(0, 0) += Vxx(0, 3) * kp.B(3, 0);
+        out(1, 0) += Vxx(1, 3) * kp.B(3, 0);
+        out(2, 0) += Vxx(2, 3) * kp.B(3, 0);
+        out(3, 0) += Vxx(3, 3) * kp.B(3, 0);
+        // B(0,1) contributes
+        out(0, 1) += Vxx(0, 0) * kp.B(0, 1);
+        out(1, 1) += Vxx(1, 0) * kp.B(0, 1);
+        out(2, 1) += Vxx(2, 0) * kp.B(0, 1);
+        out(3, 1) += Vxx(3, 0) * kp.B(0, 1);
+        // B(1,1) contributes
+        out(0, 1) += Vxx(0, 1) * kp.B(1, 1);
+        out(1, 1) += Vxx(1, 1) * kp.B(1, 1);
+        out(2, 1) += Vxx(2, 1) * kp.B(1, 1);
+        out(3, 1) += Vxx(3, 1) * kp.B(1, 1);
+        // B(2,1) contributes
+        out(0, 1) += Vxx(0, 2) * kp.B(2, 1);
+        out(1, 1) += Vxx(1, 2) * kp.B(2, 1);
+        out(2, 1) += Vxx(2, 2) * kp.B(2, 1);
+        out(3, 1) += Vxx(3, 2) * kp.B(2, 1);
+
     }
 };
 }

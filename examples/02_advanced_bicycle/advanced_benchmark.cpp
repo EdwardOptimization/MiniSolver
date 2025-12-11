@@ -14,7 +14,7 @@ using namespace minisolver;
 
 // Configuration for this benchmark
 struct ExtConfig {
-    static const int N = 100;
+    static const int N = 50;
     static constexpr double TARGET_V = 10.0;
     static constexpr double OBS_X = 15.0;
     static constexpr double OBS_Y = 0.5; // Slight offset to force avoidance
@@ -67,8 +67,7 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
     double last_cost = 0;
     double last_viol = 0;
 
-    // Use MAX_N=120 to accommodate N=100 safely
-    MiniSolver<BicycleExtModel, 120> solver(N, Backend::CPU_SERIAL, config);
+    MiniSolver<BicycleExtModel, 50> solver(N, Backend::CPU_SERIAL, config);
     for(int run = 0; run < WARMUP_RUNS + NUM_RUNS; ++run) {
         solver.reset(ResetOption::FULL);
         solver.set_dt(dts);
@@ -108,6 +107,11 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
                 solver.set_control_guess(k, "dkappa", 0.0);
                 solver.set_control_guess(k, "jerk", 0.0);
             }
+
+            // [Fix] Provide smart state guess to avoid obstacle
+            solver.set_state_guess(k, "x", x_ref);
+            solver.set_state_guess(k, "y", y_ref_val);
+            solver.set_state_guess(k, "v", ExtConfig::TARGET_V);
         }
         
         // Initial State: x, y, theta, kappa, v, a
@@ -119,7 +123,7 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
         solver.set_initial_state("a", 0.0);
         
         // solver.rollout_dynamics(); // Removed to preserve smart guess
-        solver.rollout_dynamics();
+        // solver.rollout_dynamics();
 
         auto start = std::chrono::high_resolution_clock::now();
         SolverStatus status = solver.solve();
@@ -180,10 +184,9 @@ int main() {
     base.default_dt = 0.1;
     base.max_iters = 300;
     base.tol_con = 0.05; // Relaxed for challenging obstacle scenario
-    base.print_level = PrintLevel::NONE;
     base.reg_init = 1e-4; 
     base.reg_min = 1e-8;
-    
+
     // Robustness Settings
     base.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR;
     base.enable_feasibility_restoration = true;
@@ -194,6 +197,8 @@ int main() {
     SolverConfig c1 = base;
     c1.barrier_strategy = BarrierStrategy::ADAPTIVE;
     c1.line_search_type = LineSearchType::FILTER;
+    c1.filter_gamma_theta = 1e-6; 
+    c1.filter_gamma_phi = 1e-6;
     c1.mu_init = 0.1;
     // Relax tolerances for initial feasibility
     c1.tol_con = 1e-2;
@@ -206,6 +211,18 @@ int main() {
     c2.tol_con = 1e-2;
     results.push_back(run_test("ExtBicycle (Monotone)", c2));
 
+    // 3. Mehrotra (The "Debug" Config)
+    SolverConfig c3 = base;
+    c3.barrier_strategy = BarrierStrategy::MEHROTRA; 
+    c3.line_search_type = LineSearchType::FILTER;
+    c3.mu_init = 1e-3; // [Fix] Start with smaller mu since we have good guess
+    c3.tol_con = 1e-2;
+    // [Fix] Enable iterative refinement for Mehrotra to handle ill-conditioning near solution
+    c3.enable_iterative_refinement = true;
+    c3.inertia_max_retries = 2; // Allow some retries if factorization fails
+    c3.filter_gamma_theta = 1e-5; // Relax filter slightly
+    results.push_back(run_test("ExtBicycle (Mehrotra)", c3));
+    
     // Print Table
     std::cout << "\n========================================= EXTENDED BICYCLE (NX=6, NU=2) =========================================\n";
     std::cout << std::left 

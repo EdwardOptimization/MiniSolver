@@ -960,7 +960,7 @@ public:
             double sigma_base = std::pow(mu_aff / mu_curr, 3);
             double sigma = sigma_base;
             
-            // [NEW] Aggressive Strategy
+            // Aggressive Strategy
             // If alpha_aff close to 1, we can reduce mu significantly
             if (config.enable_aggressive_barrier) {
                 if (alpha_aff > 0.9) {
@@ -970,9 +970,22 @@ public:
                 if (mu_curr > 1.0) {
                     sigma = std::min(sigma, 0.1); // [AGGRESSIVE] Was 0.2
                 }
+            } else {
+                // Mehrotra Centering Parameter Heuristic
+                // Limit sigma to avoid aggressive reduction when affine step is bad
+                if (alpha_aff < 0.1) {
+                    // If affine direction is blocked quickly, we are close to boundary.
+                    // Be conservative to allow centering.
+                    sigma = std::max(sigma, 0.5); 
+                } else if (alpha_aff > 0.9) {
+                    // If affine direction is good, we can reduce mu significantly
+                    sigma = std::min(sigma, 0.1);
+                }
             }
             
             if (sigma > 1.0) sigma = 1.0;
+            if (sigma < 1e-4) sigma = 1e-4; // Prevent too small sigma
+            
             double mu_target = sigma * mu_curr;
             if (mu_target < config.mu_min) mu_target = config.mu_min; // [FIX] Enforce lower bound
             
@@ -1115,17 +1128,20 @@ public:
 
         // [FIX] Final Convergence Check using Step Size and Residuals
         // Avoids wasting a full derivative computation in next step if we are already done.
+        bool is_feasible = (max_prim_inf < config.tol_con);
+        bool is_dual_feasible = (max_dual_inf < config.tol_dual);
+        
+        // 1. Standard "Small Mu" Convergence
         if (mu <= config.mu_min && alpha > 1e-5) {
             // Check stationarity via step size
             double max_dx = 0.0;
             for(int k=0; k<=N; ++k) {
-                // [FIX] Use MatOps::norm_inf to support both Eigen and MiniMatrix
+                // Use MatOps::norm_inf to support both Eigen and MiniMatrix
                 double dx_norm = MatOps::norm_inf(trajectory.active()[k].dx);
                 if (dx_norm > max_dx) max_dx = dx_norm;
             }
             double actual_step = alpha * max_dx;
-            // If step was small and we were feasible (checked at start), we are likely converged
-            if (actual_step < config.tol_dual && max_prim_inf < config.tol_con) {
+            if (actual_step < config.tol_dual && is_feasible && is_dual_feasible) {
                 return SolverStatus::SOLVED;
             }
         }

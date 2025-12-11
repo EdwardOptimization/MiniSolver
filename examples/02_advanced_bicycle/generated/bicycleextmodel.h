@@ -60,8 +60,6 @@ struct BicycleExtModel {
         const MSVec<T, NU>& u_in,
         const MSVec<T, NP>& p_in) 
     {
-        #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
         T theta = x_in(2);
         T kappa = x_in(3);
         T v = x_in(4);
@@ -78,7 +76,7 @@ struct BicycleExtModel {
         xdot(4) = a;
         xdot(5) = jerk;
         return xdot;
-#pragma GCC diagnostic pop
+
     }
 
     // --- Integrator Interface ---
@@ -136,8 +134,6 @@ struct BicycleExtModel {
     // --- 1. Compute Dynamics (f_resid, A, B) ---
     template<typename T>
     static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
         T x = kp.x(0);
         T y = kp.x(1);
         T theta = kp.x(2);
@@ -162,53 +158,22 @@ struct BicycleExtModel {
                 kp.f_resid(3) = dkappa*dt + kappa;
                 kp.f_resid(4) = a*dt + v;
                 kp.f_resid(5) = a + dt*jerk;
+                kp.A.setZero();
                 kp.A(0,0) = 1;
-                kp.A(0,1) = 0;
                 kp.A(0,2) = -tmp_d3;
-                kp.A(0,3) = 0;
                 kp.A(0,4) = tmp_d0;
-                kp.A(0,5) = 0;
-                kp.A(1,0) = 0;
                 kp.A(1,1) = 1;
                 kp.A(1,2) = tmp_d1;
-                kp.A(1,3) = 0;
                 kp.A(1,4) = tmp_d2;
-                kp.A(1,5) = 0;
-                kp.A(2,0) = 0;
-                kp.A(2,1) = 0;
                 kp.A(2,2) = 1;
                 kp.A(2,3) = tmp_d4;
                 kp.A(2,4) = dt*kappa;
-                kp.A(2,5) = 0;
-                kp.A(3,0) = 0;
-                kp.A(3,1) = 0;
-                kp.A(3,2) = 0;
                 kp.A(3,3) = 1;
-                kp.A(3,4) = 0;
-                kp.A(3,5) = 0;
-                kp.A(4,0) = 0;
-                kp.A(4,1) = 0;
-                kp.A(4,2) = 0;
-                kp.A(4,3) = 0;
                 kp.A(4,4) = 1;
                 kp.A(4,5) = dt;
-                kp.A(5,0) = 0;
-                kp.A(5,1) = 0;
-                kp.A(5,2) = 0;
-                kp.A(5,3) = 0;
-                kp.A(5,4) = 0;
                 kp.A(5,5) = 1;
-                kp.B(0,0) = 0;
-                kp.B(0,1) = 0;
-                kp.B(1,0) = 0;
-                kp.B(1,1) = 0;
-                kp.B(2,0) = 0;
-                kp.B(2,1) = 0;
+                kp.B.setZero();
                 kp.B(3,0) = dt;
-                kp.B(3,1) = 0;
-                kp.B(4,0) = 0;
-                kp.B(4,1) = 0;
-                kp.B(5,0) = 0;
                 kp.B(5,1) = dt;
                 break;
             }
@@ -239,53 +204,29 @@ struct BicycleExtModel {
                 kp.f_resid(3) = kappa + tmp_d8;
                 kp.f_resid(4) = dt*(a + 0.5*tmp_d10) + v;
                 kp.f_resid(5) = a + tmp_d10;
+                kp.A.setZero();
                 kp.A(0,0) = 1;
-                kp.A(0,1) = 0;
                 kp.A(0,2) = -tmp_d7;
                 kp.A(0,3) = -tmp_d11*tmp_d14;
                 kp.A(0,4) = dt*tmp_d3 - tmp_d14*tmp_d15;
                 kp.A(0,5) = 0.5*tmp_d12*tmp_d3 - tmp_d16*tmp_d5;
-                kp.A(1,0) = 0;
                 kp.A(1,1) = 1;
                 kp.A(1,2) = tmp_d4;
                 kp.A(1,3) = tmp_d11*tmp_d17;
                 kp.A(1,4) = tmp_d15*tmp_d17 + tmp_d6;
                 kp.A(1,5) = tmp_d14 + tmp_d16*tmp_d3;
-                kp.A(2,0) = 0;
-                kp.A(2,1) = 0;
                 kp.A(2,2) = 1;
                 kp.A(2,3) = tmp_d1;
                 kp.A(2,4) = dt*tmp_d9;
                 kp.A(2,5) = tmp_d13*tmp_d9;
-                kp.A(3,0) = 0;
-                kp.A(3,1) = 0;
-                kp.A(3,2) = 0;
                 kp.A(3,3) = 1;
-                kp.A(3,4) = 0;
-                kp.A(3,5) = 0;
-                kp.A(4,0) = 0;
-                kp.A(4,1) = 0;
-                kp.A(4,2) = 0;
-                kp.A(4,3) = 0;
                 kp.A(4,4) = 1;
                 kp.A(4,5) = dt;
-                kp.A(5,0) = 0;
-                kp.A(5,1) = 0;
-                kp.A(5,2) = 0;
-                kp.A(5,3) = 0;
-                kp.A(5,4) = 0;
                 kp.A(5,5) = 1;
-                kp.B(0,0) = 0;
-                kp.B(0,1) = 0;
-                kp.B(1,0) = 0;
-                kp.B(1,1) = 0;
+                kp.B.setZero();
                 kp.B(2,0) = tmp_d0*tmp_d13;
-                kp.B(2,1) = 0;
                 kp.B(3,0) = dt;
-                kp.B(3,1) = 0;
-                kp.B(4,0) = 0;
                 kp.B(4,1) = tmp_d13;
-                kp.B(5,0) = 0;
                 kp.B(5,1) = dt;
                 break;
             }
@@ -354,42 +295,26 @@ struct BicycleExtModel {
                 kp.f_resid(3) = kappa + 1.0*tmp_d10;
                 kp.f_resid(4) = tmp_d22*(6*a + 3.0*dt*jerk) + v;
                 kp.f_resid(5) = a + jerk*tmp_d34;
+                kp.A.setZero();
                 kp.A(0,0) = 1;
-                kp.A(0,1) = 0;
                 kp.A(0,2) = -tmp_d22*tmp_d31;
                 kp.A(0,3) = tmp_d22*(-tmp_d18*tmp_d39 - tmp_d28*tmp_d37 - tmp_d35*tmp_d36);
                 kp.A(0,4) = tmp_d22*(tmp_d0 - tmp_d11*tmp_d39 - tmp_d12*tmp_d28 + tmp_d14 + tmp_d21 - tmp_d3*tmp_d36 + tmp_d6);
                 kp.A(0,5) = tmp_d22*(dt*tmp_d14 + 1.0*dt*tmp_d20 + 1.0*dt*tmp_d5 - tmp_d25*tmp_d42 - tmp_d28*tmp_d44 - tmp_d45*tmp_d46);
-                kp.A(1,0) = 0;
                 kp.A(1,1) = 1;
                 kp.A(1,2) = tmp_d23;
                 kp.A(1,3) = tmp_d22*(tmp_d15*tmp_d37 + tmp_d18*tmp_d48 + tmp_d35*tmp_d47);
                 kp.A(1,4) = tmp_d22*(tmp_d11*tmp_d48 + tmp_d12*tmp_d15 + tmp_d24 + tmp_d26 + tmp_d27 + tmp_d3*tmp_d47 + tmp_d30);
                 kp.A(1,5) = tmp_d22*(dt*tmp_d27 + tmp_d15*tmp_d44 + tmp_d36 + tmp_d38 + tmp_d42*tmp_d5 + tmp_d46*tmp_d49);
-                kp.A(2,0) = 0;
-                kp.A(2,1) = 0;
                 kp.A(2,2) = 1;
                 kp.A(2,3) = tmp_d22*(a*tmp_d34 + 2.0*tmp_d7 + 6*v);
                 kp.A(2,4) = tmp_d22*(6*kappa + 3.0*tmp_d10);
                 kp.A(2,5) = tmp_d22*(dt*tmp_d33 + 2.0*tmp_d12);
-                kp.A(3,0) = 0;
-                kp.A(3,1) = 0;
-                kp.A(3,2) = 0;
                 kp.A(3,3) = 1;
-                kp.A(3,4) = 0;
-                kp.A(3,5) = 0;
-                kp.A(4,0) = 0;
-                kp.A(4,1) = 0;
-                kp.A(4,2) = 0;
-                kp.A(4,3) = 0;
                 kp.A(4,4) = 1;
                 kp.A(4,5) = tmp_d34;
-                kp.A(5,0) = 0;
-                kp.A(5,1) = 0;
-                kp.A(5,2) = 0;
-                kp.A(5,3) = 0;
-                kp.A(5,4) = 0;
                 kp.A(5,5) = 1;
+                kp.B.setZero();
                 kp.B(0,0) = tmp_d22*(-tmp_d28*tmp_d50 - tmp_d51*tmp_d52);
                 kp.B(0,1) = tmp_d22*(0.5*tmp_d14*tmp_d40 + 0.5*tmp_d20*tmp_d40 - tmp_d28*tmp_d54 - tmp_d45*tmp_d55);
                 kp.B(1,0) = tmp_d22*(tmp_d15*tmp_d50 + tmp_d20*tmp_d41*tmp_d52);
@@ -397,22 +322,16 @@ struct BicycleExtModel {
                 kp.B(2,0) = tmp_d22*(dt*tmp_d8 + tmp_d17*tmp_d34 + tmp_d2*tmp_d34);
                 kp.B(2,1) = tmp_d22*(tmp_d11*tmp_d41 + tmp_d33*tmp_d41);
                 kp.B(3,0) = tmp_d34;
-                kp.B(3,1) = 0;
-                kp.B(4,0) = 0;
                 kp.B(4,1) = tmp_d41;
-                kp.B(5,0) = 0;
                 kp.B(5,1) = tmp_d34;
                 break;
             }
         }
-#pragma GCC diagnostic pop
     }
 
     // --- 2. Compute Constraints (g_val, C, D) ---
     template<typename T>
     static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
-        #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
         T kappa = kp.x(3);
         T v = kp.x(4);
         T a = kp.x(5);
@@ -517,14 +436,12 @@ struct BicycleExtModel {
         kp.D(8,1) = 0;
         kp.D(9,0) = -1;
         kp.D(9,1) = 0;
-#pragma GCC diagnostic pop
+
     }
 
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
     template<typename T, int Mode>
     static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-variable"
         T x = kp.x(0);
         T y = kp.x(1);
         T theta = kp.x(2);
@@ -622,7 +539,6 @@ struct BicycleExtModel {
         kp.H(1,5) = 0;
 
         kp.cost = pow(a, 2)*w_a + pow(dkappa, 2)*w_dkappa + pow(jerk, 2)*w_jerk + pow(kappa, 2)*w_kappa + pow(theta, 2)*w_theta + w_pos*(pow(x - x_ref, 2) + pow(y - y_ref, 2)) + w_vel*pow(v - v_ref, 2);
-#pragma GCC diagnostic pop
     }
 
 template<typename T>
@@ -654,6 +570,210 @@ template<typename T>
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost_exact(kp); // Exact Hessian
+    }
+
+    // --- 5. Sparse Kernels (Generated) ---
+    // Computes: out = Vxx * A
+    // Exploits sparsity of A defined at compile time.
+    template<typename T>
+    static void mult_Vxx_A(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NX>& out) {
+        out.setZero();
+        // A(0,0) contributes
+        out(0, 0) += Vxx(0, 0) * kp.A(0, 0);
+        out(1, 0) += Vxx(1, 0) * kp.A(0, 0);
+        out(2, 0) += Vxx(2, 0) * kp.A(0, 0);
+        out(3, 0) += Vxx(3, 0) * kp.A(0, 0);
+        out(4, 0) += Vxx(4, 0) * kp.A(0, 0);
+        out(5, 0) += Vxx(5, 0) * kp.A(0, 0);
+        // A(1,1) contributes
+        out(0, 1) += Vxx(0, 1) * kp.A(1, 1);
+        out(1, 1) += Vxx(1, 1) * kp.A(1, 1);
+        out(2, 1) += Vxx(2, 1) * kp.A(1, 1);
+        out(3, 1) += Vxx(3, 1) * kp.A(1, 1);
+        out(4, 1) += Vxx(4, 1) * kp.A(1, 1);
+        out(5, 1) += Vxx(5, 1) * kp.A(1, 1);
+        // A(0,2) contributes
+        out(0, 2) += Vxx(0, 0) * kp.A(0, 2);
+        out(1, 2) += Vxx(1, 0) * kp.A(0, 2);
+        out(2, 2) += Vxx(2, 0) * kp.A(0, 2);
+        out(3, 2) += Vxx(3, 0) * kp.A(0, 2);
+        out(4, 2) += Vxx(4, 0) * kp.A(0, 2);
+        out(5, 2) += Vxx(5, 0) * kp.A(0, 2);
+        // A(1,2) contributes
+        out(0, 2) += Vxx(0, 1) * kp.A(1, 2);
+        out(1, 2) += Vxx(1, 1) * kp.A(1, 2);
+        out(2, 2) += Vxx(2, 1) * kp.A(1, 2);
+        out(3, 2) += Vxx(3, 1) * kp.A(1, 2);
+        out(4, 2) += Vxx(4, 1) * kp.A(1, 2);
+        out(5, 2) += Vxx(5, 1) * kp.A(1, 2);
+        // A(2,2) contributes
+        out(0, 2) += Vxx(0, 2) * kp.A(2, 2);
+        out(1, 2) += Vxx(1, 2) * kp.A(2, 2);
+        out(2, 2) += Vxx(2, 2) * kp.A(2, 2);
+        out(3, 2) += Vxx(3, 2) * kp.A(2, 2);
+        out(4, 2) += Vxx(4, 2) * kp.A(2, 2);
+        out(5, 2) += Vxx(5, 2) * kp.A(2, 2);
+        // A(0,3) contributes
+        out(0, 3) += Vxx(0, 0) * kp.A(0, 3);
+        out(1, 3) += Vxx(1, 0) * kp.A(0, 3);
+        out(2, 3) += Vxx(2, 0) * kp.A(0, 3);
+        out(3, 3) += Vxx(3, 0) * kp.A(0, 3);
+        out(4, 3) += Vxx(4, 0) * kp.A(0, 3);
+        out(5, 3) += Vxx(5, 0) * kp.A(0, 3);
+        // A(1,3) contributes
+        out(0, 3) += Vxx(0, 1) * kp.A(1, 3);
+        out(1, 3) += Vxx(1, 1) * kp.A(1, 3);
+        out(2, 3) += Vxx(2, 1) * kp.A(1, 3);
+        out(3, 3) += Vxx(3, 1) * kp.A(1, 3);
+        out(4, 3) += Vxx(4, 1) * kp.A(1, 3);
+        out(5, 3) += Vxx(5, 1) * kp.A(1, 3);
+        // A(2,3) contributes
+        out(0, 3) += Vxx(0, 2) * kp.A(2, 3);
+        out(1, 3) += Vxx(1, 2) * kp.A(2, 3);
+        out(2, 3) += Vxx(2, 2) * kp.A(2, 3);
+        out(3, 3) += Vxx(3, 2) * kp.A(2, 3);
+        out(4, 3) += Vxx(4, 2) * kp.A(2, 3);
+        out(5, 3) += Vxx(5, 2) * kp.A(2, 3);
+        // A(3,3) contributes
+        out(0, 3) += Vxx(0, 3) * kp.A(3, 3);
+        out(1, 3) += Vxx(1, 3) * kp.A(3, 3);
+        out(2, 3) += Vxx(2, 3) * kp.A(3, 3);
+        out(3, 3) += Vxx(3, 3) * kp.A(3, 3);
+        out(4, 3) += Vxx(4, 3) * kp.A(3, 3);
+        out(5, 3) += Vxx(5, 3) * kp.A(3, 3);
+        // A(0,4) contributes
+        out(0, 4) += Vxx(0, 0) * kp.A(0, 4);
+        out(1, 4) += Vxx(1, 0) * kp.A(0, 4);
+        out(2, 4) += Vxx(2, 0) * kp.A(0, 4);
+        out(3, 4) += Vxx(3, 0) * kp.A(0, 4);
+        out(4, 4) += Vxx(4, 0) * kp.A(0, 4);
+        out(5, 4) += Vxx(5, 0) * kp.A(0, 4);
+        // A(1,4) contributes
+        out(0, 4) += Vxx(0, 1) * kp.A(1, 4);
+        out(1, 4) += Vxx(1, 1) * kp.A(1, 4);
+        out(2, 4) += Vxx(2, 1) * kp.A(1, 4);
+        out(3, 4) += Vxx(3, 1) * kp.A(1, 4);
+        out(4, 4) += Vxx(4, 1) * kp.A(1, 4);
+        out(5, 4) += Vxx(5, 1) * kp.A(1, 4);
+        // A(2,4) contributes
+        out(0, 4) += Vxx(0, 2) * kp.A(2, 4);
+        out(1, 4) += Vxx(1, 2) * kp.A(2, 4);
+        out(2, 4) += Vxx(2, 2) * kp.A(2, 4);
+        out(3, 4) += Vxx(3, 2) * kp.A(2, 4);
+        out(4, 4) += Vxx(4, 2) * kp.A(2, 4);
+        out(5, 4) += Vxx(5, 2) * kp.A(2, 4);
+        // A(4,4) contributes
+        out(0, 4) += Vxx(0, 4) * kp.A(4, 4);
+        out(1, 4) += Vxx(1, 4) * kp.A(4, 4);
+        out(2, 4) += Vxx(2, 4) * kp.A(4, 4);
+        out(3, 4) += Vxx(3, 4) * kp.A(4, 4);
+        out(4, 4) += Vxx(4, 4) * kp.A(4, 4);
+        out(5, 4) += Vxx(5, 4) * kp.A(4, 4);
+        // A(0,5) contributes
+        out(0, 5) += Vxx(0, 0) * kp.A(0, 5);
+        out(1, 5) += Vxx(1, 0) * kp.A(0, 5);
+        out(2, 5) += Vxx(2, 0) * kp.A(0, 5);
+        out(3, 5) += Vxx(3, 0) * kp.A(0, 5);
+        out(4, 5) += Vxx(4, 0) * kp.A(0, 5);
+        out(5, 5) += Vxx(5, 0) * kp.A(0, 5);
+        // A(1,5) contributes
+        out(0, 5) += Vxx(0, 1) * kp.A(1, 5);
+        out(1, 5) += Vxx(1, 1) * kp.A(1, 5);
+        out(2, 5) += Vxx(2, 1) * kp.A(1, 5);
+        out(3, 5) += Vxx(3, 1) * kp.A(1, 5);
+        out(4, 5) += Vxx(4, 1) * kp.A(1, 5);
+        out(5, 5) += Vxx(5, 1) * kp.A(1, 5);
+        // A(2,5) contributes
+        out(0, 5) += Vxx(0, 2) * kp.A(2, 5);
+        out(1, 5) += Vxx(1, 2) * kp.A(2, 5);
+        out(2, 5) += Vxx(2, 2) * kp.A(2, 5);
+        out(3, 5) += Vxx(3, 2) * kp.A(2, 5);
+        out(4, 5) += Vxx(4, 2) * kp.A(2, 5);
+        out(5, 5) += Vxx(5, 2) * kp.A(2, 5);
+        // A(4,5) contributes
+        out(0, 5) += Vxx(0, 4) * kp.A(4, 5);
+        out(1, 5) += Vxx(1, 4) * kp.A(4, 5);
+        out(2, 5) += Vxx(2, 4) * kp.A(4, 5);
+        out(3, 5) += Vxx(3, 4) * kp.A(4, 5);
+        out(4, 5) += Vxx(4, 4) * kp.A(4, 5);
+        out(5, 5) += Vxx(5, 4) * kp.A(4, 5);
+        // A(5,5) contributes
+        out(0, 5) += Vxx(0, 5) * kp.A(5, 5);
+        out(1, 5) += Vxx(1, 5) * kp.A(5, 5);
+        out(2, 5) += Vxx(2, 5) * kp.A(5, 5);
+        out(3, 5) += Vxx(3, 5) * kp.A(5, 5);
+        out(4, 5) += Vxx(4, 5) * kp.A(5, 5);
+        out(5, 5) += Vxx(5, 5) * kp.A(5, 5);
+
+    }
+    // Computes: out = Vxx * B
+    template<typename T>
+    static void mult_Vxx_B(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NU>& out) {
+        out.setZero();
+        // B(0,0) contributes
+        out(0, 0) += Vxx(0, 0) * kp.B(0, 0);
+        out(1, 0) += Vxx(1, 0) * kp.B(0, 0);
+        out(2, 0) += Vxx(2, 0) * kp.B(0, 0);
+        out(3, 0) += Vxx(3, 0) * kp.B(0, 0);
+        out(4, 0) += Vxx(4, 0) * kp.B(0, 0);
+        out(5, 0) += Vxx(5, 0) * kp.B(0, 0);
+        // B(1,0) contributes
+        out(0, 0) += Vxx(0, 1) * kp.B(1, 0);
+        out(1, 0) += Vxx(1, 1) * kp.B(1, 0);
+        out(2, 0) += Vxx(2, 1) * kp.B(1, 0);
+        out(3, 0) += Vxx(3, 1) * kp.B(1, 0);
+        out(4, 0) += Vxx(4, 1) * kp.B(1, 0);
+        out(5, 0) += Vxx(5, 1) * kp.B(1, 0);
+        // B(2,0) contributes
+        out(0, 0) += Vxx(0, 2) * kp.B(2, 0);
+        out(1, 0) += Vxx(1, 2) * kp.B(2, 0);
+        out(2, 0) += Vxx(2, 2) * kp.B(2, 0);
+        out(3, 0) += Vxx(3, 2) * kp.B(2, 0);
+        out(4, 0) += Vxx(4, 2) * kp.B(2, 0);
+        out(5, 0) += Vxx(5, 2) * kp.B(2, 0);
+        // B(3,0) contributes
+        out(0, 0) += Vxx(0, 3) * kp.B(3, 0);
+        out(1, 0) += Vxx(1, 3) * kp.B(3, 0);
+        out(2, 0) += Vxx(2, 3) * kp.B(3, 0);
+        out(3, 0) += Vxx(3, 3) * kp.B(3, 0);
+        out(4, 0) += Vxx(4, 3) * kp.B(3, 0);
+        out(5, 0) += Vxx(5, 3) * kp.B(3, 0);
+        // B(0,1) contributes
+        out(0, 1) += Vxx(0, 0) * kp.B(0, 1);
+        out(1, 1) += Vxx(1, 0) * kp.B(0, 1);
+        out(2, 1) += Vxx(2, 0) * kp.B(0, 1);
+        out(3, 1) += Vxx(3, 0) * kp.B(0, 1);
+        out(4, 1) += Vxx(4, 0) * kp.B(0, 1);
+        out(5, 1) += Vxx(5, 0) * kp.B(0, 1);
+        // B(1,1) contributes
+        out(0, 1) += Vxx(0, 1) * kp.B(1, 1);
+        out(1, 1) += Vxx(1, 1) * kp.B(1, 1);
+        out(2, 1) += Vxx(2, 1) * kp.B(1, 1);
+        out(3, 1) += Vxx(3, 1) * kp.B(1, 1);
+        out(4, 1) += Vxx(4, 1) * kp.B(1, 1);
+        out(5, 1) += Vxx(5, 1) * kp.B(1, 1);
+        // B(2,1) contributes
+        out(0, 1) += Vxx(0, 2) * kp.B(2, 1);
+        out(1, 1) += Vxx(1, 2) * kp.B(2, 1);
+        out(2, 1) += Vxx(2, 2) * kp.B(2, 1);
+        out(3, 1) += Vxx(3, 2) * kp.B(2, 1);
+        out(4, 1) += Vxx(4, 2) * kp.B(2, 1);
+        out(5, 1) += Vxx(5, 2) * kp.B(2, 1);
+        // B(4,1) contributes
+        out(0, 1) += Vxx(0, 4) * kp.B(4, 1);
+        out(1, 1) += Vxx(1, 4) * kp.B(4, 1);
+        out(2, 1) += Vxx(2, 4) * kp.B(4, 1);
+        out(3, 1) += Vxx(3, 4) * kp.B(4, 1);
+        out(4, 1) += Vxx(4, 4) * kp.B(4, 1);
+        out(5, 1) += Vxx(5, 4) * kp.B(4, 1);
+        // B(5,1) contributes
+        out(0, 1) += Vxx(0, 5) * kp.B(5, 1);
+        out(1, 1) += Vxx(1, 5) * kp.B(5, 1);
+        out(2, 1) += Vxx(2, 5) * kp.B(5, 1);
+        out(3, 1) += Vxx(3, 5) * kp.B(5, 1);
+        out(4, 1) += Vxx(4, 5) * kp.B(5, 1);
+        out(5, 1) += Vxx(5, 5) * kp.B(5, 1);
+
     }
 };
 }

@@ -242,7 +242,7 @@ class OptimalControlModel:
                     else:
                         val = mat[r, c]
                     
-                    if val == 0:
+                    if sp.sympify(val).is_zero is True:
                         code += f"        kp.{name}({r},{c}) = 0;\n"
                     else:
                         code += f"        kp.{name}({r},{c}) = {sp.ccode(val)};\n"
@@ -309,6 +309,35 @@ class OptimalControlModel:
                     code += f"        T {xp_sym} = {sp.ccode(val_expr)};\n"
         return code
 
+    def _generate_sparse_matmul(self, mat_symbol, non_zeros, input_name, output_name, R, C, common_dim):
+        """
+        Generates C++ code for: output = input * mat
+        Exploits sparsity of mat (defined by non_zeros set).
+        input: (common_dim x R)
+        mat:   (R x C)
+        output:(common_dim x C)
+        """
+        code = f"        {output_name}.setZero();\n"
+        
+        # Iterate over columns of the Right Matrix (Mat)
+        for c in range(C):
+            # Iterate over rows of the Right Matrix (Mat)
+            for r in range(R):
+                if (r, c) in non_zeros:
+                    code += f"        // {mat_symbol}({r},{c}) contributes\n"
+                    
+                    # Fully unroll the inner loop (over rows of Input)
+                    # For Riccati, common_dim is NX. 
+                    # If NX <= 12, unrolling is safe and fast.
+                    if common_dim <= 12:
+                        for i in range(common_dim):
+                            code += f"        {output_name}({i}, {c}) += {input_name}({i}, {r}) * kp.{mat_symbol}({r}, {c});\n"
+                    else:
+                         code += f"        for(int i=0; i<{common_dim}; ++i) {{\n"
+                         code += f"            {output_name}(i, {c}) += {input_name}(i, {r}) * kp.{mat_symbol}({r}, {c});\n"
+                         code += f"        }}\n"
+        return code
+
     def generate(self, output_dir="include/model"):
         # 1. Vectorize
         x_vec = sp.Matrix(self.states)
@@ -371,12 +400,26 @@ class OptimalControlModel:
             (['RK4_EXPLICIT', 'RK4_IMPLICIT'], integrators['RK4_EXPLICIT'])
         ]
         
+        # Track sparsity union across all integrators
+        non_zeros_A = set()
+        non_zeros_B = set()
+        
         for labels, x_next_expr in groups:
             print(f"Generating derivatives for {labels}...")
             
             A_expr = x_next_expr.jacobian(x_vec)
             B_expr = x_next_expr.jacobian(u_vec)
         
+            # Analyze sparsity
+            for r in range(nx):
+                for c in range(nx):
+                    if sp.sympify(A_expr[r, c]).is_zero is not True: 
+                        non_zeros_A.add((r, c))
+            for r in range(nx):
+                for c in range(nu):
+                    if sp.sympify(B_expr[r, c]).is_zero is not True: 
+                        non_zeros_B.add((r, c))
+            
             # CSE
             repl_dyn, reduced_dyn = sp.cse([x_next_expr, A_expr, B_expr], symbols=sp.numbered_symbols("tmp_d"))
             
@@ -399,23 +442,25 @@ class OptimalControlModel:
             
             # A
             if nx > 0:
+                code_compute_dyn_body += f"                kp.A.setZero();\n"
                 mat = reduced_dyn[1]
                 for r in range(nx):
                     for c in range(nx):
                         val = mat[r,c]
-                        if val == 0:
-                             code_compute_dyn_body += f"                kp.A({r},{c}) = 0;\n"
+                        if sp.sympify(val).is_zero is True:
+                             pass # Already zero
                         else:
                              code_compute_dyn_body += f"                kp.A({r},{c}) = {sp.ccode(val)};\n"
             
             # B
             if nx > 0 and nu > 0:
+                code_compute_dyn_body += f"                kp.B.setZero();\n"
                 mat = reduced_dyn[2]
                 for r in range(nx):
                     for c in range(nu):
                         val = mat[r,c]
-                        if val == 0:
-                             code_compute_dyn_body += f"                kp.B({r},{c}) = 0;\n"
+                        if sp.sympify(val).is_zero is True:
+                             pass # Already zero
                         else:
                              code_compute_dyn_body += f"                kp.B({r},{c}) = {sp.ccode(val)};\n"
 
@@ -481,6 +526,11 @@ class OptimalControlModel:
         
         # 5. Code Construction
         
+        # Generate Sparse Kernels
+        print("Generating sparse matrix multiplication kernels...")
+        code_sparse_A = self._generate_sparse_matmul("A", non_zeros_A, "Vxx", "out", nx, nx, nx)
+        code_sparse_B = self._generate_sparse_matmul("B", non_zeros_B, "Vxx", "out", nx, nu, nx)
+        
         # Constants
         code_constants = f"static const int NX={nx};\n    static const int NU={nu};\n    static const int NC={nc};\n    static const int NP={np_param};"
         
@@ -514,26 +564,22 @@ class OptimalControlModel:
         code_names += "    };\n"
 
         # Continuous Dynamics Body
-        code_dyn_cont = "#pragma GCC diagnostic push\n"
-        code_dyn_cont += "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+        code_dyn_cont = ""
         code_dyn_cont += self._generate_unpack_block(source_kp=False, expressions=f_cont)
         code_dyn_cont += "\n        MSVec<T, NX> xdot;\n"
         for i in range(nx):
             code_dyn_cont += f"        xdot({i}) = {sp.ccode(f_cont[i])};\n"
         code_dyn_cont += "        return xdot;\n"
-        code_dyn_cont += "#pragma GCC diagnostic pop"
 
         # Compute Dynamics Body
         # Note: Discrete dynamics depends on f_cont logic (and thus same symbols), 
         # plus potentially x itself (x_next = x + ...).
         # We pass f_cont and x_vec to be safe.
         dyn_exprs = [f_cont, x_vec]
-        code_compute_dyn = "#pragma GCC diagnostic push\n"
-        code_compute_dyn += "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+        code_compute_dyn = ""
         code_compute_dyn += self._generate_unpack_block(source_kp=True, expressions=dyn_exprs)
         code_compute_dyn += "\n"
         code_compute_dyn += code_compute_dyn_body
-        code_compute_dyn += "\n#pragma GCC diagnostic pop"
 
         # Compute Constraints Body
         # Constraints depend on g_vec. 
@@ -544,8 +590,7 @@ class OptimalControlModel:
              con_exprs.append(info['Q']) # Q might be symbolic?
              # c and rhs might be symbolic
         
-        code_compute_con = "#pragma GCC diagnostic push\n"
-        code_compute_con += "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+        code_compute_con = ""
         code_compute_con += self._generate_unpack_block(source_kp=True, expressions=con_exprs)
         code_compute_con += self._generate_special_constraint_preamble()
         code_compute_con += "\n"
@@ -553,7 +598,6 @@ class OptimalControlModel:
             code_compute_con += f"        T {name} = {sp.ccode(val)};\n"
         assign_con = [("g_val", 0, nc, 1), ("C", 1, nc, nx), ("D", 2, nc, nu)]
         code_compute_con += self._generate_assign_block(assign_con, reduced_con)
-        code_compute_con += "#pragma GCC diagnostic pop"
 
         # Compute Cost Body
         # Template param: 0 = Exact (with Con Hessian), 1 = GN (without Con Hessian)
@@ -564,8 +608,6 @@ class OptimalControlModel:
         
         code_cost_impl = "template<typename T, int Mode>\n"
         code_cost_impl += "    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
-        code_cost_impl += "#pragma GCC diagnostic push\n"
-        code_cost_impl += "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
         
         # Determine symbols used in Cost + Constraint Hessians
         # We must use the *derivative* expressions, because parameters used only in linear terms
@@ -644,7 +686,6 @@ class OptimalControlModel:
             code_assign += f"\n        kp.cost = {sp.ccode(reduced_cost[8])};\n"
             
         code_cost_impl += code_unpack + code_cse + code_assign
-        code_cost_impl += "#pragma GCC diagnostic pop\n"
         code_cost_impl += "    }\n\n"
         
         # Wrappers
@@ -692,6 +733,8 @@ class OptimalControlModel:
         content = content.replace("{{COMPUTE_DYNAMICS_BODY}}", code_compute_dyn)
         content = content.replace("{{COMPUTE_CONSTRAINTS_BODY}}", code_compute_con)
         content = content.replace("{{COMPUTE_COST_SECTION}}", code_compute_cost)
+        content = content.replace("{{SPARSE_MULT_VXX_A_BODY}}", code_sparse_A)
+        content = content.replace("{{SPARSE_MULT_VXX_B_BODY}}", code_sparse_B)
 
         # 7. Write Output
         file_name = "car_model.h" 

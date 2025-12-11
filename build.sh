@@ -39,7 +39,7 @@ fi
 echo -e "${GREEN}>> [3/5] Generating model code...${NC}"
 export PYTHONPATH=$PYTHONPATH:$(pwd)/python
 python3 examples/01_car_tutorial/generate_model.py
-python3 examples/02_advanced_bicycle/generate.py
+python3 examples/02_advanced_bicycle/generate_advanced_model.py
 
 # ==========================================
 # 4. Configure & Build

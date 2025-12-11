@@ -22,7 +22,7 @@ struct {{MODEL_NAME}} {
         const MSVec<T, NU>& u_in,
         const MSVec<T, NP>& p_in) 
     {
-        {{DYNAMICS_CONTINUOUS_BODY}}
+{{DYNAMICS_CONTINUOUS_BODY}}
     }
 
     // --- Integrator Interface ---
@@ -80,13 +80,13 @@ struct {{MODEL_NAME}} {
     // --- 1. Compute Dynamics (f_resid, A, B) ---
     template<typename T>
     static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        {{COMPUTE_DYNAMICS_BODY}}
+{{COMPUTE_DYNAMICS_BODY}}
     }
 
     // --- 2. Compute Constraints (g_val, C, D) ---
     template<typename T>
     static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
-        {{COMPUTE_CONSTRAINTS_BODY}}
+{{COMPUTE_CONSTRAINTS_BODY}}
     }
 
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
@@ -105,6 +105,19 @@ struct {{MODEL_NAME}} {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost_exact(kp); // Exact Hessian
+    }
+
+    // --- 5. Sparse Kernels (Generated) ---
+    // Computes: out = Vxx * A
+    // Exploits sparsity of A defined at compile time.
+    template<typename T>
+    static void mult_Vxx_A(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NX>& out) {
+{{SPARSE_MULT_VXX_A_BODY}}
+    }
+    // Computes: out = Vxx * B
+    template<typename T>
+    static void mult_Vxx_B(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NU>& out) {
+{{SPARSE_MULT_VXX_B_BODY}}
     }
 };
 }

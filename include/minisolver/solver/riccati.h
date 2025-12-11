@@ -9,6 +9,16 @@
 
 namespace minisolver {
 
+namespace internal {
+    // SFINAE Helper: Detect if Model has mult_Vxx_A<double> static method
+    template <typename T, typename = void>
+    struct has_sparse_kernels : std::false_type {};
+
+    // Specialization: if we can take the address of the function, it exists
+    template <typename T>
+    struct has_sparse_kernels<T, std::void_t<decltype(&T::template mult_Vxx_A<double>)>> : std::true_type {};
+}
+
     template<typename Knot, typename ModelType>
     void compute_kkt_residual(Knot& kp, double mu, const minisolver::SolverConfig& config,
                               MSVec<double, Knot::NX>& r_Lx,
@@ -265,10 +275,20 @@ namespace minisolver {
             auto& kp = traj[k];
 
             MSMat<double, Knot::NX, Knot::NX> VxxA;
-            VxxA.noalias() = Vxx * kp.A;
+            // [COMPATIBILITY FIX] 
+            // Compile-time detection: use sparse kernel if available, otherwise fallback to dense multiply
+            if constexpr (internal::has_sparse_kernels<ModelType>::value) {
+                ModelType::mult_Vxx_A(Vxx, kp, VxxA);
+            } else {
+                VxxA.noalias() = Vxx * kp.A;
+            }
             
             MSMat<double, Knot::NX, Knot::NU> VxxB;
-            VxxB.noalias() = Vxx * kp.B; 
+            if constexpr (internal::has_sparse_kernels<ModelType>::value) {
+                ModelType::mult_Vxx_B(Vxx, kp, VxxB);
+            } else {
+                VxxB.noalias() = Vxx * kp.B; 
+            } 
 
             if (config.enable_defect_correction) {
                 // For SOC, defect should likely be based on soc_kp values?
