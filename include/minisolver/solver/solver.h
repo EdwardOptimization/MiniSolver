@@ -604,7 +604,7 @@ public:
                      double w = 0.0;
                      int type = 0;
                      if constexpr (NC > 0) {
-                         if (i < Model::constraint_types.size()) {
+                         if (static_cast<size_t>(i) < Model::constraint_types.size()) {
                             type = Model::constraint_types[i];
                             w = Model::constraint_weights[i];
                          }
@@ -842,7 +842,7 @@ public:
         // If IR is enabled, we backup the current active trajectory (linearized system)
         // to the candidate buffer. This allows us to access the original matrices (Q, R, A, B...)
         // during the refinement step, even after the Riccati solver overwrites them in 'active'.
-        bool do_refinement = config.enable_iterative_refinement && (current_iter % config.max_refinement_steps == 0); // Example trigger
+        // bool do_refinement = config.enable_iterative_refinement && (current_iter % config.max_refinement_steps == 0); // Example trigger
         if (config.enable_iterative_refinement) {
              trajectory.prepare_candidate();
              auto& backup = trajectory.candidate();
@@ -1121,7 +1121,7 @@ private:
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
-                     if (i < Model::constraint_types.size()) {
+                     if (static_cast<size_t>(i) < Model::constraint_types.size()) {
                         type = Model::constraint_types[i];
                         w = Model::constraint_weights[i];
                      }

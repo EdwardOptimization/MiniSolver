@@ -77,7 +77,7 @@ public:
 
     // Iterative Refinement Implementation
     // High-precision mode to recover from regularization errors and linearization artifacts.
-    bool refine(TrajArray& traj, const TrajArray& original_system, int N, double mu, double reg, const SolverConfig& config) override {
+    bool refine(TrajArray& traj, const TrajArray& original_system, int N, double /*mu*/, double /*reg*/, const SolverConfig& config) override {
         if (!config.enable_iterative_refinement) return true;
         
         // [FIX] Implemented Linear Rollout Refinement (Defect Correction)

@@ -53,7 +53,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
             const auto& kp = t[k];
             total_merit += kp.cost; 
             
-            // Barrier
+            // Barrier & Soft Constraint Penalty Calculation
             for(int i=0; i<NC; ++i) {
                 if(kp.s(i) > config.min_barrier_slack) 
                     total_merit -= mu * std::log(kp.s(i));
@@ -64,15 +64,15 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
-                     if (i < Model::constraint_types.size()) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
                         type = Model::constraint_types[i];
                         w = Model::constraint_weights[i];
-                     }
+                    }
                 }
-                // For L1, cost += w * s_soft (in kp.cost via objective function? No, in soft slack setup).
-                // In extended KKT, s_soft is explicit.
-                // We need to add barrier for s_soft >= 0 and w-lam >= 0.
+
+                // L1 Soft Constraint: Dual Barrier + Linear Penalty
                 if (type == 1 && w > 1e-6) {
+                    // 1. Barrier terms
                     if (kp.soft_s(i) > config.min_barrier_slack)
                         total_merit -= mu * std::log(kp.soft_s(i));
                     else
@@ -82,6 +82,16 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                         total_merit -= mu * std::log(w - kp.lam(i));
                     else 
                         total_merit += config.barrier_inf_cost;
+                    
+                    // 2. L1 Linear Penalty
+                    total_merit += w * kp.soft_s(i); 
+                }
+                
+                // L2 Soft Constraint: Quadratic Penalty
+                else if (type == 2 && w > 1e-6) {
+                    // L2 Quadratic Penalty: 0.5 * w * (g + s)^2
+                    double viol = kp.g_val(i) + kp.s(i);
+                    total_merit += 0.5 * w * viol * viol;
                 }
             }
             
@@ -90,7 +100,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
-                     if (i < Model::constraint_types.size()) {
+                     if (static_cast<size_t>(i) < Model::constraint_types.size()) {
                         type = Model::constraint_types[i];
                         w = Model::constraint_weights[i];
                      }
@@ -125,9 +135,9 @@ public:
     }
 
     double search(TrajectoryType& trajectory, 
-                  LinearSolver<TrajArray>& linear_solver,
+                  LinearSolver<TrajArray>& /*linear_solver*/,
                   const std::array<double, MAX_N>& dt_traj,
-                  double mu, double reg,
+                  double mu, double /*reg*/,
                   const SolverConfig& config) override 
     {
         int N = trajectory.N;
@@ -228,7 +238,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         for(int k=0; k<=N; ++k) {
             const auto& kp = t[k];
             
-            // Objective (Phi)
+            // Objective (Phi) Calculation
             phi += kp.cost;
             for(int i=0; i<NC; ++i) {
                 if(kp.s(i) > config.min_barrier_slack) phi -= mu * std::log(kp.s(i));
@@ -238,12 +248,15 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
-                     if (i < Model::constraint_types.size()) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
                         type = Model::constraint_types[i];
                         w = Model::constraint_weights[i];
-                     }
+                    }
                 }
+
+                // L1 Soft Constraint
                 if (type == 1 && w > 1e-6) {
+                    // Barrier terms
                     if (kp.soft_s(i) > config.min_barrier_slack)
                         phi -= mu * std::log(kp.soft_s(i));
                     else
@@ -253,6 +266,16 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                         phi -= mu * std::log(w - kp.lam(i));
                     else 
                         phi += config.barrier_inf_cost;
+
+                    // L1 Linear Penalty
+                    phi += w * kp.soft_s(i);
+                }
+                
+                // L2 Soft Constraint
+                else if (type == 2 && w > 1e-6) {
+                    // L2 Quadratic Penalty: 0.5 * w * (g + s)^2
+                    double viol = kp.g_val(i) + kp.s(i);
+                    phi += 0.5 * w * viol * viol;
                 }
             }
             
@@ -262,10 +285,10 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
-                     if (i < Model::constraint_types.size()) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
                         type = Model::constraint_types[i];
                         w = Model::constraint_weights[i];
-                     }
+                    }
                 }
                 
                 if (type == 1 && w > 1e-6) {

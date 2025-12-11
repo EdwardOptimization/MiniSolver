@@ -39,7 +39,7 @@ double fraction_to_boundary_rule(const TrajVector& traj, int N, double tau = 0.9
             double w = 0.0;
             int type = 0;
             if constexpr (NC > 0) {
-                 if (i < ModelType::constraint_types.size()) {
+                 if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
                     type = ModelType::constraint_types[i];
                     w = ModelType::constraint_weights[i];
                 }

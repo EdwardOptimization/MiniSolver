@@ -1,41 +1,59 @@
 #!/bin/bash
-set -e
+set -e # Stop immediately on error
 
-# 1. Generate Models using Python
-echo ">> [1/5] Generating Models..."
-export PYTHONPATH=$PYTHONPATH:$(pwd)/python
+# Color definitions
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
 
-echo "   - Generating Car Model..."
-python3 examples/01_car_tutorial/generate_model.py
+echo -e "${GREEN}>> [MiniSolver] One-click build started...${NC}"
 
-echo "   - Generating Bicycle Model..."
-python3 examples/02_advanced_bicycle/generate.py
+# ==========================================
+# 1. Simple Environment Check
+# ==========================================
+echo -e "${GREEN}>> [1/5] Checking system tools...${NC}"
 
-# 2. Configure CMake
-echo ">> [2/5] Configuring CMake..."
-rm -rf build
-mkdir -p build
-cd build
-cmake ..
-
-# 3. Build Project
-echo ">> [3/5] Building Project..."
-make -j4
-
-# 4. Run Benchmark Suite
-echo ">> [4/5] Running Benchmark Suite..."
-if [ -f "tools/benchmark_suite" ]; then
-    ./tools/benchmark_suite
-elif [ -f "benchmark_suite" ]; then
-    ./benchmark_suite
-else
-    # Fallback search
-    find . -name benchmark_suite -exec {} \;
+if ! command -v cmake &> /dev/null; then
+    echo -e "${RED}Error: cmake not found.${NC}"
+    exit 1
+fi
+if ! command -v g++ &> /dev/null; then
+    echo -e "${RED}Error: g++ not found.${NC}"
+    exit 1
 fi
 
+# ==========================================
+# 2. Python Dependencies (SymPy)
+# ==========================================
+echo -e "${GREEN}>> [2/5] Checking Python dependencies (SymPy)...${NC}"
+
+if ! python3 -c "import sympy" &> /dev/null; then
+    echo -e "${GREEN}>> SymPy not found, installing...${NC}"
+    pip3 install --user sympy || { echo -e "${RED}Installation failed, please run: pip3 install sympy${NC}"; exit 1; }
+fi
+
+# ==========================================
+# 3. Generate Code
+# ==========================================
+echo -e "${GREEN}>> [3/5] Generating model code...${NC}"
+export PYTHONPATH=$PYTHONPATH:$(pwd)/python
+python3 examples/01_car_tutorial/generate_model.py
+python3 examples/02_advanced_bicycle/generate.py
+
+# ==========================================
+# 4. Configure & Build
+# ==========================================
+echo -e "${GREEN}>> [4/5] CMake configuration and compilation...${NC}"
+rm -rf build && mkdir build && cd build
+cmake ..
+# Use nproc (Linux) or sysctl (Mac) to determine core count, default to 4
+make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+
+# ==========================================
 # 5. Run Tests
-echo ">> [5/5] Running Unit Tests..."
+# ==========================================
+echo -e "${GREEN}>> [5/5] Running tests...${NC}"
 ctest --output-on-failure
 
-echo ">> BUILD & TEST COMPLETE."
-
+echo -e "${GREEN}>> Build successful!${NC}"

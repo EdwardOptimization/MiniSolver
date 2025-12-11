@@ -15,8 +15,8 @@ public:
                       const SolverConfig& config, const TrajArray* affine_traj = nullptr) = 0;
                       
     // Overload for SOC (Second Order Correction)
-    virtual bool solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N, double mu, double reg, InertiaStrategy strategy,
-                          const SolverConfig& config) {
+    virtual bool solve_soc(TrajArray& /*traj*/, const TrajArray& /*soc_rhs_traj*/, int /*N*/, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+                          const SolverConfig& /*config*/) {
         return false;
     }
 
@@ -24,7 +24,7 @@ public:
     // Solves K * dx_corr = r - K * dx
     // Uses the existing factorization (if available/stored) or re-solves.
     // For Riccati, we use the original_system (candidate buffer) to re-run the solve on residuals.
-    virtual bool refine(TrajArray& traj, const TrajArray& original_system, int N, double mu, double reg, const SolverConfig& config) {
+    virtual bool refine(TrajArray& /*traj*/, const TrajArray& /*original_system*/, int /*N*/, double /*mu*/, double /*reg*/, const SolverConfig& /*config*/) {
         return false; 
     }
 };

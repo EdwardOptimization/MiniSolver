@@ -61,7 +61,7 @@ namespace minisolver {
             double w = 0.0;
             int type = 0;
             if constexpr (Knot::NC > 0) {
-                 if (i < ModelType::constraint_types.size()) {
+                 if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
                     type = ModelType::constraint_types[i];
                     w = ModelType::constraint_weights[i];
                  }
@@ -89,7 +89,6 @@ namespace minisolver {
             
             // Primal residual base
             double g_val_i = (soc_kp) ? soc_kp->g_val(i) : kp.g_val(i);
-            double effective_r_prim = 0.0;
             
             if (type == 1 && w > 1e-6) {
                 double soft_s_i = kp.soft_s(i); 
@@ -165,7 +164,7 @@ namespace minisolver {
             double w = 0.0;
             int type = 0;
             if constexpr (Knot::NC > 0) {
-                 if (i < ModelType::constraint_types.size()) {
+                 if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
                     type = ModelType::constraint_types[i];
                     w = ModelType::constraint_weights[i];
                  }
