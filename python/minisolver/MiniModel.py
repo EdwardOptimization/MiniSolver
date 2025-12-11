@@ -170,25 +170,63 @@ class OptimalControlModel:
             else:
                 self.constraints.append(rhs - quad_term)
 
-    def _generate_unpack_block(self, source_kp=True):
+    def _generate_unpack_block(self, source_kp=True, expressions=None):
         code = ""
+        
+        # Determine used symbols
+        used = None
+        if expressions is not None:
+            used = set()
+            # Handle single expression or list/matrix
+            if isinstance(expressions, (list, tuple)):
+                for expr in expressions:
+                    if hasattr(expr, 'free_symbols'):
+                        used.update(expr.free_symbols)
+            elif hasattr(expressions, 'free_symbols'):
+                used.update(expressions.free_symbols)
+            
+        # Helper to check if we should unpack
+        def is_used(sym):
+            if used is None: return True
+            return sym in used
+
         # Unpack State/Control/Params
         if source_kp:
             for i, s in enumerate(self.states):
-                code += f"        T {s} = kp.x({i});\n"
+                if is_used(s):
+                    code += f"        T {s} = kp.x({i});\n"
             for i, u in enumerate(self.controls):
-                code += f"        T {u} = kp.u({i});\n"
+                if is_used(u):
+                    code += f"        T {u} = kp.u({i});\n"
             for i, p in enumerate(self.parameters):
-                code += f"        T {p} = kp.p({i});\n"
+                if is_used(p):
+                    code += f"        T {p} = kp.p({i});\n"
         else:
             # Source from function args x_in, u_in (and p_in)
+            unpacked_x = False
             for i, s in enumerate(self.states):
-                code += f"        T {s} = x_in({i});\n"
+                if is_used(s):
+                    code += f"        T {s} = x_in({i});\n"
+                    unpacked_x = True
+            if not unpacked_x:
+                code += "        (void)x_in;\n"
+
+            unpacked_u = False
             for i, u in enumerate(self.controls):
-                code += f"        T {u} = u_in({i});\n"
+                if is_used(u):
+                    code += f"        T {u} = u_in({i});\n"
+                    unpacked_u = True
+            if not unpacked_u:
+                code += "        (void)u_in;\n"
+
             # Add parameter unpacking for continuous dynamics
+            unpacked_p = False
             for i, p in enumerate(self.parameters):
-                code += f"        T {p} = p_in({i});\n"
+                if is_used(p):
+                    code += f"        T {p} = p_in({i});\n"
+                    unpacked_p = True
+            if not unpacked_p:
+                code += "        (void)p_in;\n"
         return code
 
     def _generate_assign_block(self, assignments, reduced):
@@ -476,25 +514,46 @@ class OptimalControlModel:
         code_names += "    };\n"
 
         # Continuous Dynamics Body
-        code_dyn_cont = self._generate_unpack_block(source_kp=False)
+        code_dyn_cont = "#pragma GCC diagnostic push\n"
+        code_dyn_cont += "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+        code_dyn_cont += self._generate_unpack_block(source_kp=False, expressions=f_cont)
         code_dyn_cont += "\n        MSVec<T, NX> xdot;\n"
         for i in range(nx):
             code_dyn_cont += f"        xdot({i}) = {sp.ccode(f_cont[i])};\n"
-        code_dyn_cont += "        return xdot;"
+        code_dyn_cont += "        return xdot;\n"
+        code_dyn_cont += "#pragma GCC diagnostic pop"
 
         # Compute Dynamics Body
-        code_compute_dyn = self._generate_unpack_block(source_kp=True)
+        # Note: Discrete dynamics depends on f_cont logic (and thus same symbols), 
+        # plus potentially x itself (x_next = x + ...).
+        # We pass f_cont and x_vec to be safe.
+        dyn_exprs = [f_cont, x_vec]
+        code_compute_dyn = "#pragma GCC diagnostic push\n"
+        code_compute_dyn += "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+        code_compute_dyn += self._generate_unpack_block(source_kp=True, expressions=dyn_exprs)
         code_compute_dyn += "\n"
         code_compute_dyn += code_compute_dyn_body
+        code_compute_dyn += "\n#pragma GCC diagnostic pop"
 
         # Compute Constraints Body
-        code_compute_con = self._generate_unpack_block(source_kp=True)
+        # Constraints depend on g_vec. 
+        # Special constraints might use x directly (e.g. quad boundary).
+        con_exprs = [g_vec]
+        for info in self.special_constraints:
+             con_exprs.append(info['x'])
+             con_exprs.append(info['Q']) # Q might be symbolic?
+             # c and rhs might be symbolic
+        
+        code_compute_con = "#pragma GCC diagnostic push\n"
+        code_compute_con += "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+        code_compute_con += self._generate_unpack_block(source_kp=True, expressions=con_exprs)
         code_compute_con += self._generate_special_constraint_preamble()
         code_compute_con += "\n"
         for name, val in repl_con:
             code_compute_con += f"        T {name} = {sp.ccode(val)};\n"
         assign_con = [("g_val", 0, nc, 1), ("C", 1, nc, nx), ("D", 2, nc, nu)]
         code_compute_con += self._generate_assign_block(assign_con, reduced_con)
+        code_compute_con += "#pragma GCC diagnostic pop"
 
         # Compute Cost Body
         # Template param: 0 = Exact (with Con Hessian), 1 = GN (without Con Hessian)
@@ -505,10 +564,37 @@ class OptimalControlModel:
         
         code_cost_impl = "template<typename T, int Mode>\n"
         code_cost_impl += "    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
-        code_unpack = self._generate_unpack_block(source_kp=True)
+        code_cost_impl += "#pragma GCC diagnostic push\n"
+        code_cost_impl += "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+        
+        # Determine symbols used in Cost + Constraint Hessians
+        # We must use the *derivative* expressions, because parameters used only in linear terms
+        # of the cost/constraints will disappear from the derivatives (gradients/Hessians),
+        # but would still be flagged as "used" if we checked the primal expressions.
+        cost_exprs = [q_grad, r_grad, Q_hess_obj, R_hess_obj, H_hess_obj, Q_hess_con, R_hess_con, H_hess_con, self.objective]
+        
+        code_unpack = self._generate_unpack_block(source_kp=True, expressions=cost_exprs)
         if nc > 0:
+            # Check if lambdas are used in the Constraint Hessian expressions
+            # H_con = sum(lam_i * H_g_i)
+            # We can check if lam_i is in free_symbols of Q_hess_con, R_hess_con, H_hess_con
+            
+            # Combine all Hessian expressions for check
+            hess_exprs = [Q_hess_con, R_hess_con, H_hess_con]
+            used_syms = set()
+            for expr in hess_exprs:
+                if hasattr(expr, 'free_symbols'):
+                    used_syms.update(expr.free_symbols)
+            
             for i in range(nc):
-                code_unpack += f"        T lam_{i} = kp.lam({i});\n"
+                # We need to construct the symbol matching what sympy used
+                # In step 3.5, we defined: lam_sym = [sp.symbols(f"lam_{i}") for i in range(nc)]
+                # We should re-create or reuse that list. 
+                # It's local to generate(). Ideally we should have stored it.
+                # Re-creating with same name works in SymPy.
+                s_lam = sp.symbols(f"lam_{i}")
+                if s_lam in used_syms:
+                    code_unpack += f"        T lam_{i} = kp.lam({i});\n"
         
         code_cse = "\n"
         for name, val in repl_cost:
@@ -558,6 +644,7 @@ class OptimalControlModel:
             code_assign += f"\n        kp.cost = {sp.ccode(reduced_cost[8])};\n"
             
         code_cost_impl += code_unpack + code_cse + code_assign
+        code_cost_impl += "#pragma GCC diagnostic pop\n"
         code_cost_impl += "    }\n\n"
         
         # Wrappers

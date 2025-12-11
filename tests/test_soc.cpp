@@ -10,8 +10,8 @@ public:
     using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 5>::TrajArray;
     int solve_count = 0;
     
-    bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy, 
-              const SolverConfig& config, const TrajArray* affine_traj = nullptr) override {
+    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/, 
+              const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override {
         solve_count++;
         // Standard solve: produce a step that gets rejected (e.g. too aggressive)
         // dx = -10.0 (if x=10, goes to 0)
@@ -25,8 +25,8 @@ public:
         return true;
     }
     
-    bool solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N, double mu, double reg, InertiaStrategy strategy,
-                   const SolverConfig& config) override {
+    bool solve_soc(TrajArray& traj, const TrajArray& /*soc_rhs_traj*/, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+                   const SolverConfig& /*config*/) override {
         solve_count++;
         // SOC solve: produce a correction step
         // dx = 1.0 (corrects back slightly)
@@ -100,6 +100,7 @@ TEST(AdvancedFeaturesTest, SOCLogic) {
     
     // Run search
     double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    (void)alpha; // Unused variable
     
     // Expectations:
     // 1. First step (alpha=1, dx=-10 -> x=0) rejected because cost increases (0 -> 10000).

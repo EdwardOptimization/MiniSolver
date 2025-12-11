@@ -80,10 +80,11 @@ Result run_case(const BenchmarkCase& test_case) {
     const int N = 50;
     const int NUM_RUNS = 100;
     const int WARMUP = 10;
-    
     // Instantiate Solver
     MiniSolver<CarModel, 60> solver(N, Backend::CPU_SERIAL, test_case.config);
-    solver.set_dt(0.1);
+
+    setup_scenario(solver);
+    solver.rollout_dynamics(); // Initial dynamics propagation
     
     std::vector<double> times;
     times.reserve(NUM_RUNS);
@@ -92,6 +93,9 @@ Result run_case(const BenchmarkCase& test_case) {
     res.name = test_case.name;
     
     for(int i=0; i < WARMUP + NUM_RUNS; ++i) {
+        solver.reset(ResetOption::FULL);
+        solver.set_dt(0.1);
+
         setup_scenario(solver);
         solver.rollout_dynamics(); // Initial dynamics propagation
         

@@ -49,6 +49,19 @@ enum class Backend {
     GPU_PCR
 };
 
+// Reset Options
+enum class ResetOption {
+    // Resets only algorithmic state (mu, reg, iter, filter, timers).
+    // Keeps the current trajectory data (x, u, p, s, lam).
+    // Use this if you want to Cold Start a solve on the current (or manually modified) data.
+    ALG_STATE, 
+    
+    // Resets algorithmic state AND wipes trajectory data to defaults.
+    // Equivalent to destroying and creating a new MiniSolver.
+    // Use this for benchmarks or switching to a completely unrelated problem.
+    FULL
+};
+
 struct SolverConfig {
     Backend backend = Backend::CPU_SERIAL;
 

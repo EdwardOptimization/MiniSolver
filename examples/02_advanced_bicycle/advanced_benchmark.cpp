@@ -67,10 +67,11 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
     double last_cost = 0;
     double last_viol = 0;
 
-    for(int run = 0; run < WARMUP_RUNS + NUM_RUNS; ++run) {
     // Use MAX_N=120 to accommodate N=100 safely
     MiniSolver<BicycleExtModel, 120> solver(N, Backend::CPU_SERIAL, config);
-    solver.set_dt(dts);
+    for(int run = 0; run < WARMUP_RUNS + NUM_RUNS; ++run) {
+        solver.reset(ResetOption::FULL);
+        solver.set_dt(dts);
 
         double current_t = 0.0;
         for(int k=0; k<=N; ++k) {

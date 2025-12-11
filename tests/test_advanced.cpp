@@ -28,12 +28,12 @@ struct SoftModel {
     static constexpr std::array<int, NC> constraint_types = {2};
 
     template<typename T>
-    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& p, double dt, IntegratorType type) {
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/) {
         return x + u * dt; // x_next = x + u*dt
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
         kp.f_resid(0) = kp.x(0) + kp.u(0)*dt;
         kp.A(0,0) = 1.0;
         kp.B(0,0) = dt;

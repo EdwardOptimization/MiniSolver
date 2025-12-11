@@ -126,6 +126,33 @@ public:
         for (int i = 0; i < NP; ++i) param_map[Model::param_names[i]] = i;
     }
     
+    // Reset Function
+    void reset(ResetOption option = ResetOption::ALG_STATE) {
+        // 1. Reset Algorithmic Scalars
+        mu = config.mu_init;
+        reg = config.reg_init;
+        current_iter = 0;
+        last_prim_inf = 0.0;
+        last_dual_inf = 0.0;
+        slack_reset_consecutive_count = 0;
+        is_warm_started = false; // Force Cold Start next time
+        
+        // 2. Reset Components
+        if (line_search) line_search->reset();
+        timer.reset();
+        
+        // 3. Reset Trajectory Data (Optional)
+        if (option == ResetOption::FULL) {
+            trajectory.reset();
+            
+            // Reset Time Steps to default configuration
+            dt_traj.fill(config.default_dt);
+            
+            // Note: This clears parameters (p) too. 
+            // You will need to call set_parameter() and set_dt() again after a FULL reset.
+        }
+    }
+
     int get_state_idx(const std::string& name) const {
         auto it = state_map.find(name);
         if (it != state_map.end()) return it->second;
@@ -576,8 +603,13 @@ public:
         current_iter = 0;
         slack_reset_consecutive_count = 0; 
         
-        reg = config.reg_init; // [FIX] Reset regularization for fresh solve
+        reg = config.reg_init; // Reset regularization for fresh solve
         
+        // If Warm Start is not enabled, reset Barrier parameter mu
+        if (!is_warm_started) {
+            mu = config.mu_init;
+        }
+
         // --- Initialization of Slacks ---
         // Only initialize if not warm started or if data is invalid
         bool need_init = !is_warm_started;

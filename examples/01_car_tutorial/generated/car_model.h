@@ -56,25 +56,13 @@ struct CarModel {
         const MSVec<T, NU>& u_in,
         const MSVec<T, NP>& p_in) 
     {
-                T x = x_in(0);
-        T y = x_in(1);
+        #pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
         T theta = x_in(2);
         T v = x_in(3);
         T acc = u_in(0);
         T steer = u_in(1);
-        T v_ref = p_in(0);
-        T x_ref = p_in(1);
-        T y_ref = p_in(2);
-        T obs_x = p_in(3);
-        T obs_y = p_in(4);
-        T obs_rad = p_in(5);
         T L = p_in(6);
-        T car_rad = p_in(7);
-        T w_pos = p_in(8);
-        T w_vel = p_in(9);
-        T w_theta = p_in(10);
-        T w_acc = p_in(11);
-        T w_steer = p_in(12);
 
         MSVec<T, NX> xdot;
         xdot(0) = v*cos(theta);
@@ -82,6 +70,7 @@ struct CarModel {
         xdot(2) = v*tan(steer)/L;
         xdot(3) = acc;
         return xdot;
+#pragma GCC diagnostic pop
     }
 
     // --- Integrator Interface ---
@@ -139,25 +128,15 @@ struct CarModel {
     // --- 1. Compute Dynamics (f_resid, A, B) ---
     template<typename T>
     static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-                T x = kp.x(0);
+        #pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+        T x = kp.x(0);
         T y = kp.x(1);
         T theta = kp.x(2);
         T v = kp.x(3);
         T acc = kp.u(0);
         T steer = kp.u(1);
-        T v_ref = kp.p(0);
-        T x_ref = kp.p(1);
-        T y_ref = kp.p(2);
-        T obs_x = kp.p(3);
-        T obs_y = kp.p(4);
-        T obs_rad = kp.p(5);
         T L = kp.p(6);
-        T car_rad = kp.p(7);
-        T w_pos = kp.p(8);
-        T w_vel = kp.p(9);
-        T w_theta = kp.p(10);
-        T w_acc = kp.p(11);
-        T w_steer = kp.p(12);
 
         switch(type) {
             case IntegratorType::EULER_EXPLICIT:
@@ -334,30 +313,22 @@ struct CarModel {
                 break;
             }
         }
+#pragma GCC diagnostic pop
     }
 
     // --- 2. Compute Constraints (g_val, C, D) ---
     template<typename T>
     static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
-                T x = kp.x(0);
+        #pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+        T x = kp.x(0);
         T y = kp.x(1);
-        T theta = kp.x(2);
-        T v = kp.x(3);
         T acc = kp.u(0);
         T steer = kp.u(1);
-        T v_ref = kp.p(0);
-        T x_ref = kp.p(1);
-        T y_ref = kp.p(2);
         T obs_x = kp.p(3);
         T obs_y = kp.p(4);
         T obs_rad = kp.p(5);
-        T L = kp.p(6);
         T car_rad = kp.p(7);
-        T w_pos = kp.p(8);
-        T w_vel = kp.p(9);
-        T w_theta = kp.p(10);
-        T w_acc = kp.p(11);
-        T w_steer = kp.p(12);
 
         // --- Special Constraints Pre-Calculation ---
 
@@ -406,12 +377,14 @@ struct CarModel {
         kp.D(3,1) = -1;
         kp.D(4,0) = 0;
         kp.D(4,1) = 0;
-
+#pragma GCC diagnostic pop
     }
 
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
     template<typename T, int Mode>
     static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
         T x = kp.x(0);
         T y = kp.x(1);
         T theta = kp.x(2);
@@ -423,18 +396,11 @@ struct CarModel {
         T y_ref = kp.p(2);
         T obs_x = kp.p(3);
         T obs_y = kp.p(4);
-        T obs_rad = kp.p(5);
-        T L = kp.p(6);
-        T car_rad = kp.p(7);
         T w_pos = kp.p(8);
         T w_vel = kp.p(9);
         T w_theta = kp.p(10);
         T w_acc = kp.p(11);
         T w_steer = kp.p(12);
-        T lam_0 = kp.lam(0);
-        T lam_1 = kp.lam(1);
-        T lam_2 = kp.lam(2);
-        T lam_3 = kp.lam(3);
         T lam_4 = kp.lam(4);
 
         T tmp_j0 = 2*w_theta;
@@ -500,6 +466,7 @@ struct CarModel {
         kp.H(1,3) = 0;
 
         kp.cost = pow(acc, 2)*w_acc + pow(steer, 2)*w_steer + pow(theta, 2)*w_theta + w_pos*pow(x - x_ref, 2) + w_pos*pow(y - y_ref, 2) + w_vel*pow(v - v_ref, 2);
+#pragma GCC diagnostic pop
     }
 
 template<typename T>

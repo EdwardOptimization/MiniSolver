@@ -35,7 +35,7 @@ void save_trajectory_csv(const std::string& filename,
         std::vector<double> u = solver.get_control(k); // might be empty at N
         double g_obs = solver.get_constraint_val(k, 4); // Obstacle constraint
         
-        if(k > 0 && k-1 < dts.size()) current_t += dts[k-1];
+        if(k > 0 && k-1 < static_cast<int>(dts.size())) current_t += dts[k-1];
 
         // Safe access
         double u0 = (k < solver.N) ? u[0] : 0.0;
@@ -51,7 +51,7 @@ void save_trajectory_csv(const std::string& filename,
     std::cout << ">> Trajectory saved to " << filename << "\n";
 }
 
-int main(int argc, char** argv) {
+int main(int /*argc*/, char** /*argv*/) {
     int N = 50;
     Backend mode = Backend::CPU_SERIAL; 
 

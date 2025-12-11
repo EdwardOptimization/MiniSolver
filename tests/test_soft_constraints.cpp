@@ -21,14 +21,14 @@ struct SoftModel {
     static constexpr std::array<const char*, NP> param_names = {};
 
     template<typename T>
-    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& p, double dt, IntegratorType type) {
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/) {
         MSVec<T, NX> x_next;
         x_next(0) = x(0) + u(0) * dt;
         return x_next;
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
         T x = kp.x(0); T u = kp.u(0);
         kp.f_resid(0) = x + u * dt;
         kp.A(0,0) = 1.0;

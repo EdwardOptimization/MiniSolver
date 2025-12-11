@@ -5,7 +5,7 @@
 #include <string>
 #include <fstream>
 
-#include "model/bicycleextmodel.h"
+#include "generated/bicycleextmodel.h"
 #include "minisolver/solver/solver.h"
 
 using namespace minisolver;

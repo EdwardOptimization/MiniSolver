@@ -10,8 +10,8 @@ class MockLinearSolver : public LinearSolver<Trajectory<KnotPoint<double, 4, 2, 
 public:
     using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 10>::TrajArray;
     
-    bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy, 
-              const SolverConfig& config, const TrajArray* affine_traj = nullptr) override {
+    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/, 
+              const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override {
         // Mock: set dx = -0.1 * x (descent direction)
         for(int k=0; k<=N; ++k) {
             traj[k].dx = -0.1 * traj[k].x;

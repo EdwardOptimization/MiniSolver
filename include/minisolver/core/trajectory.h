@@ -86,6 +86,18 @@ public:
         traj[N].p = traj[N-1].p; // [FIX] Duplicate last parameter
     }
     
+    // Reset trajectory data to initial construction state (Zero x/u/p, Default s/lam)
+    void reset() {
+        for(auto& kp : *active_ptr) { 
+            kp.set_zero(); 
+            kp.initialize_defaults(); 
+        }
+        for(auto& kp : *candidate_ptr) { 
+            kp.set_zero(); 
+            kp.initialize_defaults(); 
+        }
+    }
+    
     int size() const { return N + 1; }
 };
 
