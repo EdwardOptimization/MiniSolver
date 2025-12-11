@@ -1,182 +1,148 @@
-# MiniSolver: High-Performance Nonlinear MPC Solver
-This project, A solvers  for nonlinear optimal control and nonlinear model predictive control.
-This project leverages AI(mainly Gemini) assistance for development with cursor, is architected and reviewed by Edward Qu.
 
-MiniSolver is a blazing fast, header-only C++17 library for solving Nonlinear Model Predictive Control (NMPC) problems. It is designed for embedded robotics applications where performance, robustness, and zero dynamic memory allocation are critical.
+
+# MiniSolver: High-Performance Embedded NMPC Library
+
+![C++17](https://img.shields.io/badge/C++-17-blue.svg)
+![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
+![Platform](https://img.shields.io/badge/Platform-Linux%20|%20macOS%20|%20Embedded-lightgrey)
+![Zero-Malloc](https://img.shields.io/badge/Memory-Zero--Malloc-brightgreen)
+
+**MiniSolver** is a professional-grade, header-only C++17 library for solving Nonlinear Model Predictive Control (NMPC) problems.
+
+Engineered specifically for **embedded robotics** and **autonomous driving**, it combines the flexibility of Python-based symbolic modeling with the raw performance of highly optimized, template-generated C++ code. It explicitly guarantees **Zero Dynamic Memory Allocation (Zero-Malloc)** during the solve phase, making it deterministic and safe for hard real-time systems.
+
+---
 
 ## 🚀 Key Features
 
-*   **⚡ Blazing Fast**: Solves a 60-step nonlinear kinematic bicycle model with obstacle avoidance in **< 2ms** on a standard CPU.
-*   **🧠 Auto-Differentiation**: Comes with a Python DSL (`MiniModel`) based on SymPy to automatically generate highly optimized, C++17 compatible model code with analytical derivatives (Jacobians/Hessians).
-*   **🛡️ Robust Algorithms**: Implements state-of-the-art Interior Point Method (IPM) techniques:
-    *   **Filter Line Search**: For global convergence without merit function tuning parameters.
-    *   **Inertia Correction**: Handles non-convexity by dynamically regularizing the Hessian.
-    *   **Feasibility Restoration**: Automatically recovers from infeasible warm starts or bad steps.
-    *   **Watchdog / Slack Reset**: Heuristic strategies to escape local minima or stuck iterations.
-*   **💾 Zero-Malloc**: Uses `std::array` and static templates (`MAX_N`) to ensure **zero dynamic memory allocation** during the solve phase, making it hard real-time safe.
-*   **🔌 Matrix Abstraction**: Built on a flexible Matrix Abstraction Layer (MAL), allowing you to swap the backend (currently Eigen3) with custom embedded math libraries.
-*   **📈 Advanced Features** (New!):
-    *   **Second Order Correction (SOC)**: Accelerates convergence for highly nonlinear problems (e.g. strict obstacle avoidance).
-    *   **Soft Constraints (L1 & L2)**: Native support for soft constraints via implicit Dual Regularization and Box Barriers, **without increasing problem dimensions**.
-    *   **SQP-RTI**: Real-Time Iteration mode for ultra-fast (>1kHz) MPC feedback loops.
-    *   **Iterative Refinement**: High-precision mode to recover from regularization errors.
-    *   **Auto-Tuner**: Built-in tool to automatically find the best solver configuration for your specific problem.
-    *   **Log & Replay**: Serialize solver states to binary files for offline debugging and regression testing.
+### ⚡ Blazing Fast Performance
+* **Riccati Recursion**: Utilizes a specialized block-tridiagonal linear solver ($O(N)$ complexity) tailored for optimal control structures.
+* **SQP-RTI Support**: Real-Time Iteration (SQP-RTI) mode allows for **>1 kHz** control loops by performing a single quadratic programming sub-step per control tick.
+* **Analytical Derivatives**: Uses SymPy to generate flattened, algebraically simplified C++ code for Jacobians and Hessians at compile-time, eliminating runtime overhead.
 
-## 📊 Benchmark
+### 🛡️ Embedded Safety & Robustness
+* **Zero-Malloc Guarantee**: All memory is allocated on the stack (or `.bss`) via `std::array` and C++ templates (`MAX_N`). No `new`/`malloc` calls occur during the `solve()` loop.
+* **Robust Interior Point Method (IPM)**:
+    * **Mehrotra Predictor-Corrector**: Drastically reduces iteration counts by utilizing higher-order corrections.
+    * **Filter Line Search**: Ensures global convergence without the tedious tuning of merit function parameters.
+    * **Feasibility Restoration**: Automatically triggers a minimum-norm recovery phase if the solver encounters infeasible warm starts.
 
-On an Intel Core i7 (Single Thread):
+### 🔧 Advanced Solver Capabilities
+* **Second Order Correction (SOC)**: Handles highly nonlinear constraints (e.g., tight obstacle avoidance) by curving the search step.
+* **Native Soft Constraints**: Supports L1 (Exact) and L2 (Quadratic) soft constraints via **Dual Regularization**, allowing for relaxation without increasing the problem dimensions (slack variables are handled implicitly).
+* **Iterative Refinement**: High-precision mode that uses full-precision residuals to correct regularization errors in the linear solver.
 
-| Metric | Time |
-| :--- | :--- |
-| **Derivatives** | ~0.2 ms |
-| **Linear Solve (Riccati)** | ~0.8 ms |
-| **Line Search** | ~0.5 ms |
-| **Total Solve (Cold Start)** | **~1.7 ms** |
+---
+
+## 📊 Performance Benchmarks
+
+Benchmarks performed on an Intel Core i7 (Single Thread) for a **60-step Kinematic Bicycle Model** with obstacle avoidance.
+
+| Archetype | Configuration | Avg Time | Use Case |
+| :--- | :--- | :--- | :--- |
+| **TURBO_MPC** | Euler + Adaptive Barrier | **~0.8 ms** | Microcontrollers (MCU), Racing Drones |
+| **BALANCED_RT** | RK2 + Mehrotra | **~1.2 ms** | General UGV Navigation |
+| **QUALITY_PLANNER** | RK4 + Mehrotra + Filter | **~1.8 ms** | Autonomous Driving Trajectory Planner |
+| **SQP-RTI** | Euler + Single Iteration | **~0.2 ms** | High-Frequency Control (>1kHz) |
+
+---
 
 ## 🛠️ Quick Start
 
 ### Prerequisites
-*   CMake >= 3.10
-*   Eigen3
-*   Python 3 (for code generation) + SymPy (`pip install sympy`)
-*   C++17 Compiler (GCC/Clang)
+* **CMake** >= 3.10
+* **C++17 Compiler** (GCC/Clang)
+* **Python 3** + **SymPy** (`pip install sympy`)
+* *(Optional)* **Eigen3** (Default backend, can be swapped for built-in `MiniMatrix`)
 
-### 📢 Logging & Debugging
-
-MiniSolver provides a zero-overhead logging system useful for debugging convergence issues or deployment.
-
-**Log Levels:**
-*   `0`: NONE (No overhead, for Production)
-*   `1`: ERROR
-*   `2`: WARN
-*   `3`: INFO (Default)
-*   `4`: DEBUG (Detailed internal state, KKT residuals, slack values)
-
-**Usage:**
-Pass `MINISOLVER_LOG_LEVEL` during compilation to control verbosity.
-
-```bash
-# Debug Mode (Maximum verbosity)
-g++ ... -DMINISOLVER_LOG_LEVEL=4 ...
-
-# Production Mode (Silent, Zero-Overhead)
-g++ ... -DMINISOLVER_LOG_LEVEL=0 ...
-```
-
-### Build & Run Demo
-
-```bash
-# 1. Generate C++ Model from Python DSL
-python3 tools/car_model_gen.py
-
-# 2. Build Project
-mkdir build && cd build
-cmake ..
-make -j4
-
-# 3. Run Demo
-./MiniSolverApp
-```
-
-Or simply run the all-in-one script:
-```bash
-./run_demo.sh
-```
-This will solve a collision avoidance problem and generate a `trajectory_plot.png` visualization.
-
-## 🧪 Unit Tests
-
-MiniSolver includes a comprehensive test suite using GoogleTest.
-
-```bash
-# Build tests
-mkdir build && cd build
-cmake ..
-make -j4
-
-# Run all tests
-ctest --verbose
-# Or run specific test binaries
-./test_matrix
-./test_autodiff
-./test_riccati
-./test_linesearch
-./test_solver
-```
-
-## 📝 Defining Your Own OCP
-
-MiniSolver separates model definition from the solver core. You define your OCP in Python, and we generate the fast C++ code.
-
-Create a file `my_model.py`:
+### 1. Define Your Model (Python)
+Define your Optimal Control Problem (OCP) using the Python DSL. This generates the optimized C++ headers.
 
 ```python
-from MiniModel import OptimalControlModel
+# my_model.py
+from minisolver.MiniModel import OptimalControlModel
 import sympy as sp
 
 model = OptimalControlModel(name="DroneModel")
 
 # 1. Define Variables
-px = model.state("px")
-py = model.state("py")
-vx = model.state("vx")
-vy = model.state("vy")
+px, py, vz = model.state("px", "py", "vz")
 thrust = model.control("thrust")
-theta = model.control("theta")
 
-# 2. Define Parameters (References, Obstacles, Weights)
-target_x = model.parameter("target_x")
-
-# 3. Dynamics (x_dot = f(x,u))
-model.set_dynamics(px, vx)
+# 2. Dynamics (f(x,u))
+model.set_dynamics(px, vx) # ... assume vx defined
 model.set_dynamics(py, vy)
-model.set_dynamics(vx, thrust * sp.cos(theta))
-model.set_dynamics(vy, thrust * sp.sin(theta))
+model.set_dynamics(vz, thrust - 9.81)
 
-# 4. Objective (Least Squares style)
-model.minimize( 10.0 * (px - target_x)**2 )
-model.minimize( 0.1 * thrust**2 )
+# 3. Objective (Least Squares)
+model.minimize( 10.0 * (px - 0.0)**2 ) # Target x=0
+model.minimize( 0.1 * thrust**2 )      # Regularization
 
-# 5. Constraints (g(x,u) <= 0)
-model.subject_to( thrust - 10.0 <= 0 ) # Max thrust
-# Soft Constraint Example (L1 penalty)
-model.subject_to( 1.0 - (px**2 + py**2) <= 0, weight=100.0, loss='L1' ) 
+# 4. Constraints
+model.subject_to( thrust <= 20.0 )     # Hard Constraint
+# Soft Constraint (L1 Penalty via Dual Regularization)
+model.subject_to( vz <= 5.0, weight=100.0, loss='L1' )
 
-# 6. Generate C++ Header
+# 5. Generate C++ Code
 model.generate("include/model")
-```
+````
 
-Then in your C++ code:
+### 2\. Solve in C++
+
+Include the generated header and the solver.
 
 ```cpp
 #include "model/drone_model.h"
-#include "solver/solver.h"
+#include "minisolver/solver/solver.h"
 
 using namespace minisolver;
 
 int main() {
-    MiniSolver<DroneModel, 100> solver(50, Backend::CPU_SERIAL); // N=50
+    // Instantiate solver with Max Horizon N=100
+    MiniSolver<DroneModel, 100> solver(50, Backend::CPU_SERIAL);
     
-    // Set initial state
-    solver.set_initial_state("px", 0.0);
+    // Set Initial Condition
+    solver.set_initial_state("px", -10.0);
     
-    // Enable Advanced Features
-    solver.config.enable_soc = true;
+    // Configure for Robustness
     solver.config.barrier_strategy = BarrierStrategy::MEHROTRA;
+    solver.config.enable_soc = true;
     
     // Solve
-    solver.solve();
+    SolverStatus status = solver.solve();
+    
+    // Retrieve Optimal Control
+    std::vector<double> u_opt = solver.get_control(0);
 }
 ```
 
+### 3\. Build & Run
+
+MiniSolver includes a one-click build script that handles dependency checking, code generation, and compilation.
+
+```bash
+./build.sh
+```
+
+-----
+
 ## 📂 Project Structure
 
-*   `include/core/`: Basic types (`KnotPoint`), configuration, and matrix abstraction.
-*   `include/algorithms/`: Independent algorithm implementations (Riccati, Line Search).
-*   `include/solver/`: The main `MiniSolver` orchestrator.
-*   `include/model/`: Generated model headers.
-*   `tools/`: Python DSL (`MiniModel.py`), benchmark tools, auto-tuner, and replay tools.
+  * **`include/core/`**: Core types (`KnotPoint`), memory-safe containers (`Trajectory`), and Matrix Abstraction Layer (`MiniMatrix`/`Eigen`).
+  * **`include/solver/`**: The main `MiniSolver` class orchestrating the IPM loop.
+  * **`include/algorithms/`**: Numerical engines:
+      * `RiccatiSolver`: Block-tridiagonal linear system solver.
+      * `LineSearch`: Filter and Merit function strategies.
+  * **`python/minisolver/`**: The `MiniModel` DSL and C++ code generator.
+  * **`tools/`**:
+      * `auto_tuner.cpp`: Monte-Carlo search for optimal solver configurations.
+      * `replay_solver.cpp`: Debugging tool to replay serialized solver states.
+      * `benchmark_suite/`: comprehensive performance testing.
 
-## 🤝 License
-Apache 2.0
+## 🤝 License & Citation
+
+**MiniSolver** is licensed under the **Apache 2.0 License**.
+
+If you use this software in academic work, please refer to `CITATION.cff`.
+
+*Maintained by Edward Qu.*

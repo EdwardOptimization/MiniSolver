@@ -1,101 +1,109 @@
-# Developer Guide & Debugging Notes
+# Developer Guide & Internals
 
-This document is for contributors and maintainers of **MiniSolver**. It documents the architectural decisions, "gotchas", and lessons learned during development.
+This guide documents the architectural decisions (ADRs), internal mechanisms, and debugging strategies for **MiniSolver**. It is intended for those modifying the core solver or diagnosing complex convergence issues.
 
 ---
 
 ## 🏗️ Architecture Decisions (ADR)
 
-### 1. Python DSL + C++ CodeGen
-**Why?**
-*   **Auto-Differentiation**: Writing analytical derivatives for RK4 expansion manually is error-prone. Finite Differences are slow and inaccurate. SymPy handles this perfectly at compile-time.
-*   **Performance**: The generated code is flat C++, often using CSE (Common Subexpression Elimination), which compilers optimize heavily (`-O3`).
-*   **Flexibility**: Users can define dynamics in Python without touching C++ templates.
+### 1. Python DSL vs. C++ Templates
+**Decision**: Use Python (`MiniModel.py`) to generate C++ code instead of pure C++ templates or operator overloading (e.g., CppAD).
+**Reasoning**:
+* **Compile-Time Derivatives**: SymPy calculates analytical Jacobians and Hessians offline. The result is flat, scalar C++ code that compilers (GCC/Clang) can optimize heavily via Common Subexpression Elimination (CSE).
+* **Readability**: Generated code explicitly shows the math, making it easier to audit than deeply nested template expression trees.
 
-### 2. Zero-Malloc (Static Allocation)
-**Why?**
-*   **Embedded Safety**: `malloc` is non-deterministic. We use `std::array<Knot, MAX_N>` to allocate everything on the stack (or BSS).
-*   **Cache Locality**: Contiguous memory layout improves prefetching.
+### 2. Memory Model: Zero-Malloc & Double Buffering
+**Decision**: The solver must never allocate dynamic memory after initialization.
+**Implementation**:
+* **Static Arrays**: All data is stored in `std::array<KnotPoint, MAX_N>` structures sized at compile time.
+* **Double Buffering**: The `Trajectory` class maintains two buffers: `memory_A` (active) and `memory_B` (candidate).
+* **Pointer Swapping**: During Line Search, we generate trial steps in the `candidate` buffer. If accepted, we simply swap the `active_ptr` and `candidate_ptr` pointers. This avoids expensive `memcpy` operations (~200KB per step).
 
-### 3. Double Buffering (Pointer Swapping)
-**Why?**
-*   In Line Search, we generate trial trajectories. Copying the entire `std::vector` or `std::array` (60 knots * 2KB) is expensive (~120KB memcpy).
-*   We use two buffers (`traj_memory_A`, `traj_memory_B`) and swap `traj_ptr` and `candidate_ptr`.
+### 3. Zero-Copy Iterative Refinement
+**Challenge**: Iterative Refinement (IR) requires preserving the original linear system $(A, b)$ to compute residuals $r = b - Ax$, but the Riccati solver factorizes matrices in-place (destroying $A$).
+**Solution**: We repurpose the **Candidate Buffer** (normally used for Line Search trials) as a "Backup Buffer" during the linear solve phase.
+1.  Copy `active` trajectory (linearization point) to `candidate`.
+2.  Run Riccati factorization on `active`.
+3.  Compute residuals using the preserved matrices in `candidate`.
+4.  Apply correction $\delta x$ to `active`.
 
-### 4. Zero-Malloc Iterative Refinement
-**Problem**: Iterative Refinement (IR) requires saving a copy of the original linear system (A, b) to compute residuals $r = b - Ax$. Riccati solves in-place, destroying A and b. Allocating a copy violates "Zero-Malloc".
-**Solution**: We utilize the **Candidate Buffer** (normally used for Line Search trial steps) as temporary storage for the backup.
-1.  **Backup**: Before `solve()`, copy `active` trajectory (containing A, b) to `candidate`.
-2.  **Solve**: Run Riccati on `active` (A, b -> L, D, x).
-3.  **Refine**: 
-    *   Compute residual using `candidate` (A, b) and `active` (x).
-    *   Store residual in `candidate` (overwrite b).
-    *   Run Riccati on `candidate` to find correction $\delta x$.
-    *   Update `active`: $x \leftarrow x + \delta x$.
-**Benefit**: High precision and robustness against regularization errors without extra memory.
+### 4. Matrix Abstraction Layer (MAL)
+**Decision**: Decouple the solver logic from the linear algebra library.
+**Implementation**: `include/minisolver/core/matrix_defs.h` defines a unified API.
+* **`USE_EIGEN`**: Links against Eigen3 for SIMD optimizations (Desktop/Linux).
+* **`USE_CUSTOM_MATRIX`**: Uses `MiniMatrix.h`, a self-contained, template-based linear algebra class. This enables compilation on bare-metal systems (e.g., STM32) with **zero external dependencies**.
 
 ---
 
-## 🪤 The "Gotchas" (Post-Mortem Analysis)
+## 🪤 Known "Gotchas" (Post-Mortem Analysis)
 
-### 1. The "Ghost Cost" Bug (Parameter Sync)
-*   **Symptom**: Solver runs fine for 1 iteration, then Cost becomes meaningless or zero, convergence fails.
-*   **Cause**: We implemented Double Buffering for Line Search (`swap(active, candidate)`). We copied `x, u, s, lam` to the candidate, but **forgot to copy Parameters (`p`)**.
-*   **Result**: When the pointer swapped, the new active trajectory had zeroed parameters (default initialized).
-*   **Fix**: Explicitly copy `p` in the Line Search loop, or ensure static parameters are synced across all buffers.
+### 1. The "Ghost Cost" Bug (Parameter Synchronization)
+* **Symptom**: Solver converges for one step, then the cost becomes zero or garbage in subsequent steps or iterations.
+* **Cause**: When swapping buffers (`active` <-> `candidate`), we initially forgot to copy the user-set **Parameters** (`p`, e.g., reference trajectories) to the candidate buffer. The candidate buffer contained default-initialized parameters (zeros).
+* **Fix**: The `Trajectory::prepare_candidate()` method must explicitly sync parameters or ensure parameters are global.
 
-### 2. Variable Shadowing in CodeGen
-*   **Symptom**: Compilation error `declaration of 'T x' shadows a parameter` or silent logic errors.
-*   **Cause**: The user defined a state named `"x"`. The generated C++ function signature was `dynamics(const MSVec& x, ...)`. Inside, we unpacked `T x = x(0);`.
-*   **Fix**: `MiniModel.py` now generates function arguments with `_in` suffix (`x_in`, `u_in`) and uses `tmp_` prefix for CSE variables to strictly isolate namespaces.
+### 2. Vanishing Gradients inside Obstacles
+* **Symptom**: Solver gets stuck when the initial guess is exactly inside a circular obstacle.
+* **Cause**: Constraint form $R^2 - (x^2 + y^2) \le 0$. At $(0,0)$, the gradient $\nabla g = [-2x, -2y]$ is zero.
+* **Fix**: We reformulated the constraint as a distance field: $R - \sqrt{x^2 + y^2 + \epsilon} \le 0$. This ensures the gradient is a unit vector pointing outward, providing valid search directions even at the center.
 
-### 3. The "Vanishing Gradient" of Obstacles
-*   **Symptom**: Solver gets stuck when initializing inside an obstacle. Gradients are tiny or zero.
-*   **Cause**: Constraint $R^2 - (x^2 + y^2) \le 0$. At the center $(0,0)$, the gradient is $2x = 0$.
-*   **Fix**: We rewrote the constraint as **Linear Distance**: $R - \sqrt{x^2 + y^2 + \epsilon} \le 0$. The gradient is now normalized (unit vector), providing a constant "push-out" force even at the center.
-
-### 4. Template Hell with Eigen Alignment
-*   **Symptom**: `std::vector<Knot>` crashes or fails to compile when passing to functions.
-*   **Cause**: Eigen fixed-size vectorization requires 16/32-byte alignment. Standard `vector` doesn't guarantee this without `aligned_allocator`.
-*   **Fix**:
-    1.  Added `EIGEN_MAKE_ALIGNED_OPERATOR_NEW` to `KnotPoint`.
-    2.  Refactored helper functions to be templates `template<typename TrajVector>`, accepting any container type (vector, array, span) to decouple from the allocator type.
-
-### 5. "Why compute Cost if we overwrite it?" (Feasibility Restoration)
-*   **Observation**: In `feasibility_restoration`, we call `compute()` (which calculates Cost), but immediately `setIdentity(Q)`.
-*   **Reason**: `compute()` calculates *everything* (Dynamics A, B and Cost Q, R). We need A, B for the restoration step, but we must **replace** the original Cost with a Minimum-Norm objective ($\min \|dx\|^2$) to find the closest feasible point.
-*   **Optimization**: We split `compute` into `compute_dynamics`, `compute_constraints`, `compute_cost` to allow selective computation, saving FLOPs.
+### 3. Dual Variable Inconsistency in Restoration
+* **Symptom**: After `Feasibility Restoration` succeeds, the main IPM loop immediately diverges.
+* **Cause**: The restoration phase solves a *different* optimization problem (min-norm correction). The Lagrange multipliers (Duals) from this phase are not valid for the original OCP constraints.
+* **Fix**: After restoration, we perform a "Dual Reset" using the complementarity condition $\lambda_i = \mu / s_i$ to re-initialize valid duals for the original problem.
 
 ---
 
 ## 🛠️ Debugging Strategies
 
-### 1. Enable PrintLevel::DEBUG
-In `main.cpp`:
+### 1. High-Verbosity Logging
+Use the `MINISOLVER_LOG_LEVEL` macro to inspect internal KKT residuals without overhead in production.
+
 ```cpp
-config.print_level = PrintLevel::DEBUG;
+// In CMake or Compilation flags
+add_definitions(-DMINISOLVER_LOG_LEVEL=4)
+````
+
+  * **Log Level 4 (DEBUG)**: Prints `MinSlack`, `Alpha` (step size), and specific constraint violation indices.
+  * **Interpretation**:
+      * High `Reg` (e.g., $10^9$): Hessian is singular. Check if your cost function is convex or if the system is uncontrollable.
+      * Tiny `Alpha` ($< 10^{-4}$): The line search is blocked by a constraint boundary (Step size too small).
+
+### 2\. The Replay Tool (Serializer)
+
+If the solver crashes in production, capture the state using the Serializer.
+
+```cpp
+// In your application code, before solve():
+SolverSerializer<CarModel, 100>::save_case("crash_dump.dat", solver);
 ```
-Look for:
-*   `MinSlack`: If this hits `1e-9` while `PrimInf` is large, you are blocked by a constraint boundary.
-*   `Alpha`: If small (< 0.01) repeatedly, the Line Search is blocking progress (shape of the barrier is too steep). Trigger **Slack Reset**.
-*   `Reg`: If large, the Hessian is non-convex or singular.
 
-### 2. Analyzing Logs
-*   **DualInf Explosions** (`1e10`): Inconsistent gradients. Check if `codegen` derivative logic matches the integration scheme (RK4 vs Euler). MiniSolver uses SymPy to guarantee this consistency.
-*   **PrimInf Stagnation**: Local infeasible minimum. Use **Feasibility Restoration**.
+Then, debug locally using the replay tool:
 
-### 3. Visualizing
-Run `./run_demo.sh` and open `trajectory_plot.png`.
-*   If the trajectory "teleports", check if `dt` matches the dynamics timescale.
-*   If it vibrates around the obstacle, increase `reg_min` or `mu_min`.
+```bash
+./build/replay_solver crash_dump.dat
+```
 
----
+This loads the exact configuration, trajectory guess, and parameters from the crash site.
 
-## 🔮 Future Development
+### 3\. Auto-Tuner
 
-1.  **Sparse Riccati**: Currently we treat 4x4 matrices as dense. For larger systems (N=1000), exploiting sparsity in $A, B$ becomes crucial.
-2.  **GPU Backend**: The `include/core/gpu_types.h` and `src/cuda/` files are placeholders for a Parallel Scan implementation of Riccati (O(log N)).
-3.  **SQP-RTI**: Real-time iteration scheme (one QP per time step) for >1kHz control.
+If convergence is unstable, use the `auto_tuner` tool to perform a Monte-Carlo search over the configuration space (Integrators, Barrier Strategies, Line Search types).
 
----
-*Maintained by the MiniSolver Team.*
+```bash
+./build/auto_tuner 100  # Run 100 trials
+```
+
+It outputs the `SolverConfig` that achieved the highest success rate and lowest runtime.
+
+-----
+
+## 🔮 Future Roadmap
+
+1.  **Sparse Riccati**: Currently, blocks are treated as dense. For state dimensions $N_x > 12$, utilizing sparsity in $A, B$ matrices is required.
+2.  **GPU Parallelization**: `src/cuda/gpu_ops.cu` contains prototypes for a Parallel Scan algorithm (Parallel Associative Operator). This will allow $O(\log N)$ solve times on CUDA devices.
+3.  **ALADIN Support**: Augmented Lagrangian Alternating Direction Inexact Newton method for distributed multi-agent control.
+
+-----
+
+*MiniSolver Team - Internal Use Only*
