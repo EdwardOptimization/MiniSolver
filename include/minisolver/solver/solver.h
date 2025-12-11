@@ -625,13 +625,16 @@ public:
                              // Linear case (g approx 0): -(-2mu)lam - mu*w = 0 -> 2mu*lam = mu*w -> lam = w/2
                              lam_val = w / 2.0;
                          } else {
-                             double delta = b*b - 4*a*c;
-                             if (delta < 0) delta = 0;
-                             if (a > 0) { // g > 0, expect lam near w
-                                 lam_val = (-b + std::sqrt(delta)) / (2*a);
-                             } else { // g < 0, expect lam near 0
-                                 lam_val = (-b - std::sqrt(delta)) / (2*a); // a is negative, so (-b - positive) / negative -> positive
-                             }
+                            double delta = b*b - 4*a*c;
+                            if (delta < 0) delta = 0;
+                            if (std::abs(a) < 1e-9) {
+                                lam_val = w / 2.0;
+                            } else {
+                                double delta = b*b - 4*a*c;
+                                if (delta < 0) delta = 0;
+                                // Use plus sign formula
+                                lam_val = (-b + std::sqrt(delta)) / (2*a);
+                            }
                          }
                          
                          // Clamp for safety
