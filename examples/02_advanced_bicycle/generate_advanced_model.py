@@ -21,6 +21,16 @@ import sympy as sp
 #   jerk: Rate of change of acceleration
 # -----------------------------------------------------------
 
+import argparse
+
+# Parse args
+parser = argparse.ArgumentParser()
+parser.add_argument('--no-fused', action='store_true', help='Disable Fused Riccati Kernel')
+args = parser.parse_args()
+
+use_fused = not args.no_fused
+print(f"Generating Advanced Bicycle Model (Fused Riccati: {use_fused})...")
+
 model = OptimalControlModel(name="BicycleExtModel")
 
 # 1. Define Variables
@@ -103,5 +113,5 @@ model.subject_to(-dkappa - 2.0 <= 0)
 
 # 6. Generate
 output_dir = os.path.join(os.path.dirname(__file__), "generated")
-model.generate(output_dir)
+model.generate(output_dir, use_fused_riccati=use_fused)
 

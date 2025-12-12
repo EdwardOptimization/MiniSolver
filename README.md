@@ -38,6 +38,8 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
 
 Benchmarks performed on an Intel Core i7 (Single Thread) for a **60-step Kinematic Bicycle Model** with obstacle avoidance.
 
+**Note:** When using Fused Riccati (default), ensure the integrator type used in C++ matches the one used during Python generation. The fused kernel is specialized for a specific integrator's Jacobian structure.
+
 | Archetype | Configuration | Avg Time | Use Case |
 | :--- | :--- | :--- | :--- |
 | **TURBO_MPC** | Euler + Adaptive Barrier | **~0.8 ms** | Microcontrollers (MCU), Racing Drones |

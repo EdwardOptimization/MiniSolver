@@ -340,9 +340,137 @@ class OptimalControlModel:
                          code += f"        }}\n"
         return code
 
-    def generate(self, output_dir="include/model", use_sparse_kernels=True):
-        self.use_sparse_kernels = use_sparse_kernels
+    def _generate_fused_riccati_step(self, A_expr, B_expr, nx, nu):
+        """
+        Generates fused Riccati update kernel.
+        Updates Qxx, Quu, Qux, qx, ru simultaneously.
+        """
+        print(f"Generating Fused Riccati Kernel (NX={nx}, NU={nu})...")
+        
+        # 1. Define Symbolic Variables
+        
+        # Vxx (Symmetric)
+        Vxx = sp.zeros(nx, nx)
+        for r in range(nx):
+            for c in range(r, nx):
+                s = sp.symbols(f"P_{r}_{c}")
+                Vxx[r, c] = s
+                Vxx[c, r] = s
+        
+        # Vx (Vector)
+        Vx = sp.Matrix([sp.symbols(f"p_{r}") for r in range(nx)])
+        
+        # A (Sparse Structure)
+        A_sym = sp.zeros(nx, nx)
+        for r in range(nx):
+            for c in range(nx):
+                if sp.sympify(A_expr[r, c]).is_zero is not True:
+                    A_sym[r, c] = sp.symbols(f"A_{r}_{c}")
+                    
+        # B (Sparse Structure)
+        B_sym = sp.zeros(nx, nu)
+        for r in range(nx):
+            for c in range(nu):
+                if sp.sympify(B_expr[r, c]).is_zero is not True:
+                    B_sym[r, c] = sp.symbols(f"B_{r}_{c}")
+                    
+        # 2. Symbolic Computation
+        # Use lazy evaluation, just building expression tree
+        Update_Qxx = A_sym.T * Vxx * A_sym
+        Update_Quu = B_sym.T * Vxx * B_sym
+        Update_Qux = B_sym.T * Vxx * A_sym
+        Update_qx  = A_sym.T * Vx
+        Update_ru  = B_sym.T * Vx
+        
+        # 3. Extract expressions for all non-zeros for CSE
+        # We only care about upper triangle for Hessian due to symmetry
+        exprs_to_compute = []
+        targets = [] # (matrix_name, row, col)
+        
+        # Qxx (Upper Tri)
+        for r in range(nx):
+            for c in range(r, nx):
+                if sp.sympify(Update_Qxx[r, c]).is_zero is not True:
+                    exprs_to_compute.append(Update_Qxx[r, c])
+                    targets.append( ('Q_bar', r, c) )
+                    
+        # Quu (Upper Tri)
+        for r in range(nu):
+            for c in range(r, nu):
+                if sp.sympify(Update_Quu[r, c]).is_zero is not True:
+                    exprs_to_compute.append(Update_Quu[r, c])
+                    targets.append( ('R_bar', r, c) )
+                    
+        # Qux (Full Matrix)
+        for r in range(nu):
+            for c in range(nx):
+                if sp.sympify(Update_Qux[r, c]).is_zero is not True:
+                    exprs_to_compute.append(Update_Qux[r, c])
+                    targets.append( ('H_bar', r, c) )
+                    
+        # qx
+        for r in range(nx):
+            if sp.sympify(Update_qx[r]).is_zero is not True:
+                exprs_to_compute.append(Update_qx[r])
+                targets.append( ('q_bar', r, 0) )
+                
+        # ru
+        for r in range(nu):
+            if sp.sympify(Update_ru[r]).is_zero is not True:
+                exprs_to_compute.append(Update_ru[r])
+                targets.append( ('r_bar', r, 0) )
+                
+        # 4. CSE
+        replacements, reduced_exprs = sp.cse(exprs_to_compute, symbols=sp.numbered_symbols("tmp_ric"))
+        
+        # 5. Generate C++ Code
+        code = ""
+        
+        # 5.1 Load Data (Inputs)
+        # Vxx
+        for r in range(nx):
+            for c in range(r, nx):
+                code += f"        T P_{r}_{c} = Vxx({r},{c});\n"
+        # Vx
+        for r in range(nx):
+            code += f"        T p_{r} = Vx({r});\n"
+            
+        # A (Non-zeros)
+        for r in range(nx):
+            for c in range(nx):
+                if A_sym[r, c] != 0:
+                    code += f"        T A_{r}_{c} = kp.A({r},{c});\n"
+        
+        # B (Non-zeros)
+        for r in range(nx):
+            for c in range(nu):
+                if B_sym[r, c] != 0:
+                    code += f"        T B_{r}_{c} = kp.B({r},{c});\n"
+                    
+        code += "\n        // CSE Intermediate Variables\n"
+        for sym, expr in replacements:
+            code += f"        T {sym} = {sp.ccode(expr)};\n"
+            
+        code += "\n        // Accumulate Results\n"
+        for i, (name, r, c) in enumerate(targets):
+            val = reduced_exprs[i]
+            # Accumulate: kp.Q_bar += val
+            code += f"        kp.{name}({r},{c}) += {sp.ccode(val)};\n"
+            
+        # 5.2 Fill Lower Triangles (Symmetry)
+        code += "\n        // Fill Lower Triangles (Symmetry)\n"
+        # Qxx
+        for r in range(nx):
+            for c in range(r + 1, nx):
+                code += f"        kp.Q_bar({c},{r}) = kp.Q_bar({r},{c});\n"
+        # Quu
+        for r in range(nu):
+            for c in range(r + 1, nu):
+                code += f"        kp.R_bar({c},{r}) = kp.R_bar({r},{c});\n"
+                
+        return code
 
+    def generate(self, output_dir="include/model", use_fused_riccati=True, integrator_type="RK4_EXPLICIT"):
         # 1. Vectorize
         x_vec = sp.Matrix(self.states)
         u_vec = sp.Matrix(self.controls)
@@ -351,6 +479,15 @@ class OptimalControlModel:
         nu = len(self.controls)
         np_param = len(self.parameters)
         nc = len(self.constraints)
+
+        # Heuristic: Disable Fused Riccati if dimensions are very small, 
+        # as the overhead of huge code generation might outweigh benefits,
+        # or if it's too large (compilation time).
+        # For now, default to True but warn if tiny.
+        if use_fused_riccati and (nx <= 4):
+             print(f"Note: Dimension NX={nx} is small. Fused Riccati might not be necessary, but enabling as requested.")
+        
+        self.use_fused_riccati = use_fused_riccati
         
         # 2. Dynamics (Continuous)
         dt_sym = sp.symbols('dt')
@@ -408,12 +545,20 @@ class OptimalControlModel:
         non_zeros_A = set()
         non_zeros_B = set()
         
+        # Keep track of the most general expressions for fused kernel generation (usually RK4)
+        target_A_expr = None
+        target_B_expr = None
+        
         for labels, x_next_expr in groups:
             print(f"Generating derivatives for {labels}...")
             
             A_expr = x_next_expr.jacobian(x_vec)
             B_expr = x_next_expr.jacobian(u_vec)
-        
+            
+            if integrator_type in labels:
+                target_A_expr = A_expr
+                target_B_expr = B_expr
+            
             # Analyze sparsity
             for r in range(nx):
                 for c in range(nx):
@@ -529,11 +674,6 @@ class OptimalControlModel:
         # So we just need to generate a new C++ function `compute_gn` that assigns Q = Q_obj (instead of Q_obj + Q_con).
         
         # 5. Code Construction
-        
-        # Generate Sparse Kernels
-        print("Generating sparse matrix multiplication kernels...")
-        code_sparse_A = self._generate_sparse_matmul("A", non_zeros_A, "Vxx", "out", nx, nx, nx)
-        code_sparse_B = self._generate_sparse_matmul("B", non_zeros_B, "Vxx", "out", nx, nu, nx)
         
         # Constants
         code_constants = f"static const int NX={nx};\n    static const int NU={nu};\n    static const int NC={nc};\n    static const int NP={np_param};"
@@ -724,6 +864,18 @@ class OptimalControlModel:
         code_wrappers += "    }\n"
         
         code_compute_cost = code_cost_impl + code_wrappers
+        
+        # [NEW] Generate Fused Riccati Kernel
+        code_fused_riccati = ""
+        if self.use_fused_riccati:
+            if target_A_expr is not None:
+                try:
+                    # Use the specified integrator expressions
+                    code_fused_riccati = self._generate_fused_riccati_step(target_A_expr, target_B_expr, nx, nu)
+                except Exception as e:
+                    print(f"Warning: Failed to generate fused kernel: {e}")
+            else:
+                print(f"Warning: Integrator type '{integrator_type}' not found in generated groups. Fused Riccati Kernel will be empty.")
 
         # 6. Read Template & Replace
         template_path = os.path.join(os.path.dirname(__file__), "templates", "model.h.in")
@@ -738,9 +890,8 @@ class OptimalControlModel:
         content = content.replace("{{COMPUTE_CONSTRAINTS_BODY}}", code_compute_con)
         content = content.replace("{{COMPUTE_COST_SECTION}}", code_compute_cost)
         
-        if self.use_sparse_kernels:
-            content = content.replace("{{SPARSE_MULT_VXX_A_BODY}}", code_sparse_A)
-            content = content.replace("{{SPARSE_MULT_VXX_B_BODY}}", code_sparse_B)
+        if self.use_fused_riccati:
+            content = content.replace("{{FUSED_RICCATI_STEP_BODY}}", code_fused_riccati)
             # Remove markers
             content = re.sub(r"// \[\[SPARSE_KERNELS_START\]\]", "", content)
             content = re.sub(r"// \[\[SPARSE_KERNELS_END\]\]", "", content)

@@ -469,97 +469,109 @@ template<typename T>
 
     // --- 5. Sparse Kernels (Generated) ---
     
-    // Computes: out = Vxx * A
-    // Exploits sparsity of A defined at compile time.
+    // --- 6. Fused Riccati Kernel (Generated) ---
+    // Updates kp.Q_bar, R_bar, H_bar, q_bar, r_bar in one go.
+    // Uses Vxx, Vx from next step.
     template<typename T>
-    static void mult_Vxx_A(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NX>& out) {
-        out.setZero();
-        // A(0,0) contributes
-        out(0, 0) += Vxx(0, 0) * kp.A(0, 0);
-        out(1, 0) += Vxx(1, 0) * kp.A(0, 0);
-        out(2, 0) += Vxx(2, 0) * kp.A(0, 0);
-        out(3, 0) += Vxx(3, 0) * kp.A(0, 0);
-        // A(1,1) contributes
-        out(0, 1) += Vxx(0, 1) * kp.A(1, 1);
-        out(1, 1) += Vxx(1, 1) * kp.A(1, 1);
-        out(2, 1) += Vxx(2, 1) * kp.A(1, 1);
-        out(3, 1) += Vxx(3, 1) * kp.A(1, 1);
-        // A(0,2) contributes
-        out(0, 2) += Vxx(0, 0) * kp.A(0, 2);
-        out(1, 2) += Vxx(1, 0) * kp.A(0, 2);
-        out(2, 2) += Vxx(2, 0) * kp.A(0, 2);
-        out(3, 2) += Vxx(3, 0) * kp.A(0, 2);
-        // A(1,2) contributes
-        out(0, 2) += Vxx(0, 1) * kp.A(1, 2);
-        out(1, 2) += Vxx(1, 1) * kp.A(1, 2);
-        out(2, 2) += Vxx(2, 1) * kp.A(1, 2);
-        out(3, 2) += Vxx(3, 1) * kp.A(1, 2);
-        // A(2,2) contributes
-        out(0, 2) += Vxx(0, 2) * kp.A(2, 2);
-        out(1, 2) += Vxx(1, 2) * kp.A(2, 2);
-        out(2, 2) += Vxx(2, 2) * kp.A(2, 2);
-        out(3, 2) += Vxx(3, 2) * kp.A(2, 2);
-        // A(0,3) contributes
-        out(0, 3) += Vxx(0, 0) * kp.A(0, 3);
-        out(1, 3) += Vxx(1, 0) * kp.A(0, 3);
-        out(2, 3) += Vxx(2, 0) * kp.A(0, 3);
-        out(3, 3) += Vxx(3, 0) * kp.A(0, 3);
-        // A(1,3) contributes
-        out(0, 3) += Vxx(0, 1) * kp.A(1, 3);
-        out(1, 3) += Vxx(1, 1) * kp.A(1, 3);
-        out(2, 3) += Vxx(2, 1) * kp.A(1, 3);
-        out(3, 3) += Vxx(3, 1) * kp.A(1, 3);
-        // A(2,3) contributes
-        out(0, 3) += Vxx(0, 2) * kp.A(2, 3);
-        out(1, 3) += Vxx(1, 2) * kp.A(2, 3);
-        out(2, 3) += Vxx(2, 2) * kp.A(2, 3);
-        out(3, 3) += Vxx(3, 2) * kp.A(2, 3);
-        // A(3,3) contributes
-        out(0, 3) += Vxx(0, 3) * kp.A(3, 3);
-        out(1, 3) += Vxx(1, 3) * kp.A(3, 3);
-        out(2, 3) += Vxx(2, 3) * kp.A(3, 3);
-        out(3, 3) += Vxx(3, 3) * kp.A(3, 3);
+    static void compute_fused_riccati_step(
+        const MSMat<T, NX, NX>& Vxx, 
+        const MSVec<T, NX>& Vx,
+        KnotPoint<T,NX,NU,NC,NP>& kp) 
+    {
+        T P_0_0 = Vxx(0,0);
+        T P_0_1 = Vxx(0,1);
+        T P_0_2 = Vxx(0,2);
+        T P_0_3 = Vxx(0,3);
+        T P_1_1 = Vxx(1,1);
+        T P_1_2 = Vxx(1,2);
+        T P_1_3 = Vxx(1,3);
+        T P_2_2 = Vxx(2,2);
+        T P_2_3 = Vxx(2,3);
+        T P_3_3 = Vxx(3,3);
+        T p_0 = Vx(0);
+        T p_1 = Vx(1);
+        T p_2 = Vx(2);
+        T p_3 = Vx(3);
+        T A_0_0 = kp.A(0,0);
+        T A_0_2 = kp.A(0,2);
+        T A_0_3 = kp.A(0,3);
+        T A_1_1 = kp.A(1,1);
+        T A_1_2 = kp.A(1,2);
+        T A_1_3 = kp.A(1,3);
+        T A_2_2 = kp.A(2,2);
+        T A_2_3 = kp.A(2,3);
+        T A_3_3 = kp.A(3,3);
+        T B_0_0 = kp.B(0,0);
+        T B_0_1 = kp.B(0,1);
+        T B_1_0 = kp.B(1,0);
+        T B_1_1 = kp.B(1,1);
+        T B_2_0 = kp.B(2,0);
+        T B_2_1 = kp.B(2,1);
+        T B_3_0 = kp.B(3,0);
 
-    }
-    // Computes: out = Vxx * B
-    template<typename T>
-    static void mult_Vxx_B(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NU>& out) {
-        out.setZero();
-        // B(0,0) contributes
-        out(0, 0) += Vxx(0, 0) * kp.B(0, 0);
-        out(1, 0) += Vxx(1, 0) * kp.B(0, 0);
-        out(2, 0) += Vxx(2, 0) * kp.B(0, 0);
-        out(3, 0) += Vxx(3, 0) * kp.B(0, 0);
-        // B(1,0) contributes
-        out(0, 0) += Vxx(0, 1) * kp.B(1, 0);
-        out(1, 0) += Vxx(1, 1) * kp.B(1, 0);
-        out(2, 0) += Vxx(2, 1) * kp.B(1, 0);
-        out(3, 0) += Vxx(3, 1) * kp.B(1, 0);
-        // B(2,0) contributes
-        out(0, 0) += Vxx(0, 2) * kp.B(2, 0);
-        out(1, 0) += Vxx(1, 2) * kp.B(2, 0);
-        out(2, 0) += Vxx(2, 2) * kp.B(2, 0);
-        out(3, 0) += Vxx(3, 2) * kp.B(2, 0);
-        // B(3,0) contributes
-        out(0, 0) += Vxx(0, 3) * kp.B(3, 0);
-        out(1, 0) += Vxx(1, 3) * kp.B(3, 0);
-        out(2, 0) += Vxx(2, 3) * kp.B(3, 0);
-        out(3, 0) += Vxx(3, 3) * kp.B(3, 0);
-        // B(0,1) contributes
-        out(0, 1) += Vxx(0, 0) * kp.B(0, 1);
-        out(1, 1) += Vxx(1, 0) * kp.B(0, 1);
-        out(2, 1) += Vxx(2, 0) * kp.B(0, 1);
-        out(3, 1) += Vxx(3, 0) * kp.B(0, 1);
-        // B(1,1) contributes
-        out(0, 1) += Vxx(0, 1) * kp.B(1, 1);
-        out(1, 1) += Vxx(1, 1) * kp.B(1, 1);
-        out(2, 1) += Vxx(2, 1) * kp.B(1, 1);
-        out(3, 1) += Vxx(3, 1) * kp.B(1, 1);
-        // B(2,1) contributes
-        out(0, 1) += Vxx(0, 2) * kp.B(2, 1);
-        out(1, 1) += Vxx(1, 2) * kp.B(2, 1);
-        out(2, 1) += Vxx(2, 2) * kp.B(2, 1);
-        out(3, 1) += Vxx(3, 2) * kp.B(2, 1);
+        // CSE Intermediate Variables
+        T tmp_ric0 = A_0_2*P_0_0;
+        T tmp_ric1 = A_1_2*P_0_1;
+        T tmp_ric2 = A_2_2*P_0_2;
+        T tmp_ric3 = A_0_3*P_0_0;
+        T tmp_ric4 = A_1_3*P_0_1;
+        T tmp_ric5 = A_2_3*P_0_2;
+        T tmp_ric6 = A_3_3*P_0_3;
+        T tmp_ric7 = A_0_2*P_0_1;
+        T tmp_ric8 = A_1_2*P_1_1;
+        T tmp_ric9 = A_2_2*P_1_2;
+        T tmp_ric10 = A_0_3*P_0_1;
+        T tmp_ric11 = A_1_3*P_1_1;
+        T tmp_ric12 = A_2_3*P_1_2;
+        T tmp_ric13 = A_3_3*P_1_3;
+        T tmp_ric14 = tmp_ric0 + tmp_ric1 + tmp_ric2;
+        T tmp_ric15 = tmp_ric7 + tmp_ric8 + tmp_ric9;
+        T tmp_ric16 = A_0_2*P_0_2 + A_1_2*P_1_2 + A_2_2*P_2_2;
+        T tmp_ric17 = B_0_0*P_0_0 + B_1_0*P_0_1 + B_2_0*P_0_2 + B_3_0*P_0_3;
+        T tmp_ric18 = B_0_0*P_0_1 + B_1_0*P_1_1 + B_2_0*P_1_2 + B_3_0*P_1_3;
+        T tmp_ric19 = B_0_0*P_0_2 + B_1_0*P_1_2 + B_2_0*P_2_2 + B_3_0*P_2_3;
+        T tmp_ric20 = B_0_0*P_0_3 + B_1_0*P_1_3 + B_2_0*P_2_3 + B_3_0*P_3_3;
+        T tmp_ric21 = B_0_1*P_0_0 + B_1_1*P_0_1 + B_2_1*P_0_2;
+        T tmp_ric22 = B_0_1*P_0_1 + B_1_1*P_1_1 + B_2_1*P_1_2;
+        T tmp_ric23 = B_0_1*P_0_2 + B_1_1*P_1_2 + B_2_1*P_2_2;
+
+        // Accumulate Results
+        kp.Q_bar(0,0) += pow(A_0_0, 2)*P_0_0;
+        kp.Q_bar(0,1) += A_0_0*A_1_1*P_0_1;
+        kp.Q_bar(0,2) += A_0_0*tmp_ric0 + A_0_0*tmp_ric1 + A_0_0*tmp_ric2;
+        kp.Q_bar(0,3) += A_0_0*tmp_ric3 + A_0_0*tmp_ric4 + A_0_0*tmp_ric5 + A_0_0*tmp_ric6;
+        kp.Q_bar(1,1) += pow(A_1_1, 2)*P_1_1;
+        kp.Q_bar(1,2) += A_1_1*tmp_ric7 + A_1_1*tmp_ric8 + A_1_1*tmp_ric9;
+        kp.Q_bar(1,3) += A_1_1*tmp_ric10 + A_1_1*tmp_ric11 + A_1_1*tmp_ric12 + A_1_1*tmp_ric13;
+        kp.Q_bar(2,2) += A_0_2*tmp_ric14 + A_1_2*tmp_ric15 + A_2_2*tmp_ric16;
+        kp.Q_bar(2,3) += A_0_3*tmp_ric14 + A_1_3*tmp_ric15 + A_2_3*tmp_ric16 + A_3_3*(A_0_2*P_0_3 + A_1_2*P_1_3 + A_2_2*P_2_3);
+        kp.Q_bar(3,3) += A_0_3*(tmp_ric3 + tmp_ric4 + tmp_ric5 + tmp_ric6) + A_1_3*(tmp_ric10 + tmp_ric11 + tmp_ric12 + tmp_ric13) + A_2_3*(A_0_3*P_0_2 + A_1_3*P_1_2 + A_2_3*P_2_2 + A_3_3*P_2_3) + A_3_3*(A_0_3*P_0_3 + A_1_3*P_1_3 + A_2_3*P_2_3 + A_3_3*P_3_3);
+        kp.R_bar(0,0) += B_0_0*tmp_ric17 + B_1_0*tmp_ric18 + B_2_0*tmp_ric19 + B_3_0*tmp_ric20;
+        kp.R_bar(0,1) += B_0_1*tmp_ric17 + B_1_1*tmp_ric18 + B_2_1*tmp_ric19;
+        kp.R_bar(1,1) += B_0_1*tmp_ric21 + B_1_1*tmp_ric22 + B_2_1*tmp_ric23;
+        kp.H_bar(0,0) += A_0_0*tmp_ric17;
+        kp.H_bar(0,1) += A_1_1*tmp_ric18;
+        kp.H_bar(0,2) += A_0_2*tmp_ric17 + A_1_2*tmp_ric18 + A_2_2*tmp_ric19;
+        kp.H_bar(0,3) += A_0_3*tmp_ric17 + A_1_3*tmp_ric18 + A_2_3*tmp_ric19 + A_3_3*tmp_ric20;
+        kp.H_bar(1,0) += A_0_0*tmp_ric21;
+        kp.H_bar(1,1) += A_1_1*tmp_ric22;
+        kp.H_bar(1,2) += A_0_2*tmp_ric21 + A_1_2*tmp_ric22 + A_2_2*tmp_ric23;
+        kp.H_bar(1,3) += A_0_3*tmp_ric21 + A_1_3*tmp_ric22 + A_2_3*tmp_ric23 + A_3_3*(B_0_1*P_0_3 + B_1_1*P_1_3 + B_2_1*P_2_3);
+        kp.q_bar(0,0) += A_0_0*p_0;
+        kp.q_bar(1,0) += A_1_1*p_1;
+        kp.q_bar(2,0) += A_0_2*p_0 + A_1_2*p_1 + A_2_2*p_2;
+        kp.q_bar(3,0) += A_0_3*p_0 + A_1_3*p_1 + A_2_3*p_2 + A_3_3*p_3;
+        kp.r_bar(0,0) += B_0_0*p_0 + B_1_0*p_1 + B_2_0*p_2 + B_3_0*p_3;
+        kp.r_bar(1,0) += B_0_1*p_0 + B_1_1*p_1 + B_2_1*p_2;
+
+        // Fill Lower Triangles (Symmetry)
+        kp.Q_bar(1,0) = kp.Q_bar(0,1);
+        kp.Q_bar(2,0) = kp.Q_bar(0,2);
+        kp.Q_bar(3,0) = kp.Q_bar(0,3);
+        kp.Q_bar(2,1) = kp.Q_bar(1,2);
+        kp.Q_bar(3,1) = kp.Q_bar(1,3);
+        kp.Q_bar(3,2) = kp.Q_bar(2,3);
+        kp.R_bar(1,0) = kp.R_bar(0,1);
 
     }
     

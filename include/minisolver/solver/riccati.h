@@ -10,13 +10,12 @@
 namespace minisolver {
 
 namespace internal {
-    // SFINAE Helper: Detect if Model has mult_Vxx_A<double> static method
+    // SFINAE Helper: Detect if Model has compute_fused_riccati_step<double> static method
     template <typename T, typename = void>
-    struct has_sparse_kernels : std::false_type {};
+    struct has_fused_riccati_step : std::false_type {};
 
-    // Specialization: if we can take the address of the function, it exists
     template <typename T>
-    struct has_sparse_kernels<T, std::void_t<decltype(&T::template mult_Vxx_A<double>)>> : std::true_type {};
+    struct has_fused_riccati_step<T, std::void_t<decltype(&T::template compute_fused_riccati_step<double>)>> : std::true_type {};
 }
 
     template<typename Knot, typename ModelType>
@@ -274,73 +273,94 @@ namespace internal {
         for(int k = N - 1; k >= 0; --k) {
             auto& kp = traj[k];
 
-            // In-place updates for Riccati backward pass
-            // Use kp.Q_bar as accumulator for Qxx
-            // Use kp.R_bar as accumulator for Quu
-            // Use kp.H_bar as accumulator for Qux
-            
-            MSMat<double, Knot::NX, Knot::NX> VxxA;
-            // Compile-time detection: use sparse kernel if available, otherwise fallback to dense multiply
-            if constexpr (internal::has_sparse_kernels<ModelType>::value) {
-                ModelType::mult_Vxx_A(Vxx, kp, VxxA);
-            } else {
-                VxxA.noalias() = Vxx * kp.A;
+            // [FUSED KERNEL OPTIMIZATION]
+            if constexpr (internal::has_fused_riccati_step<ModelType>::value) {
+                // One-shot update of Qxx, Quu, Qux, qx, ru using fused kernel
+                ModelType::compute_fused_riccati_step(Vxx, Vx, kp);
+                
+                // If defect correction is enabled, apply the additional defect term
+                if (config.enable_defect_correction) {
+                    MSVec<double, Knot::NX> defect;
+                    if (soc_traj) {
+                        defect = (*soc_traj)[k].f_resid - (*soc_traj)[k+1].x;
+                    } else {
+                        defect = kp.f_resid - traj[k+1].x;
+                    }
+                    
+                    // Vxx * defect
+                    MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
+                    
+                    // Add A^T * Vxx_d and B^T * Vxx_d to gradients
+#ifdef USE_EIGEN
+                    kp.q_bar.noalias() += kp.A.transpose() * Vxx_d; 
+                    kp.r_bar.noalias() += kp.B.transpose() * Vxx_d; 
+#else
+                    kp.q_bar.add_At_mul_v(kp.A, Vxx_d);
+                    kp.r_bar.add_At_mul_v(kp.B, Vxx_d);
+#endif
+                }
             }
-            
-            MSMat<double, Knot::NX, Knot::NU> VxxB;
-            if constexpr (internal::has_sparse_kernels<ModelType>::value) {
-                ModelType::mult_Vxx_B(Vxx, kp, VxxB);
-            } else {
+            else {
+                // [LEGACY / SEPARATE KERNEL PATH]
+                // In-place updates for Riccati backward pass
+                // Use kp.Q_bar as accumulator for Qxx
+                // Use kp.R_bar as accumulator for Quu
+                // Use kp.H_bar as accumulator for Qux
+                
+                MSMat<double, Knot::NX, Knot::NX> VxxA;
+                VxxA.noalias() = Vxx * kp.A;
+                
+                MSMat<double, Knot::NX, Knot::NU> VxxB;
                 VxxB.noalias() = Vxx * kp.B; 
-            } 
 
-            if (config.enable_defect_correction) {
-                // Defect correction
-                MSVec<double, Knot::NX> defect;
-                if (soc_traj) {
-                    defect = (*soc_traj)[k].f_resid - (*soc_traj)[k+1].x;
+                if (config.enable_defect_correction) {
+                    // Defect correction
+                    MSVec<double, Knot::NX> defect;
+                    if (soc_traj) {
+                        defect = (*soc_traj)[k].f_resid - (*soc_traj)[k+1].x;
+                    } else {
+                        defect = kp.f_resid - traj[k+1].x;
+                    }
+                    
+                    MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
+
+                    // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
+                    // kp.q_bar += A^T * Vx
+    #ifdef USE_EIGEN
+                    kp.q_bar.noalias() += kp.A.transpose() * Vx;
+                    kp.q_bar.noalias() += kp.A.transpose() * Vxx_d; 
+                    
+                    kp.r_bar.noalias() += kp.B.transpose() * Vx;
+                    kp.r_bar.noalias() += kp.B.transpose() * Vxx_d; 
+    #else
+                    kp.q_bar.add_At_mul_v(kp.A, Vx);
+                    kp.q_bar.add_At_mul_v(kp.A, Vxx_d);
+                    
+                    kp.r_bar.add_At_mul_v(kp.B, Vx);
+                    kp.r_bar.add_At_mul_v(kp.B, Vxx_d);
+    #endif
                 } else {
-                    defect = kp.f_resid - traj[k+1].x;
+                    // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
+    #ifdef USE_EIGEN
+                    kp.q_bar.noalias() += kp.A.transpose() * Vx;
+                    kp.r_bar.noalias() += kp.B.transpose() * Vx;
+    #else
+                    kp.q_bar.add_At_mul_v(kp.A, Vx);
+                    kp.r_bar.add_At_mul_v(kp.B, Vx);
+    #endif
                 }
                 
-                MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
-
-                // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
-                // kp.q_bar += A^T * Vx
-#ifdef USE_EIGEN
-                kp.q_bar.noalias() += kp.A.transpose() * Vx;
-                kp.q_bar.noalias() += kp.A.transpose() * Vxx_d; 
-                
-                kp.r_bar.noalias() += kp.B.transpose() * Vx;
-                kp.r_bar.noalias() += kp.B.transpose() * Vxx_d; 
-#else
-                kp.q_bar.add_At_mul_v(kp.A, Vx);
-                kp.q_bar.add_At_mul_v(kp.A, Vxx_d);
-                
-                kp.r_bar.add_At_mul_v(kp.B, Vx);
-                kp.r_bar.add_At_mul_v(kp.B, Vxx_d);
-#endif
-            } else {
-                // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
-#ifdef USE_EIGEN
-                kp.q_bar.noalias() += kp.A.transpose() * Vx;
-                kp.r_bar.noalias() += kp.B.transpose() * Vx;
-#else
-                kp.q_bar.add_At_mul_v(kp.A, Vx);
-                kp.r_bar.add_At_mul_v(kp.B, Vx);
-#endif
-            }
-            
-            // Update Hessian Qxx (kp.Q_bar), Quu (kp.R_bar), Qux (kp.H_bar) in-place
-#ifdef USE_EIGEN
-            kp.Q_bar.noalias() += kp.A.transpose() * VxxA;
-            kp.R_bar.noalias() += kp.B.transpose() * VxxB;
-            kp.H_bar.noalias() += kp.B.transpose() * VxxA;
-#else
-            kp.Q_bar.add_At_mul_B(kp.A, VxxA);
-            kp.R_bar.add_At_mul_B(kp.B, VxxB);
-            kp.H_bar.add_At_mul_B(kp.B, VxxA);
-#endif
+                // Update Hessian Qxx (kp.Q_bar), Quu (kp.R_bar), Qux (kp.H_bar) in-place
+    #ifdef USE_EIGEN
+                kp.Q_bar.noalias() += kp.A.transpose() * VxxA;
+                kp.R_bar.noalias() += kp.B.transpose() * VxxB;
+                kp.H_bar.noalias() += kp.B.transpose() * VxxA;
+    #else
+                kp.Q_bar.add_At_mul_B(kp.A, VxxA);
+                kp.R_bar.add_At_mul_B(kp.B, VxxB);
+                kp.H_bar.add_At_mul_B(kp.B, VxxA);
+    #endif
+            } // End of Legacy Path
 
             if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
                 for(int i=0; i<Knot::NU; ++i) kp.R_bar(i,i) += reg;

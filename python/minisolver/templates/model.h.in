@@ -109,16 +109,16 @@ struct {{MODEL_NAME}} {
 
     // --- 5. Sparse Kernels (Generated) ---
     // [[SPARSE_KERNELS_START]]
-    // Computes: out = Vxx * A
-    // Exploits sparsity of A defined at compile time.
+    // --- 6. Fused Riccati Kernel (Generated) ---
+    // Updates kp.Q_bar, R_bar, H_bar, q_bar, r_bar in one go.
+    // Uses Vxx, Vx from next step.
     template<typename T>
-    static void mult_Vxx_A(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NX>& out) {
-{{SPARSE_MULT_VXX_A_BODY}}
-    }
-    // Computes: out = Vxx * B
-    template<typename T>
-    static void mult_Vxx_B(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NU>& out) {
-{{SPARSE_MULT_VXX_B_BODY}}
+    static void compute_fused_riccati_step(
+        const MSMat<T, NX, NX>& Vxx, 
+        const MSVec<T, NX>& Vx,
+        KnotPoint<T,NX,NU,NC,NP>& kp) 
+    {
+{{FUSED_RICCATI_STEP_BODY}}
     }
     // [[SPARSE_KERNELS_END]]
 };
