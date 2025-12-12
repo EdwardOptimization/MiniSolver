@@ -119,7 +119,7 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
         solver.set_initial_state("y", 0.0);
         solver.set_initial_state("theta", 0.0);
         solver.set_initial_state("kappa", 0.0);
-        solver.set_initial_state("v", 1.0); // Non-zero v to match debug
+        solver.set_initial_state("v", 5); // Non-zero v to match debug
         solver.set_initial_state("a", 0.0);
         
         // solver.rollout_dynamics(); // Removed to preserve smart guess
@@ -214,7 +214,7 @@ int main() {
     // 3. Mehrotra (The "Debug" Config)
     SolverConfig c3 = base;
     c3.barrier_strategy = BarrierStrategy::MEHROTRA; 
-    c3.line_search_type = LineSearchType::FILTER;
+    c3.line_search_type = LineSearchType::MERIT;
     c3.mu_init = 1e-3; // [Fix] Start with smaller mu since we have good guess
     c3.tol_con = 1e-2;
     // [Fix] Enable iterative refinement for Mehrotra to handle ill-conditioning near solution
