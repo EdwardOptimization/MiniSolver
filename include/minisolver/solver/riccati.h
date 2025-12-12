@@ -274,6 +274,11 @@ namespace internal {
         for(int k = N - 1; k >= 0; --k) {
             auto& kp = traj[k];
 
+            // In-place updates for Riccati backward pass
+            // Use kp.Q_bar as accumulator for Qxx
+            // Use kp.R_bar as accumulator for Quu
+            // Use kp.H_bar as accumulator for Qux
+            
             MSMat<double, Knot::NX, Knot::NX> VxxA;
             // Compile-time detection: use sparse kernel if available, otherwise fallback to dense multiply
             if constexpr (internal::has_sparse_kernels<ModelType>::value) {
@@ -290,23 +295,9 @@ namespace internal {
             } 
 
             if (config.enable_defect_correction) {
-                // For SOC, defect should likely be based on soc_kp values?
-                // Standard SOC: g(x_cand) + J dx_soc = 0.
-                // Dynamics constraint: x_{k+1} = f(x_k, u_k).
-                // Linearization: f + A dx + B du - (x_{k+1} + dx_{k+1}) = 0
-                // Residual: f - x_{k+1}.
-                // SOC: f(x_cand, u_cand) - x_{cand, k+1} + ...
-                // Usually we do SOC on dynamics too.
-                // If soc_traj is provided, we should use its defect?
-                // Let's assume for now SOC mainly targets inequalities, and dynamics are handled by re-linearization in outer loop.
-                // But for consistency, if we provide soc_traj, we can use its defect.
-                
+                // Defect correction
                 MSVec<double, Knot::NX> defect;
                 if (soc_traj) {
-                    // defect = f(x_cand) - x_cand_next ?
-                    // soc_traj stores candidate trajectory x, u.
-                    // f_resid in soc_traj[k] stores f(x_cand, u_cand).
-                    // So defect = soc_traj[k].f_resid - soc_traj[k+1].x
                     defect = (*soc_traj)[k].f_resid - (*soc_traj)[k+1].x;
                 } else {
                     defect = kp.f_resid - traj[k+1].x;
@@ -314,67 +305,66 @@ namespace internal {
                 
                 MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
 
+                // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
                 kp.q_bar.noalias() += kp.A.transpose() * Vx;
                 kp.q_bar.noalias() += kp.A.transpose() * Vxx_d; 
                 
                 kp.r_bar.noalias() += kp.B.transpose() * Vx;
                 kp.r_bar.noalias() += kp.B.transpose() * Vxx_d; 
             } else {
+                // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
                 kp.q_bar.noalias() += kp.A.transpose() * Vx;
                 kp.r_bar.noalias() += kp.B.transpose() * Vx;
             }
             
-            MSVec<double, Knot::NX> Qx = kp.q_bar; 
-            MSVec<double, Knot::NU> Qu = kp.r_bar; 
-
-            MSMat<double, Knot::NX, Knot::NX> Qxx = kp.Q_bar;
-            Qxx.noalias() += kp.A.transpose() * VxxA;
-            
-            MSMat<double, Knot::NU, Knot::NU> Quu = kp.R_bar;
-            Quu.noalias() += kp.B.transpose() * VxxB;
-            
-            MSMat<double, Knot::NU, Knot::NX> Qux = kp.H_bar;
-            Qux.noalias() += kp.B.transpose() * VxxA;
+            // Update Hessian Qxx (kp.Q_bar), Quu (kp.R_bar), Qux (kp.H_bar) in-place
+            kp.Q_bar.noalias() += kp.A.transpose() * VxxA;
+            kp.R_bar.noalias() += kp.B.transpose() * VxxB;
+            kp.H_bar.noalias() += kp.B.transpose() * VxxA;
 
             if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
-                for(int i=0; i<Knot::NU; ++i) Quu(i,i) += reg;
+                for(int i=0; i<Knot::NU; ++i) kp.R_bar(i,i) += reg;
             } else {
-                for(int i=0; i<Knot::NU; ++i) Quu(i,i) += config.reg_min; 
+                for(int i=0; i<Knot::NU; ++i) kp.R_bar(i,i) += config.reg_min; 
             }
 
             if (strategy == minisolver::InertiaStrategy::REGULARIZATION && Knot::NU <= 2) {
                 MSMat<double, Knot::NU, Knot::NU> Quu_inv;
-                if (!fast_inverse(Quu, Quu_inv)) return false;
-                kp.d.noalias() = -Quu_inv * Qu;
-                kp.K.noalias() = -Quu_inv * Qux;
+                if (!fast_inverse(kp.R_bar, Quu_inv)) return false;
+                kp.d.noalias() = -Quu_inv * kp.r_bar; // Qu is in kp.r_bar
+                kp.K.noalias() = -Quu_inv * kp.H_bar; // Qux is in kp.H_bar
             } 
             else {
-                if(!MatOps::is_pos_def(Quu)) {
+                if(!MatOps::is_pos_def(kp.R_bar)) {
                      if (strategy == minisolver::InertiaStrategy::REGULARIZATION) return false;
                      if (strategy == minisolver::InertiaStrategy::IGNORE_SINGULAR) {
                          bool fixed = false;
                          for(int i=0; i<Knot::NU; ++i) {
-                             if (Quu(i,i) < config.singular_threshold) { 
-                                 Quu(i,i) += config.huge_penalty;
+                             if (kp.R_bar(i,i) < config.singular_threshold) { 
+                                 kp.R_bar(i,i) += config.huge_penalty;
                                  fixed = true;
                              }
                          }
-                         if (fixed && !MatOps::is_pos_def(Quu)) return false; 
+                         if (fixed && !MatOps::is_pos_def(kp.R_bar)) return false; 
                      }
                 }
                 
-                MSVec<double, Knot::NU> neg_Qu = -Qu;
-                if(!MatOps::cholesky_solve(Quu, neg_Qu, kp.d)) return false;
+                // In-place solve: neg_Qu and neg_Qux logic replacement
+                // Solve Quu * d = -Qu  => Quu * d = -kp.r_bar
+                // Solve Quu * K = -Qux => Quu * K = -kp.H_bar
                 
-                MSMat<double, Knot::NU, Knot::NX> neg_Qux = -Qux;
-                if(!MatOps::cholesky_solve(Quu, neg_Qux, kp.K)) return false;
+                kp.d = -kp.r_bar;
+                if(!MatOps::cholesky_solve(kp.R_bar, kp.d, kp.d)) return false; // In-place solve supported? Assumed yes for now based on MatOps
+                
+                kp.K = -kp.H_bar;
+                if(!MatOps::cholesky_solve(kp.R_bar, kp.K, kp.K)) return false;
             }
 
-            Vx = Qx;
-            Vx.noalias() += Qux.transpose() * kp.d;
+            Vx = kp.q_bar;
+            Vx.noalias() += kp.H_bar.transpose() * kp.d;
 
-            Vxx = Qxx;
-            Vxx.noalias() += Qux.transpose() * kp.K;
+            Vxx = kp.Q_bar;
+            Vxx.noalias() += kp.H_bar.transpose() * kp.K;
             
             Vxx = 0.5 * (Vxx + Vxx.transpose());
             for(int i=0; i<Knot::NX; ++i) Vxx(i,i) += reg;

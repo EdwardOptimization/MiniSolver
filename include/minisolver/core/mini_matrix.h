@@ -123,6 +123,11 @@ public:
     // Eigen-like API
     MiniMatrix& noalias() { return *this; }
     
+    // In-place add scaled: this += other * scale
+    void add_scaled(const MiniMatrix& other, T scale) {
+        for(int i=0; i<R*C; ++i) data[i] += other.data[i] * scale;
+    }
+
     double dot(const MiniMatrix& other) const {
         double sum = 0;
         for(int i=0; i<R*C; ++i) sum += data[i] * other.data[i];
@@ -221,6 +226,23 @@ public:
         }
         return x;
     }
+
+    // In-place solve
+    void solve_in_place(MiniMatrix<T, N, 1>& b) {
+        // Forward sub Ly = b (overwrite b with y)
+        for(int i=0; i<N; ++i) {
+            T sum = 0;
+            for(int k=0; k<i; ++k) sum += L(i,k) * b(k);
+            b(i) = (b(i) - sum) / L(i,i);
+        }
+        
+        // Backward sub L^T x = y (overwrite b with x)
+        for(int i=N-1; i>=0; --i) {
+            T sum = 0;
+            for(int k=i+1; k<N; ++k) sum += L(k,i) * b(k);
+            b(i) = (b(i) - sum) / L(i,i);
+        }
+    }
     
     // Overload for Matrix RHS
     template<int C>
@@ -234,6 +256,25 @@ public:
              for(int i=0; i<N; ++i) X(i,c) = x_col(i);
         }
         return X;
+    }
+
+    // In-place Matrix RHS
+    template<int C>
+    void solve_in_place(MiniMatrix<T, N, C>& B) {
+        for(int c=0; c<C; ++c) {
+             // Forward
+             for(int i=0; i<N; ++i) {
+                 T sum = 0;
+                 for(int k=0; k<i; ++k) sum += L(i,k) * B(k,c);
+                 B(i,c) = (B(i,c) - sum) / L(i,i);
+             }
+             // Backward
+             for(int i=N-1; i>=0; --i) {
+                 T sum = 0;
+                 for(int k=i+1; k<N; ++k) sum += L(k,i) * B(k,c);
+                 B(i,c) = (B(i,c) - sum) / L(i,i);
+             }
+        }
     }
 };
 

@@ -127,7 +127,12 @@ namespace minisolver {
         static bool cholesky_solve(const Mat& A, const Vec& b, ResVec& x) {
             MiniLLT<double, Mat::Rows> llt(A);
             if (llt.info() != 0) return false;
-            x = llt.solve(b);
+            
+            if ((void*)&b == (void*)&x) {
+                llt.solve_in_place(x);
+            } else {
+                x = llt.solve(b);
+            }
             return true;
         }
         
