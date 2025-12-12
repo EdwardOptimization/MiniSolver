@@ -150,6 +150,49 @@ public:
         for(int i=0; i<R*C; ++i) if(!std::isfinite(data[i])) return false;
         return true;
     }
+
+    // [OPTIMIZATION] In-place symmetrization (for square matrices)
+    void symmetrize() {
+        static_assert(R == C, "Must be square");
+        for(int i=0; i<R-1; ++i) {
+            for(int j=i+1; j<C; ++j) { // Iterate upper triangle
+                T val = (data[i*C+j] + data[j*C+i]) * 0.5;
+                data[i*C+j] = val;
+                data[j*C+i] = val;
+            }
+        }
+    }
+
+    // [OPTIMIZATION] Accumulate transposed matrix multiplication: this += A^T * B
+    // Avoids creating temporary A^T and product matrix
+    // this: (R x C), A: (R_A x R), B: (R_A x C) -> A^T * B: (R x C)
+    template<int R_A>
+    void add_At_mul_B(const MiniMatrix<T, R_A, R>& A, const MiniMatrix<T, R_A, C>& B) {
+        for(int i=0; i<R; ++i) { // this rows (A cols)
+            for(int j=0; j<C; ++j) { // this cols (B cols)
+                T sum = 0;
+                for(int k=0; k<R_A; ++k) { // common dim (A rows, B rows)
+                    // A^T(i, k) = A(k, i)
+                    sum += A(k, i) * B(k, j);
+                }
+                (*this)(i,j) += sum;
+            }
+        }
+    }
+
+    // [OPTIMIZATION] Accumulate transposed matrix-vector multiplication: this_vec += A^T * x
+    // this: (R x 1), A: (R_A x R), x: (R_A x 1)
+    template<int R_A>
+    void add_At_mul_v(const MiniMatrix<T, R_A, R>& A, const MiniMatrix<T, R_A, 1>& x) {
+        static_assert(C == 1, "Destination must be a vector");
+        for(int i=0; i<R; ++i) { // this rows (A cols)
+            T sum = 0;
+            for(int k=0; k<R_A; ++k) { // A rows
+                sum += A(k, i) * x(k);
+            }
+            data[i] += sum;
+        }
+    }
 };
 
 // Diagonal Wrapper

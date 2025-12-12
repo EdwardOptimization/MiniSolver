@@ -306,21 +306,41 @@ namespace internal {
                 MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
 
                 // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
+                // kp.q_bar += A^T * Vx
+#ifdef USE_EIGEN
                 kp.q_bar.noalias() += kp.A.transpose() * Vx;
                 kp.q_bar.noalias() += kp.A.transpose() * Vxx_d; 
                 
                 kp.r_bar.noalias() += kp.B.transpose() * Vx;
                 kp.r_bar.noalias() += kp.B.transpose() * Vxx_d; 
+#else
+                kp.q_bar.add_At_mul_v(kp.A, Vx);
+                kp.q_bar.add_At_mul_v(kp.A, Vxx_d);
+                
+                kp.r_bar.add_At_mul_v(kp.B, Vx);
+                kp.r_bar.add_At_mul_v(kp.B, Vxx_d);
+#endif
             } else {
                 // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
+#ifdef USE_EIGEN
                 kp.q_bar.noalias() += kp.A.transpose() * Vx;
                 kp.r_bar.noalias() += kp.B.transpose() * Vx;
+#else
+                kp.q_bar.add_At_mul_v(kp.A, Vx);
+                kp.r_bar.add_At_mul_v(kp.B, Vx);
+#endif
             }
             
             // Update Hessian Qxx (kp.Q_bar), Quu (kp.R_bar), Qux (kp.H_bar) in-place
+#ifdef USE_EIGEN
             kp.Q_bar.noalias() += kp.A.transpose() * VxxA;
             kp.R_bar.noalias() += kp.B.transpose() * VxxB;
             kp.H_bar.noalias() += kp.B.transpose() * VxxA;
+#else
+            kp.Q_bar.add_At_mul_B(kp.A, VxxA);
+            kp.R_bar.add_At_mul_B(kp.B, VxxB);
+            kp.H_bar.add_At_mul_B(kp.B, VxxA);
+#endif
 
             if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
                 for(int i=0; i<Knot::NU; ++i) kp.R_bar(i,i) += reg;
@@ -361,12 +381,20 @@ namespace internal {
             }
 
             Vx = kp.q_bar;
+#ifdef USE_EIGEN
             Vx.noalias() += kp.H_bar.transpose() * kp.d;
+#else
+            Vx.add_At_mul_v(kp.H_bar, kp.d);
+#endif
 
             Vxx = kp.Q_bar;
+#ifdef USE_EIGEN
             Vxx.noalias() += kp.H_bar.transpose() * kp.K;
-            
             Vxx = 0.5 * (Vxx + Vxx.transpose());
+#else
+            Vxx.add_At_mul_B(kp.H_bar, kp.K);
+            Vxx.symmetrize();
+#endif
             for(int i=0; i<Knot::NX; ++i) Vxx(i,i) += reg;
         }
 
