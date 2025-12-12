@@ -275,7 +275,6 @@ namespace internal {
             auto& kp = traj[k];
 
             MSMat<double, Knot::NX, Knot::NX> VxxA;
-            // [COMPATIBILITY FIX] 
             // Compile-time detection: use sparse kernel if available, otherwise fallback to dense multiply
             if constexpr (internal::has_sparse_kernels<ModelType>::value) {
                 ModelType::mult_Vxx_A(Vxx, kp, VxxA);

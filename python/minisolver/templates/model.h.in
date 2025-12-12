@@ -108,6 +108,7 @@ struct {{MODEL_NAME}} {
     }
 
     // --- 5. Sparse Kernels (Generated) ---
+    // [[SPARSE_KERNELS_START]]
     // Computes: out = Vxx * A
     // Exploits sparsity of A defined at compile time.
     template<typename T>
@@ -119,5 +120,6 @@ struct {{MODEL_NAME}} {
     static void mult_Vxx_B(const MSMat<T, NX, NX>& Vxx, const KnotPoint<T,NX,NU,NC,NP>& kp, MSMat<T, NX, NU>& out) {
 {{SPARSE_MULT_VXX_B_BODY}}
     }
+    // [[SPARSE_KERNELS_END]]
 };
 }

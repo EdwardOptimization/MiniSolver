@@ -29,6 +29,8 @@ class OptimalControlModel:
         # list of {index, type='L1'/'L2', weight}
         self.soft_constraints = []
 
+        self.use_sparse_kernels = True
+
     def state(self, *names):
         symbols = []
         for name in names:
@@ -338,7 +340,9 @@ class OptimalControlModel:
                          code += f"        }}\n"
         return code
 
-    def generate(self, output_dir="include/model"):
+    def generate(self, output_dir="include/model", use_sparse_kernels=True):
+        self.use_sparse_kernels = use_sparse_kernels
+
         # 1. Vectorize
         x_vec = sp.Matrix(self.states)
         u_vec = sp.Matrix(self.controls)
@@ -733,8 +737,16 @@ class OptimalControlModel:
         content = content.replace("{{COMPUTE_DYNAMICS_BODY}}", code_compute_dyn)
         content = content.replace("{{COMPUTE_CONSTRAINTS_BODY}}", code_compute_con)
         content = content.replace("{{COMPUTE_COST_SECTION}}", code_compute_cost)
-        content = content.replace("{{SPARSE_MULT_VXX_A_BODY}}", code_sparse_A)
-        content = content.replace("{{SPARSE_MULT_VXX_B_BODY}}", code_sparse_B)
+        
+        if self.use_sparse_kernels:
+            content = content.replace("{{SPARSE_MULT_VXX_A_BODY}}", code_sparse_A)
+            content = content.replace("{{SPARSE_MULT_VXX_B_BODY}}", code_sparse_B)
+            # Remove markers
+            content = re.sub(r"// \[\[SPARSE_KERNELS_START\]\]", "", content)
+            content = re.sub(r"// \[\[SPARSE_KERNELS_END\]\]", "", content)
+        else:
+            # Remove the whole section
+            content = re.sub(r"// \[\[SPARSE_KERNELS_START\]\].*?// \[\[SPARSE_KERNELS_END\]\]", "", content, flags=re.DOTALL)
 
         # 7. Write Output
         file_name = "car_model.h" 

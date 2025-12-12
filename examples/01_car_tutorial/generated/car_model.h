@@ -468,6 +468,7 @@ template<typename T>
     }
 
     // --- 5. Sparse Kernels (Generated) ---
+    
     // Computes: out = Vxx * A
     // Exploits sparsity of A defined at compile time.
     template<typename T>
@@ -561,5 +562,6 @@ template<typename T>
         out(3, 1) += Vxx(3, 2) * kp.B(2, 1);
 
     }
+    
 };
 }
