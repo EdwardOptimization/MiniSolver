@@ -792,7 +792,27 @@ public:
         
         // Final Feasibility Check
         auto& traj = trajectory.active();
-        
+        // As LineSearch only updates x/u, it does not update q, r, A, B and Barrier gradient r_bar
+        // Before final check, it must be forced to refresh, otherwise the dirty data from the last iteration is used.
+        for(int k=0; k<=N; ++k) {
+            double current_dt = (k < N) ? dt_traj[k] : 0.0;
+            
+            // 1. Recompute model derivatives (update q, r, g_val, A, B...)
+            if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                Model::compute_cost_gn(traj[k]);
+                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                Model::compute_constraints(traj[k]);
+            } else {
+                Model::compute_cost_exact(traj[k]);
+                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                Model::compute_constraints(traj[k]);
+            }
+            
+            // 2. Recompute Barrier gradient (update q_bar, r_bar)
+            // This requires calling the helper function in riccati.h
+            compute_barrier_derivatives<Knot, Model>(traj[k], mu, config);
+        }
+
         // 1. Check for NaNs in constraints/slacks
         bool any_nan = false;
         for(int k=0; k<=N; ++k) {
@@ -871,7 +891,6 @@ public:
         
         // Use helper for Primal Inf
         max_prim_inf = compute_max_violation(traj);
-        if (max_prim_inf > max_kkt_error) max_kkt_error = max_prim_inf;
         
         timer.stop();
         
