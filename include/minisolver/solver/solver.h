@@ -225,6 +225,12 @@ public:
         if (stage > N || stage < 0 || idx >= NP || idx < 0) return 0.0;
         return trajectory[stage].p(idx);
     }
+
+    double get_parameter(int stage, const std::string& name) const {
+        int idx = get_param_idx(name);
+        if (idx != -1) return get_parameter(stage, idx);
+        return 0.0;
+    }
     
     std::vector<double> get_parameters(int stage) const {
         if (stage > N || stage < 0) return {};
