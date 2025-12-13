@@ -145,6 +145,7 @@ endif()
 # --- Examples ---
 add_subdirectory(examples/01_car_tutorial)
 add_subdirectory(examples/02_advanced_bicycle)
+add_subdirectory(examples/03_line_search_benchmark)
 
 # --- Tools ---
 add_executable(benchmark_suite tools/benchmark_suite/benchmark_suite.cpp)

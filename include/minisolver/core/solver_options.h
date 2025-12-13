@@ -49,6 +49,13 @@ enum class Backend {
     GPU_PCR
 };
 
+// SIMD Configuration
+enum class SimdMode {
+    DISABLED,       // Never use SIMD optimizations
+    ALL_ITERATIONS, // Use SIMD for all line search iterations
+    SKIP_FIRST      // Use SIMD for iterations after the first one
+};
+
 // Reset Options
 enum class ResetOption {
     // Resets only algorithmic state (mu, reg, iter, filter, timers).
@@ -139,7 +146,10 @@ struct SolverConfig {
 
     // --- Advanced Features ---
     HessianApproximation hessian_approximation = HessianApproximation::GAUSS_NEWTON; // Default to GN for speed
-    
+
+    // SIMD Configuration
+    SimdMode line_search_simd_mode = SimdMode::SKIP_FIRST; // Use SIMD by default for performance
+
     bool enable_iterative_refinement = false;
     int max_refinement_steps = 1;
     

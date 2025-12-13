@@ -3,11 +3,14 @@
 #include <memory>
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 #include "minisolver/core/types.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/trajectory.h"
 #include "minisolver/core/logger.h" // [NEW] Needed for MLOG_DEBUG
+#include "minisolver/core/simd_utils.h" // [NEW] Needed for SIMD operations
+#include "minisolver/core/matrix_defs.h" // [NEW] Needed for MatOps
 #include "minisolver/algorithms/linear_solver.h"
 #include "minisolver/solver/line_search_utils.h" // [NEW] Needed for fraction_to_boundary_rule
 
@@ -26,13 +29,38 @@ public:
 
     virtual ~LineSearchStrategy() = default;
 
-    virtual double search(TrajectoryType& trajectory, 
+    virtual double search(TrajectoryType& trajectory,
                           LinearSolver<TrajArray>& linear_solver,
                           const std::array<double, MAX_N>& dt_traj,
                           double mu, double reg,
                           const SolverConfig& config) = 0;
-                          
+
     virtual void reset() {}
+
+    // SIMD-optimized vector update helper (public for all line search strategies)
+    template<typename VecType>
+    static void update_vector_simd(VecType& result, const VecType& base, const VecType& delta,
+                                  double alpha, SimdLevel simd_level) {
+        if (simd_level == SimdLevel::NONE) {
+            result = base + alpha * delta;
+            return;
+        }
+
+        // Convert Eigen vectors to std::vector for SIMD processing
+        int size = base.size();
+        std::vector<double> base_vec(size), delta_vec(size), result_vec(size);
+
+        for(int i = 0; i < size; ++i) {
+            base_vec[i] = base(i);
+            delta_vec[i] = delta(i);
+        }
+
+        SimdDispatcher<double>::add_scaled(result_vec, base_vec, delta_vec, alpha, simd_level);
+
+        for(int i = 0; i < size; ++i) {
+            result(i) = result_vec[i];
+        }
+    }
 };
 
 // --- Merit Function Strategy ---
@@ -43,6 +71,15 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
     using typename Base::TrajArray;
     
     double merit_nu = 1000.0;
+
+    // SIMD-optimized version of compute_merit
+    double compute_merit_simd(const TrajArray& t, int N, double mu, const SolverConfig& config, [[maybe_unused]] SimdLevel simd_level) {
+        // For complex functions like merit computation, SIMD optimization requires
+        // significant restructuring. For now, fall back to scalar computation
+        // but mark this as an area for future optimization.
+        return compute_merit(t, N, mu, config);
+    }
+
 
     double compute_merit(const TrajArray& t, int N, double mu, const SolverConfig& config) {
         double total_merit = 0.0;
@@ -134,26 +171,43 @@ public:
         merit_nu = 1000.0;
     }
 
-    double search(TrajectoryType& trajectory, 
+    double search(TrajectoryType& trajectory,
                   LinearSolver<TrajArray>& /*linear_solver*/,
                   const std::array<double, MAX_N>& dt_traj,
                   double mu, double /*reg*/,
-                  const SolverConfig& config) override 
+                  const SolverConfig& config) override
     {
         int N = trajectory.N;
         auto& active = trajectory.active();
-        
+
+        // Determine SIMD usage
+        SimdLevel detected_level = SimdDetector::detect_capability();
+        SimdLevel effective_level = SimdLevel::NONE;
+        bool use_simd = false;
+
+        if (config.line_search_simd_mode != SimdMode::DISABLED) {
+            if (detected_level != SimdLevel::NONE) {
+                effective_level = detected_level;
+                use_simd = true;
+            } else if (config.line_search_simd_mode != SimdMode::DISABLED) {
+                // Warn user that SIMD was requested but not available
+                std::cout << "[MiniSolver] Warning: SIMD requested but CPU does not support AVX2/AVX512. "
+                          << "Falling back to scalar operations." << std::endl;
+            }
+        }
+
         // 1. Update Nu
         double max_dual = 0.0;
         for(int k=0; k<=N; ++k) {
             double local_max = MatOps::norm_inf(active[k].lam);
             if(local_max > max_dual) max_dual = local_max;
         }
-        double required_nu = max_dual * 1.1 + 1.0; 
+        double required_nu = max_dual * 1.1 + 1.0;
         if (required_nu > merit_nu) merit_nu = required_nu;
 
         // 2. Initial Merit
-        double phi_0 = compute_merit(active, N, mu, config);
+        double phi_0 = use_simd ? compute_merit_simd(active, N, mu, config, effective_level) :
+                                 compute_merit(active, N, mu, config);
         
         // 3. Calc max alpha
         double alpha = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
@@ -163,17 +217,26 @@ public:
         
         bool accepted = false;
         int ls_iter = 0;
-        
+        bool skip_first_iter = (config.line_search_simd_mode == SimdMode::SKIP_FIRST);
+
         while (ls_iter < config.line_search_max_iters) {
+            // Determine if we should use SIMD for this iteration
+            bool use_simd_this_iter = use_simd && (!skip_first_iter || ls_iter > 0);
             // Update
             for(int k=0; k<=N; ++k) {
-                candidate[k].x = active[k].x + alpha * active[k].dx;
-                candidate[k].u = active[k].u + alpha * active[k].du;
-                candidate[k].s = active[k].s + alpha * active[k].ds;
-                candidate[k].lam = active[k].lam + alpha * active[k].dlam;
-                
-                // Update soft vars
-                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+                if (use_simd_this_iter) {
+                    Base::update_vector_simd(candidate[k].x, active[k].x, active[k].dx, alpha, effective_level);
+                    Base::update_vector_simd(candidate[k].u, active[k].u, active[k].du, alpha, effective_level);
+                    Base::update_vector_simd(candidate[k].s, active[k].s, active[k].ds, alpha, effective_level);
+                    Base::update_vector_simd(candidate[k].lam, active[k].lam, active[k].dlam, alpha, effective_level);
+                    Base::update_vector_simd(candidate[k].soft_s, active[k].soft_s, active[k].dsoft_s, alpha, effective_level);
+                } else {
+                    candidate[k].x = active[k].x + alpha * active[k].dx;
+                    candidate[k].u = active[k].u + alpha * active[k].du;
+                    candidate[k].s = active[k].s + alpha * active[k].ds;
+                    candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+                    candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+                }
                 
                 candidate[k].p = active[k].p; 
                 
@@ -196,8 +259,9 @@ public:
                     Model::compute_constraints(candidate[k]);
                 }
             }
-            
-            double phi_alpha = compute_merit(candidate, N, mu, config);
+
+            double phi_alpha = use_simd_this_iter ? compute_merit_simd(candidate, N, mu, config, effective_level) :
+                                                   compute_merit(candidate, N, mu, config);
             
             // Armijo condition could be added here: phi_alpha < phi_0 - eta * alpha * ...
             // For now, simple decrease.
@@ -228,6 +292,13 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     using typename Base::TrajArray;
     
     std::vector<std::pair<double, double>> filter;
+
+    // SIMD-optimized version of compute_metrics
+    std::pair<double, double> compute_metrics_simd(const TrajArray& t, int N, double mu, const SolverConfig& config, [[maybe_unused]] SimdLevel simd_level) {
+        // For now, fall back to the original implementation
+        // TODO: Implement proper SIMD vectorization
+        return compute_metrics(t, N, mu, config);
+    }
 
     std::pair<double, double> compute_metrics(const TrajArray& t, int N, double mu, const SolverConfig& config) {
         double theta = 0.0; 
@@ -355,16 +426,33 @@ public:
         filter.clear();
     }
     
-    double search(TrajectoryType& trajectory, 
+    double search(TrajectoryType& trajectory,
                   LinearSolver<TrajArray>& linear_solver,
                   const std::array<double, MAX_N>& dt_traj,
                   double mu, double reg,
-                  const SolverConfig& config) override 
+                  const SolverConfig& config) override
     {
         int N = trajectory.N;
         auto& active = trajectory.active();
-        
-        auto m_0 = compute_metrics(active, N, mu, config);
+
+        // Determine SIMD usage
+        SimdLevel detected_level = SimdDetector::detect_capability();
+        SimdLevel effective_level = SimdLevel::NONE;
+        bool use_simd = false;
+
+        if (config.line_search_simd_mode != SimdMode::DISABLED) {
+            if (detected_level != SimdLevel::NONE) {
+                effective_level = detected_level;
+                use_simd = true;
+            } else if (config.line_search_simd_mode != SimdMode::DISABLED) {
+                // Warn user that SIMD was requested but not available
+                std::cout << "[MiniSolver] Warning: SIMD requested but CPU does not support AVX2/AVX512. "
+                          << "Falling back to scalar operations." << std::endl;
+            }
+        }
+
+        auto m_0 = use_simd ? compute_metrics_simd(active, N, mu, config, effective_level) :
+                             compute_metrics(active, N, mu, config);
         double theta_0 = m_0.first;
         double phi_0 = m_0.second;
         
@@ -377,14 +465,25 @@ public:
         bool accepted = false;
         int ls_iter = 0;
         bool soc_attempted = false;
-        
+        bool skip_first_iter = (config.line_search_simd_mode == SimdMode::SKIP_FIRST);
+
         while (ls_iter < config.line_search_max_iters) {
+            // Determine if we should use SIMD for this iteration
+            bool use_simd_this_iter = use_simd && (!skip_first_iter || ls_iter > 0);
             for(int k=0; k<=N; ++k) {
-                candidate[k].x = active[k].x + alpha * active[k].dx;
-                candidate[k].u = active[k].u + alpha * active[k].du;
-                candidate[k].s = active[k].s + alpha * active[k].ds;
-                candidate[k].lam = active[k].lam + alpha * active[k].dlam;
-                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+                if (use_simd_this_iter) {
+                    Base::update_vector_simd(candidate[k].x, active[k].x, active[k].dx, alpha, effective_level);
+                    Base::update_vector_simd(candidate[k].u, active[k].u, active[k].du, alpha, effective_level);
+                    Base::update_vector_simd(candidate[k].s, active[k].s, active[k].ds, alpha, effective_level);
+                    Base::update_vector_simd(candidate[k].lam, active[k].lam, active[k].dlam, alpha, effective_level);
+                    Base::update_vector_simd(candidate[k].soft_s, active[k].soft_s, active[k].dsoft_s, alpha, effective_level);
+                } else {
+                    candidate[k].x = active[k].x + alpha * active[k].dx;
+                    candidate[k].u = active[k].u + alpha * active[k].du;
+                    candidate[k].s = active[k].s + alpha * active[k].ds;
+                    candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+                    candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+                }
                 candidate[k].p = active[k].p; 
                 
                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
@@ -406,8 +505,9 @@ public:
                     Model::compute_constraints(candidate[k]);
                 }
             }
-            
-            auto m_alpha = compute_metrics(candidate, N, mu, config);
+
+            auto m_alpha = use_simd_this_iter ? compute_metrics_simd(candidate, N, mu, config, effective_level) :
+                                               compute_metrics(candidate, N, mu, config);
             if (is_acceptable(m_alpha.first, m_alpha.second, theta_0, phi_0, config)) {
                 accepted = true;
             }
@@ -464,8 +564,9 @@ public:
                     Model::compute_constraints(candidate[k]);
                 }
                     }
-                    
-                    auto m_soc = compute_metrics(candidate, N, mu, config);
+
+                    auto m_soc = use_simd_this_iter ? compute_metrics_simd(candidate, N, mu, config, effective_level) :
+                                                     compute_metrics(candidate, N, mu, config);
                     if (is_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config)) {
                         if (config.print_level >= PrintLevel::DEBUG) 
                              MLOG_DEBUG("SOC Accepted.");
