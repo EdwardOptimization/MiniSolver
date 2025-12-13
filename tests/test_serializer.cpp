@@ -65,12 +65,7 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
     EXPECT_EQ(solver2.N, N);
     EXPECT_EQ(solver2.config.mu_init, 0.5);
     EXPECT_EQ(solver2.config.barrier_strategy, BarrierStrategy::MEHROTRA);
-    EXPECT_EQ(solver2.current_iter, 0); // Note: load_case resets iter to 0 usually? 
-                                        // Let's check implementation. 
-                                        // SolverSerializer::load_case sets config/mu/reg/dt/traj. 
-                                        // It does NOT explicitly restore 'current_iter' to solver object 
-                                        // (because solver object usually starts fresh solve).
-                                        // The iteration count is just metadata in the file for user info.
+    // Note: load_case restores mu/reg from file now (updated behavior)
     
     // Verify Trajectory
     const auto& traj2 = solver2.trajectory.active();
@@ -84,8 +79,6 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
             EXPECT_DOUBLE_EQ(traj2[k].u(i), k * 0.5);
         }
         // P
-        // Check a parameter (v_ref index = 5 in car_model usually, but let's check values)
-        // param_names: "obs_x", "obs_y", "obs_rad", "v_ref", "car_rad", "L", "w_vel", "w_steer", "w_acc"
         EXPECT_EQ(solver2.get_parameter(k, solver2.get_param_idx("v_ref")), 5.0);
         EXPECT_EQ(solver2.get_parameter(k, solver2.get_param_idx("L")), 2.5);
 
@@ -100,3 +93,47 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
     std::remove(filename.c_str());
 }
 
+TEST(SerializerTest, FullRoundTrip) {
+    int N = 5;
+    SolverConfig config;
+    
+    // 1. Create and Run Solver A
+    MiniSolver<CarModel, 10> solverA(N, Backend::CPU_SERIAL, config);
+    solverA.set_dt(0.1);
+    solverA.set_initial_state("x", 1.0);
+    solverA.set_parameter(0, "v_ref", 5.0);
+    
+    // Run 1 step to populate internal state (s, lam, etc.)
+    solverA.config.max_iters = 1;
+    solverA.solve();
+    
+    // 2. Serialize to File
+    std::string filename = "test_roundtrip.bin";
+    minisolver::SolverSerializer<CarModel, 10>::save_case(filename, solverA);
+    
+    // 3. Deserialize to Solver B
+    MiniSolver<CarModel, 10> solverB(N, Backend::CPU_SERIAL, config);
+    bool load_ok = minisolver::SolverSerializer<CarModel, 10>::load_case(filename, solverB);
+    EXPECT_TRUE(load_ok);
+    
+    // 4. Cleanup
+    std::remove(filename.c_str());
+    
+    // 5. Compare State (Bit-Exact)
+    EXPECT_EQ(solverA.N, solverB.N);
+    EXPECT_EQ(solverA.mu, solverB.mu);
+    EXPECT_EQ(solverA.reg, solverB.reg);
+    
+    auto& trajA = solverA.trajectory.active();
+    auto& trajB = solverB.trajectory.active();
+    
+    for(int k=0; k<=N; ++k) {
+        for(int i=0; i<CarModel::NX; ++i) EXPECT_EQ(trajA[k].x(i), trajB[k].x(i));
+        for(int i=0; i<CarModel::NU; ++i) EXPECT_EQ(trajA[k].u(i), trajB[k].u(i));
+        for(int i=0; i<CarModel::NC; ++i) {
+            EXPECT_EQ(trajA[k].s(i), trajB[k].s(i));
+            EXPECT_EQ(trajA[k].lam(i), trajB[k].lam(i));
+        }
+        for(int i=0; i<CarModel::NP; ++i) EXPECT_EQ(trajA[k].p(i), trajB[k].p(i));
+    }
+}

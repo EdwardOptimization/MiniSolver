@@ -28,12 +28,15 @@ public:
     using Clock = std::chrono::high_resolution_clock;
     std::map<std::string, double> times;
     std::vector<std::pair<std::string, std::chrono::time_point<Clock>>> stack;
+    bool enabled = false; // Default disabled, use for test memory allocation
 
     void start(const std::string& name) {
+        if (!enabled) return;
         stack.push_back({name, Clock::now()});
     }
 
     void stop() {
+        if (!enabled) return;
         if (stack.empty()) return;
         auto end_time = Clock::now();
         auto& entry = stack.back();
@@ -48,6 +51,7 @@ public:
     }
     
     void print() {
+        if (!enabled) return;
         std::stringstream ss;
         ss << "\n--- Solver Profiling (ms) ---\n";
         for(auto const& [name, time] : times) {
@@ -1042,6 +1046,9 @@ private:
     // [Phase 1] Presolve: Preparation
     // ============================================================
     void presolve() {
+        // [Enable/Disable Profiling]
+        timer.enabled = config.enable_profiling;
+        
         current_iter = 0;
         slack_reset_consecutive_count = 0; 
         reg = config.reg_init;

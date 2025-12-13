@@ -32,6 +32,8 @@ public:
         SolverStatus status = SolverStatus::UNSOLVED;
         int iterations = 0;
         double total_cost = 0.0;
+        double mu = 0.0;
+        double reg = 0.0;
 
         // Flattened trajectory data for serialization
         // Structure: [k=0...N]
@@ -57,6 +59,8 @@ public:
         state.N = solver.N;
         state.status = status;
         state.iterations = solver.current_iter;
+        state.mu = solver.mu;
+        state.reg = solver.reg;
         
         // 1. Copy Time Steps
         state.dt_traj.resize(solver.N);
@@ -122,6 +126,8 @@ public:
         out.write((char*)&status_i, sizeof(status_i));
         out.write((char*)&state.iterations, sizeof(state.iterations));
         out.write((char*)&state.total_cost, sizeof(state.total_cost));
+        out.write((char*)&state.mu, sizeof(state.mu));
+        out.write((char*)&state.reg, sizeof(state.reg));
 
         // 5. Time Steps
         if (!state.dt_traj.empty()) {
@@ -201,12 +207,15 @@ public:
         in.read((char*)&status_i, sizeof(status_i));
         in.read((char*)&iter, sizeof(iter));
         in.read((char*)&cost, sizeof(cost));
+        double mu_val, reg_val;
+        in.read((char*)&mu_val, sizeof(mu_val));
+        in.read((char*)&reg_val, sizeof(reg_val));
         
         std::cout << "[Serializer] Info - Saved Status: " << status_to_string((SolverStatus)status_i)
                   << ", Iters: " << iter << ", Cost: " << cost << "\n";
 
-        solver.mu = cfg.mu_init;
-        solver.reg = cfg.reg_init;
+        solver.mu = mu_val;
+        solver.reg = reg_val;
         
         // Update components based on config
         if (cfg.line_search_type == LineSearchType::MERIT) {
