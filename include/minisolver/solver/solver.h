@@ -375,9 +375,22 @@ public:
         is_warm_started = true;
     }
 
-    bool check_convergence(double max_viol, double max_dual) {
-        if(mu <= config.mu_min && max_viol <= config.tol_con && max_dual <= config.tol_dual) return true;
-        return false;
+    bool check_convergence(double max_viol, double max_dual, double max_kkt_error) {
+        // must satisfy all of the following conditions:
+        // 1. barrier parameter mu is small enough (target precision)
+        // 2. primal constraints are satisfied (Feasible)
+        // 3. dual gradient is satisfied (Stationary)
+        // 4. complementarity is satisfied (Complementarity): s*lam is close to mu
+        
+        bool mu_converged = (mu <= config.mu_min);
+        bool primal_ok = (max_viol <= config.tol_con);
+        bool dual_ok = (max_dual <= config.tol_dual);
+        
+        // complementarity error tolerance is usually set to kappa * mu or a slightly relaxed fixed value
+        // here we require it to converge to tol_cost or tol_mu level
+        bool kkt_ok = (max_kkt_error <= std::max(config.tol_mu, 10.0 * mu));
+        
+        return mu_converged && primal_ok && dual_ok && kkt_ok;
     }
 
     void update_barrier(double max_kkt_error, double avg_gap) {
@@ -578,17 +591,17 @@ public:
                 traj[k].s += alpha * traj[k].ds;
                 traj[k].lam += alpha * traj[k].dlam;
             }
-            // rollout_dynamics(); // [FIX] Don't force rollout in restoration. Allow defects to be handled by solver.
+            // rollout_dynamics(); // Don't force rollout in restoration. Allow defects to be handled by solver.
         }
         
-        // [FIX] Reset Lagrange Multipliers for the original problem to avoid dual contamination
+        // Reset Lagrange Multipliers for the original problem to avoid dual contamination
         // form the restoration phase (which solves a different problem).
         for(int k=0; k<=N; ++k) {
              for(int i=0; i<NC; ++i) {
                   // Ensure s is positive
                   if(traj[k].s(i) < 1e-9) traj[k].s(i) = 1e-9;
                   
-                  // [FIX] Preserve dual info from restoration if valuable, but ensure complementarity lower bound
+                  // Preserve dual info from restoration if valuable, but ensure complementarity lower bound
                   double reset_val = saved_mu / traj[k].s(i);
                   traj[k].lam(i) = std::max(traj[k].lam(i), reset_val);
              }
@@ -596,6 +609,7 @@ public:
 
         mu = saved_mu;
         reg = saved_reg;
+
         return success;
     }
 
@@ -790,15 +804,22 @@ public:
         // 2. Compute consistent metrics using helper
         double max_viol = compute_max_violation(traj);
         double max_dual = 0.0;
+        double max_comp = 0.0;
 
         for(int k=0; k<=N; ++k) {
              // double g_norm = MatOps::norm_inf(traj[k].q_bar);
              double r_norm = MatOps::norm_inf(traj[k].r_bar);
              if(r_norm > max_dual) max_dual = r_norm;
+
+             // Recompute complementarity error for final check
+             for(int i=0; i<NC; ++i) {
+                double err = std::abs(traj[k].s(i) * traj[k].lam(i) - mu);
+                max_comp = std::max(max_comp, err);
+            }
         }
         // If we reached here (MaxIter), check if we are at least feasible and stationary enough
         // to call it "FEASIBLE" (suboptimal but safe) or even "SOLVED" (if we just missed the loop check)
-        if (check_convergence(max_viol, max_dual)) return SolverStatus::SOLVED;
+        if (check_convergence(max_viol, max_dual, max_comp)) return SolverStatus::SOLVED;
         if (max_viol <= config.tol_con) return SolverStatus::FEASIBLE;
         
         return SolverStatus::MAX_ITER;
@@ -849,7 +870,7 @@ public:
         timer.stop();
         
         // Initial convergence check (Primal + Dual + Mu)
-        if(check_convergence(max_prim_inf, max_dual_inf)) return SolverStatus::SOLVED;
+        if(check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) return SolverStatus::SOLVED;
 
         // Check for Numerical Instability (NaN/Inf)
         if (has_nans(traj)) {
@@ -987,7 +1008,7 @@ public:
             if (sigma < 1e-4) sigma = 1e-4; // Prevent too small sigma
             
             double mu_target = sigma * mu_curr;
-            if (mu_target < config.mu_min) mu_target = config.mu_min; // [FIX] Enforce lower bound
+            if (mu_target < config.mu_min) mu_target = config.mu_min; // Enforce lower bound
             
             // 2. Corrector Step
             // Solve with mu_target and affine correction term
@@ -1027,7 +1048,7 @@ public:
              reg = std::max(config.reg_min, reg / config.reg_scale_down);
         }
         
-        // [NEW] Iterative Refinement
+        // Iterative Refinement
         if (solve_success && config.enable_iterative_refinement) {
              // Pass 'traj' (which contains solution dx, du) and 'candidate' (which contains original system)
              linear_solver->refine(traj, trajectory.candidate(), N, mu, reg, config);
@@ -1124,9 +1145,9 @@ public:
         }
         timer.stop();
 
-        print_iteration_log(alpha); // [FIX] Restore logging
+        print_iteration_log(alpha); // Restore logging
 
-        // [FIX] Final Convergence Check using Step Size and Residuals
+        // Final Convergence Check using Step Size and Residuals
         // Avoids wasting a full derivative computation in next step if we are already done.
         bool is_feasible = (max_prim_inf < config.tol_con);
         bool is_dual_feasible = (max_dual_inf < config.tol_dual);
@@ -1140,8 +1161,10 @@ public:
                 double dx_norm = MatOps::norm_inf(trajectory.active()[k].dx);
                 if (dx_norm > max_dx) max_dx = dx_norm;
             }
-            double actual_step = alpha * max_dx;
-            if (actual_step < config.tol_dual && is_feasible && is_dual_feasible) {
+            // Use unscaled Newton step (max_dx) to check stationarity.
+            // Using (alpha * max_dx) is dangerous because small alpha (blocked step) 
+            // can look like convergence.
+            if (max_dx < config.tol_grad && is_feasible && is_dual_feasible) {
                 return SolverStatus::SOLVED;
             }
         }
@@ -1160,7 +1183,7 @@ public:
     }
 
 private:
-    // 辅助函数：计算当前轨迹的最大约束违背量
+    // helper function: calculate the maximum constraint violation of the current trajectory
     double compute_max_violation(const TrajArray& traj) const {
         double max_viol = 0.0;
         for(int k=0; k<=N; ++k) {
@@ -1168,7 +1191,7 @@ private:
             for(int i=0; i<NC; ++i) {
                 double viol = 0.0;
                 
-                // 获取约束元数据
+                // get the constraint weight and type
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
@@ -1177,7 +1200,7 @@ private:
                         w = Model::constraint_weights[i];
                      }
                 }
-                // 统一的违背量计算逻辑
+                // unified violation calculation logic
                 if (type == 1 && w > 1e-6) { // L1
                      viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
                 } else if (type == 2 && w > 1e-6) { // L2

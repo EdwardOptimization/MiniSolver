@@ -26,6 +26,9 @@ struct Result {
     bool success;
     int iters;
     double time_ms;
+    double deriv_avg;
+    double solve_avg;
+    double ls_avg;
     double cost;
     double viol;
 };
@@ -88,7 +91,10 @@ Result run_case(const BenchmarkCase& test_case) {
     
     std::vector<double> times;
     times.reserve(NUM_RUNS);
-    
+    double sum_deriv = 0;
+    double sum_solve = 0;
+    double sum_ls = 0;
+
     Result res;
     res.name = test_case.name;
     
@@ -105,7 +111,10 @@ Result run_case(const BenchmarkCase& test_case) {
         
         if (i >= WARMUP) {
             times.push_back(std::chrono::duration<double, std::milli>(end - start).count());
-            
+            sum_deriv += solver.timer.times["Derivatives"];
+            sum_solve += solver.timer.times["Linear Solve"];
+            sum_ls    += solver.timer.times["Line Search"];
+
             // Capture stats from the final run
             if (i == WARMUP + NUM_RUNS - 1) {
                 res.success = (status == SolverStatus::SOLVED || status == SolverStatus::FEASIBLE);
@@ -130,6 +139,9 @@ Result run_case(const BenchmarkCase& test_case) {
     
     double sum = std::accumulate(times.begin(), times.end(), 0.0);
     res.time_ms = sum / NUM_RUNS;
+    res.deriv_avg = sum_deriv / NUM_RUNS;
+    res.solve_avg = sum_solve / NUM_RUNS;
+    res.ls_avg    = sum_ls / NUM_RUNS;
     return res;
 }
 
@@ -218,15 +230,18 @@ int main() {
     cases.push_back({"SQP_RTI", "Euler + Single Iteration", c8});
 
     // --- Report Generation ---
-    std::cout << "\n==================================================================================================\n";
+    std::cout << "\n==========================================================================================================================================\n";
     std::cout << std::left << std::setw(18) << "Archetype" 
               << std::setw(35) << "Configuration Summary" 
               << std::setw(12) << "Time(ms)" 
+              << std::setw(12) << "Deriv(ms)" 
+              << std::setw(12) << "Solve(ms)" 
+              << std::setw(12) << "LS(ms)" 
               << std::setw(8) << "Iters" 
               << std::setw(10) << "Status" 
               << std::setw(12) << "Cost"
               << std::setw(10) << "MaxViol" << "\n";
-    std::cout << "--------------------------------------------------------------------------------------------------\n";
+    std::cout << "------------------------------------------------------------------------------------------------------------------------------------------\n";
 
     for(const auto& c : cases) {
         Result r = run_case(c);
@@ -237,12 +252,15 @@ int main() {
         std::cout << std::left << std::setw(18) << r.name 
                   << std::setw(35) << c.description 
                   << std::fixed << std::setprecision(3) << std::setw(12) << r.time_ms 
+                  << std::setw(12) << r.deriv_avg
+                  << std::setw(12) << r.solve_avg
+                  << std::setw(12) << r.ls_avg
                   << std::setw(8) << r.iters 
                   << std::setw(10) << status_str 
                   << std::scientific << std::setprecision(2) << std::setw(12) << r.cost
                   << std::scientific << std::setprecision(1) << std::setw(10) << r.viol << "\n";
     }
-    std::cout << "==================================================================================================\n";
+    std::cout << "\n==========================================================================================================================================\n";
 
     return 0;
 }
