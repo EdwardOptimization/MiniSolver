@@ -5,25 +5,25 @@
 namespace minisolver {
 
 enum class SolverStatus {
-    SOLVED,                // Converged to tolerances
-    MAX_ITER,              // Maximum iterations reached without convergence
-    FEASIBLE,              // Feasible but not optimal (e.g. max iters reached but constraints satisfied)
-    PRIMAL_INFEASIBLE,     // Problem is likely primal infeasible (restoration failed)
-    DUAL_INFEASIBLE,       // Problem is likely dual infeasible (unbounded) - rarely detected in current impl
-    NUMERICAL_ERROR,       // Linear solver failed or other numerical issues
-    UNSOLVED               // Not yet solved
+    // [初始/中间状态]
+    UNSOLVED,           
+    
+    // [成功状态]
+    OPTIMAL,             // 完美收敛 (Optimal): 满足所有 KKT 条件且违反度 <= tol
+    FEASIBLE,           // 工程可用 (Suboptimal): 迭代结束或停滞，但违反度在允许范围内
+    
+    // [失败状态]
+    INFEASIBLE,         // 不可用 (Failed): 迭代结束，违反度过大
+    NUMERICAL_ERROR     // 数值错误: 矩阵奇异或 NaN，无法继续
 };
 
-// Helper to get string from status
 inline const char* status_to_string(SolverStatus status) {
     switch(status) {
-        case SolverStatus::SOLVED: return "SOLVED";
-        case SolverStatus::MAX_ITER: return "MAX_ITER";
-        case SolverStatus::FEASIBLE: return "FEASIBLE";
-        case SolverStatus::PRIMAL_INFEASIBLE: return "PRIMAL_INFEASIBLE";
-        case SolverStatus::DUAL_INFEASIBLE: return "DUAL_INFEASIBLE";
-        case SolverStatus::NUMERICAL_ERROR: return "NUMERICAL_ERROR";
         case SolverStatus::UNSOLVED: return "UNSOLVED";
+        case SolverStatus::OPTIMAL: return "SOLVED";
+        case SolverStatus::FEASIBLE: return "FEASIBLE";
+        case SolverStatus::INFEASIBLE: return "INFEASIBLE";
+        case SolverStatus::NUMERICAL_ERROR: return "NUMERICAL_ERROR";
         default: return "UNKNOWN";
     }
 }

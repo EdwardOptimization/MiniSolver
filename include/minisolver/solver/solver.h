@@ -620,235 +620,65 @@ public:
     }
 
     SolverStatus solve() {
-        current_iter = 0;
-        slack_reset_consecutive_count = 0; 
+        // 1. Presolve: 数据准备、冷热启动处理、内存复位
+        presolve();
         
-        reg = config.reg_init; // Reset regularization for fresh solve
-        
-        // If Warm Start is not enabled, reset Barrier parameter mu
-        if (!is_warm_started) {
-            mu = config.mu_init;
-        }
-
-        // --- Initialization of Slacks ---
-        // Only initialize if not warm started or if data is invalid
-        bool need_init = !is_warm_started;
-        
-        if (is_warm_started) {
-             // Check for NaNs or bad values
-             auto& traj = trajectory.active();
-             for(int k=0; k<=N; ++k) {
-                 if (traj[k].s.minCoeff() <= 0 || traj[k].lam.minCoeff() <= 0 || has_nans(traj)) {
-                     need_init = true;
-                     break;
-                 }
-             }
-        }
-        is_warm_started = false; // Reset flag
-
-        if (need_init) {
-            auto& traj = trajectory.active();
-            for(int k=0; k<=N; ++k) {
-                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                 Model::compute(traj[k], config.integrator, current_dt);
-                 for(int i=0; i<NC; ++i) {
-                     double g = traj[k].g_val(i);
-                     double w = 0.0;
-                     int type = 0;
-                     if constexpr (NC > 0) {
-                         if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                            type = Model::constraint_types[i];
-                            w = Model::constraint_weights[i];
-                         }
-                     }
-
-                     if (type == 1 && w > 1e-6) { // L1 Soft Constraint
-                         // Central Path: 
-                         // 1) g + s - soft_s = 0
-                         // 2) s * lam = mu
-                         // 3) soft_s * (w - lam) = mu
-                         // Reduce to quadratic in lam: g*lam^2 - (g*w - 2*mu)*lam - mu*w = 0
-                         double a = g;
-                         double b = -(g * w - 2 * mu);
-                         double c = -mu * w;
-                         
-                         double lam_val;
-                         if (std::abs(a) < 1e-9) {
-                             // Linear case (g approx 0): -(-2mu)lam - mu*w = 0 -> 2mu*lam = mu*w -> lam = w/2
-                             lam_val = w / 2.0;
-                         } else {
-                            double delta = b*b - 4*a*c;
-                            if (delta < 0) delta = 0;
-                            if (std::abs(a) < 1e-9) {
-                                lam_val = w / 2.0;
-                            } else {
-                                double delta = b*b - 4*a*c;
-                                if (delta < 0) delta = 0;
-                                // Use plus sign formula
-                                lam_val = (-b + std::sqrt(delta)) / (2*a);
-                            }
-                         }
-                         
-                         // Clamp for safety
-                         lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
-                         
-                         traj[k].lam(i) = lam_val;
-                         traj[k].s(i) = mu / lam_val;
-                         traj[k].soft_s(i) = mu / (w - lam_val);
-                     } 
-                     else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
-                         // Central Path:
-                         // 1) g + s - lam/w = 0
-                         // 2) s * lam = mu
-                         // Reduce to quadratic in lam: lam^2 - g*w*lam - mu*w = 0
-                         double b = -g * w;
-                         double c = -mu * w;
-                         // lam = (-b + sqrt(b^2 - 4ac)) / 2a, here a=1
-                         // lam = (g*w + sqrt(g^2*w^2 + 4*mu*w)) / 2
-                         double delta = b*b - 4*c; // b^2 + 4*mu*w > 0 always
-                         double lam_val = (-b + std::sqrt(delta)) / 2.0;
-                         
-                         traj[k].lam(i) = std::max(1e-8, lam_val);
-                         traj[k].s(i) = mu / traj[k].lam(i);
-                         // soft_s not used in L2
-                     } 
-                     else { // Hard Constraint
-                         double s_val = std::max(1e-6, -g);
-                         traj[k].s(i) = s_val;
-                         traj[k].lam(i) = mu / s_val;
-                     }
-                 }
-            }
-        }
-        
-        print_iteration_log(0.0, true); 
-        timer.reset(); 
+        SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
         double last_cost = 1e30;
+
+        // 2. Solve Loop: 数值迭代
         for(int iter=0; iter < config.max_iters; ++iter) {
             timer.start("Total Step");
-            SolverStatus status = step();
+            SolverStatus step_stat = step();
             timer.stop();
             
+            // SQP-RTI 模式：做一步即走，状态由 postsolve 判定
             if (config.enable_rti) {
-                if (config.print_level >= PrintLevel::INFO) 
-                    MLOG_INFO("RTI Step Completed.");
-                return SolverStatus::SOLVED; // RTI treats one step as 'done' for real-time loop
+                loop_exit_status = SolverStatus::UNSOLVED; 
+                break;
             }
-            
-            if (status == SolverStatus::SOLVED) {
+
+            // A. 完美收敛 -> 记录状态并跳出，交给 postsolve 复核
+            if (step_stat == SolverStatus::OPTIMAL) {
+                loop_exit_status = SolverStatus::OPTIMAL;
                 if (config.print_level >= PrintLevel::INFO) 
                     MLOG_INFO("Converged in " << iter+1 << " iterations.");
-                if (config.print_level >= PrintLevel::INFO) timer.print();
-                return SolverStatus::SOLVED;
-            } else if (status != SolverStatus::UNSOLVED) {
-                // Error or Infeasible
-                if (config.print_level >= PrintLevel::INFO)
-                     MLOG_INFO("Solver terminated with status: " << status_to_string(status));
-                if (config.print_level >= PrintLevel::INFO) timer.print();
-                return status;
+                break;
             }
-            // ============================================================
-            // Cost Stagnation Check
-            // ============================================================
             
-            // 1. Calculate current total cost
-            double current_cost = 0.0;
-            auto& active_traj = trajectory.active();
-            for(int k=0; k<=N; ++k) {
-                current_cost += active_traj[k].cost;
+            // B. 数值错误 -> 立即中止
+            if (step_stat == SolverStatus::NUMERICAL_ERROR) {
+                loop_exit_status = SolverStatus::NUMERICAL_ERROR;
+                break;
             }
 
-            // 2. Retrieve current feasibility
-            // Use cached value from step() to avoid redundant O(N) calculation
-            double current_max_viol = last_prim_inf;
-
-            // 3. Check Condition
-            // We only trust cost stagnation if:
-            // a) The Barrier parameter mu has converged (otherwise cost change is dominated by barrier/penalty terms).
-            // b) The solution is Feasible (otherwise we are stuck in an infeasible local minimum).
-            if (mu <= config.mu_min && 
-                current_max_viol <= config.tol_con) 
-            {
-                double cost_diff = std::abs(current_cost - last_cost);
+            // C. 停滞检查 (Cost Stagnation)
+            if (mu <= config.mu_min) {
+                // 计算当前 Cost
+                double current_cost = 0.0;
+                for(int k=0; k<=N; ++k) current_cost += trajectory.active()[k].cost;
                 
-                if (cost_diff < config.tol_cost) {
-                    if (config.print_level >= PrintLevel::INFO) {
-                        MLOG_INFO("Converged via Cost Stagnation (Delta Cost: " << cost_diff << ").");
+                // 只有在满足一定可行性时，Cost 停滞才有意义
+                // 使用上一步计算的 max_prim_inf (last_prim_inf)
+                double feasible_bound = config.tol_con * config.feasible_tol_scale;
+                
+                if (last_prim_inf <= feasible_bound) {
+                    double cost_diff = std::abs(current_cost - last_cost);
+                    if (cost_diff < config.tol_cost) {
+                        if (config.print_level >= PrintLevel::INFO) {
+                            MLOG_INFO("Cost Stagnation detected. Stopping early.");
+                        }
+                        // 标记为 UNSOLVED，表示非自然收敛，交给 postsolve 判定是 Feasible 还是 Optimal
+                        loop_exit_status = SolverStatus::UNSOLVED; 
+                        break; 
                     }
-                    if (config.print_level >= PrintLevel::INFO) timer.print();
-                    return SolverStatus::SOLVED;
                 }
-            }
-
-            // Update history
-            last_cost = current_cost;
-            
-            // ============================================================
-            // [End of Cost Stagnation Check]
-            // ============================================================
-        }
-        if (config.print_level >= PrintLevel::INFO) MLOG_INFO("Max iterations reached.");
-        if (config.print_level >= PrintLevel::INFO) timer.print();
-        
-        // Final Feasibility Check
-        auto& traj = trajectory.active();
-        // As LineSearch only updates x/u, it does not update q, r, A, B and Barrier gradient r_bar
-        // Before final check, it must be forced to refresh, otherwise the dirty data from the last iteration is used.
-        for(int k=0; k<=N; ++k) {
-            double current_dt = (k < N) ? dt_traj[k] : 0.0;
-            
-            // 1. Recompute model derivatives (update q, r, g_val, A, B...)
-            if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                Model::compute_cost_gn(traj[k]);
-                Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                Model::compute_constraints(traj[k]);
-            } else {
-                Model::compute_cost_exact(traj[k]);
-                Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                Model::compute_constraints(traj[k]);
-            }
-            
-            // 2. Recompute Barrier gradient (update q_bar, r_bar)
-            // This requires calling the helper function in riccati.h
-            compute_barrier_derivatives<Knot, Model>(traj[k], mu, config);
-        }
-
-        // 1. Check for NaNs in constraints/slacks
-        bool any_nan = false;
-        for(int k=0; k<=N; ++k) {
-             for(int i=0; i<NC; ++i) {
-                 if (std::isnan(traj[k].g_val(i)) || std::isnan(traj[k].s(i))) {
-                     any_nan = true; 
-                     break;
-                 }
-             }
-             if (any_nan) break;
-        }
-        
-        if (any_nan) return SolverStatus::NUMERICAL_ERROR;
-
-        // 2. Compute consistent metrics using helper
-        double max_viol = compute_max_violation(traj);
-        double max_dual = 0.0;
-        double max_comp = 0.0;
-
-        for(int k=0; k<=N; ++k) {
-             // double g_norm = MatOps::norm_inf(traj[k].q_bar);
-             double r_norm = MatOps::norm_inf(traj[k].r_bar);
-             if(r_norm > max_dual) max_dual = r_norm;
-
-             // Recompute complementarity error for final check
-             for(int i=0; i<NC; ++i) {
-                double err = std::abs(traj[k].s(i) * traj[k].lam(i) - mu);
-                max_comp = std::max(max_comp, err);
+                last_cost = current_cost;
             }
         }
-        // If we reached here (MaxIter), check if we are at least feasible and stationary enough
-        // to call it "FEASIBLE" (suboptimal but safe) or even "SOLVED" (if we just missed the loop check)
-        if (check_convergence(max_viol, max_dual, max_comp)) return SolverStatus::SOLVED;
-        if (max_viol <= config.tol_con) return SolverStatus::FEASIBLE;
         
-        return SolverStatus::MAX_ITER;
+        // 3. Postsolve: 扫尾、刷新导数、统一评级
+        return postsolve(loop_exit_status);
     }
 
     SolverStatus step() {
@@ -895,7 +725,7 @@ public:
         timer.stop();
         
         // Initial convergence check (Primal + Dual + Mu)
-        if(check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) return SolverStatus::SOLVED;
+        if(check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) return SolverStatus::OPTIMAL;
 
         // Check for Numerical Instability (NaN/Inf)
         if (has_nans(traj)) {
@@ -1103,7 +933,7 @@ public:
                                 << ", DualInf: " << max_dual_inf << "). Terminating as SOLVED.");
                     }
                     timer.stop();
-                    return SolverStatus::SOLVED;
+                    return SolverStatus::OPTIMAL;
                 } else {
                     if (config.print_level >= PrintLevel::INFO) {
                         MLOG_INFO("Line search stagnated at feasible point (PrimInf: " << max_prim_inf 
@@ -1165,7 +995,7 @@ public:
                 // Both Slack Reset and Feasibility Restoration failed (or were disabled)
                 timer.stop();
                 print_iteration_log(alpha); // Log the fail state
-                return SolverStatus::PRIMAL_INFEASIBLE;
+                return SolverStatus::INFEASIBLE;
             }
         }
         timer.stop();
@@ -1190,7 +1020,7 @@ public:
             // Using (alpha * max_dx) is dangerous because small alpha (blocked step) 
             // can look like convergence.
             if (max_dx < config.tol_grad && is_feasible && is_dual_feasible) {
-                return SolverStatus::SOLVED;
+                return SolverStatus::OPTIMAL;
             }
         }
         
@@ -1205,6 +1035,180 @@ public:
             double current_dt = dt_traj[k];
             traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator);
         }
+    }
+
+private:
+    // ============================================================
+    // [Phase 1] Presolve: Preparation
+    // ============================================================
+    void presolve() {
+        current_iter = 0;
+        slack_reset_consecutive_count = 0; 
+        reg = config.reg_init;
+        // 1. Reset Logic
+        if (!is_warm_started) {
+            mu = config.mu_init;
+        }
+        // 2. Initialization of Slacks/Duals
+        bool need_init = !is_warm_started;
+        
+        // 安全检查：如果 Warm Start 数据损坏，强制重置
+        if (is_warm_started) {
+             auto& traj = trajectory.active();
+             for(int k=0; k<=N; ++k) {
+                 if (traj[k].s.minCoeff() <= 0 || traj[k].lam.minCoeff() <= 0 || has_nans(traj)) {
+                     need_init = true;
+                     break;
+                 }
+             }
+        }
+        is_warm_started = false;
+        if (need_init) {
+            auto& traj = trajectory.active();
+            for(int k=0; k<=N; ++k) {
+                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
+                 Model::compute(traj[k], config.integrator, current_dt);
+                 
+                 for(int i=0; i<NC; ++i) {
+                     double g = traj[k].g_val(i);
+                     double w = 0.0;
+                     int type = 0;
+                     if constexpr (NC > 0) {
+                         if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                            type = Model::constraint_types[i];
+                            w = Model::constraint_weights[i];
+                         }
+                     }
+                     
+                     if (type == 1 && w > 1e-6) { // L1 Soft Constraint
+                         // Central Path: 
+                         // 1) g + s - soft_s = 0
+                         // 2) s * lam = mu
+                         // 3) soft_s * (w - lam) = mu
+                         // Reduce to quadratic in lam: g*lam^2 - (g*w - 2*mu)*lam - mu*w = 0
+                         double a = g;
+                         double b = -(g * w - 2 * mu);
+                         double c = -mu * w;
+                         
+                         double lam_val;
+                         if (std::abs(a) < 1e-9) {
+                             // Linear case (g approx 0): -(-2mu)lam - mu*w = 0 -> 2mu*lam = mu*w -> lam = w/2
+                             lam_val = w / 2.0;
+                         } else {
+                            double delta = b*b - 4*a*c;
+                            if (delta < 0) delta = 0;
+                            if (std::abs(a) < 1e-9) {
+                                lam_val = w / 2.0;
+                            } else {
+                                double delta = b*b - 4*a*c;
+                                if (delta < 0) delta = 0;
+                                // Use plus sign formula
+                                lam_val = (-b + std::sqrt(delta)) / (2*a);
+                            }
+                         }
+                         
+                         // Clamp for safety
+                         lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
+                         
+                         traj[k].lam(i) = lam_val;
+                         traj[k].s(i) = mu / lam_val;
+                         traj[k].soft_s(i) = mu / (w - lam_val);
+                     } 
+                     else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
+                         // Central Path:
+                         // 1) g + s - lam/w = 0
+                         // 2) s * lam = mu
+                         // Reduce to quadratic in lam: lam^2 - g*w*lam - mu*w = 0
+                         double b = -g * w;
+                         double c = -mu * w;
+                         // lam = (-b + sqrt(b^2 - 4ac)) / 2a, here a=1
+                         // lam = (g*w + sqrt(g^2*w^2 + 4*mu*w)) / 2
+                         double delta = b*b - 4*c; // b^2 + 4*mu*w > 0 always
+                         double lam_val = (-b + std::sqrt(delta)) / 2.0;
+                         
+                         traj[k].lam(i) = std::max(1e-8, lam_val);
+                         traj[k].s(i) = mu / traj[k].lam(i);
+                         // soft_s not used in L2
+                     } 
+                     else { // Hard Constraint
+                         double s_val = std::max(1e-6, -g);
+                         traj[k].s(i) = s_val;
+                         traj[k].lam(i) = mu / s_val;
+                     }
+                 }
+            }
+        }
+        
+        print_iteration_log(0.0, true); 
+        timer.reset(); 
+    }
+
+    // ============================================================
+    // [Phase 3] Postsolve: Finalization & Verdict
+    // ============================================================
+    SolverStatus postsolve(SolverStatus loop_status) {
+        if (loop_status == SolverStatus::NUMERICAL_ERROR) {
+            return SolverStatus::NUMERICAL_ERROR;
+        }
+        if (config.print_level >= PrintLevel::INFO) {
+            if (loop_status == SolverStatus::UNSOLVED) MLOG_INFO("Max iterations or stagnation.");
+        }
+        // [Fix 2 Logic] 强制刷新导数
+        // 无论是因为收敛还是因为耗尽步数退出，我们都重新计算一次精确的残差，
+        // 以便做出最公正的最终评判。
+        auto& traj = trajectory.active();
+        double max_kkt_error = 0.0;
+        double max_dual_inf = 0.0;
+        for(int k=0; k<=N; ++k) {
+             double current_dt = (k < N) ? dt_traj[k] : 0.0;
+             
+             // 1. Recompute Primal/Dual properties
+             if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                 Model::compute_cost_gn(traj[k]);
+                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                 Model::compute_constraints(traj[k]);
+             } else {
+                 Model::compute_cost_exact(traj[k]);
+                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                 Model::compute_constraints(traj[k]);
+             }
+             
+             // 2. Recompute Barrier Gradients (check riccati.h)
+             compute_barrier_derivatives<Knot, Model>(traj[k], mu, config);
+             // 3. Check NaNs
+             for(int i=0; i<NC; ++i) {
+                 if (std::isnan(traj[k].g_val(i)) || std::isnan(traj[k].s(i))) 
+                     return SolverStatus::NUMERICAL_ERROR;
+             }
+             // 4. Collect Metrics
+             double r_norm = MatOps::norm_inf(traj[k].r_bar);
+             if(r_norm > max_dual_inf) max_dual_inf = r_norm;
+             for(int i=0; i<NC; ++i) {
+                double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu);
+                if(comp > max_kkt_error) max_kkt_error = comp;
+             }
+        }
+        double max_viol = compute_max_violation(traj);
+        // [最终评级]
+        
+        // Level 1: SOLVED (Optimal)
+        // 即使 Loop 是因为 Stagnation 退出的，如果此时恰好满足最优性，也给 SOLVED
+        if (check_convergence(max_viol, max_dual_inf, max_kkt_error)) {
+            return SolverStatus::OPTIMAL;
+        }
+        // Level 2: FEASIBLE (Acceptable)
+        double feasible_bound = config.tol_con * config.feasible_tol_scale;
+        if (max_viol <= feasible_bound) {
+            if (config.print_level >= PrintLevel::INFO) {
+                MLOG_INFO("Result: FEASIBLE (Viol: " << max_viol << " <= " << feasible_bound << ")");
+            }
+            return SolverStatus::FEASIBLE;
+        }
+        // Level 3: INFEASIBLE (Failed)
+        if (config.print_level >= PrintLevel::WARN) {
+            MLOG_WARN("Result: INFEASIBLE (Viol: " << max_viol << " > " << feasible_bound << ")");
+        }
+        return SolverStatus::INFEASIBLE;
     }
 
 private:

@@ -41,7 +41,7 @@ TEST(SolverTest, FullConvergence) {
     
     SolverStatus status = solver.solve();
     
-    EXPECT_EQ(status, SolverStatus::SOLVED);
+    EXPECT_EQ(status, SolverStatus::OPTIMAL);
     
     // Check if velocity reached target
     // N*dt = 2.0s. Acc limit is 3.0. 
@@ -82,6 +82,6 @@ TEST(SolverTest, InfeasibleStartRecovery) {
     // Solve
     SolverStatus status = solver.solve();
     // It should handle the bad guess and converge
-    EXPECT_EQ(status, SolverStatus::SOLVED);
+    EXPECT_EQ(status, SolverStatus::OPTIMAL);
 }
 

@@ -96,13 +96,14 @@ struct SolverConfig {
     // --- Convergence Tolerances ---
     double tol_grad = 1e-4;     
     double tol_con = 1e-4;      
-    double tol_dual = 1e-4; // [NEW] Dual Infeasibility Tolerance
+    double tol_dual = 1e-4; // Dual Infeasibility Tolerance
     double tol_mu = 1e-5;       
-    // [NEW] Objective Stagnation Tolerance
+    // Objective Stagnation Tolerance
     // Stops the solver if the cost improvement between iterations is smaller than this value,
     // provided the solution is feasible.
     double tol_cost = 1e-6;
-
+    double feasible_tol_scale = 10.0;
+    
     // --- Line Search & Robustness ---
     // Filter is generally more robust than Merit without parameter tuning
     LineSearchType line_search_type = LineSearchType::FILTER;
@@ -144,7 +145,7 @@ struct SolverConfig {
     int max_refinement_steps = 1;
     
     // SQP-RTI Mode
-    bool enable_rti = false; // [NEW] If true, solve() performs only 1 SQP iteration (or config.max_iters)
+    bool enable_rti = false; // If true, solve() performs only 1 SQP iteration (or config.max_iters)
     // and reuses linearization if possible (requires more state storage, currently partial support via warm_start) 
     
     // Line Search Logic
@@ -156,7 +157,7 @@ struct SolverConfig {
     
     // Mehrotra Logic
     bool enable_corrector = true; 
-    bool enable_aggressive_barrier = true; // [NEW] Allow aggressive mu reduction based on step size
+    bool enable_aggressive_barrier = true; // Allow aggressive mu reduction based on step size
     
     // Feasibility Logic (Heuristics)
     // Disabled by default for PURE IPM behavior. Enable only if needed.

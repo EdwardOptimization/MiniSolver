@@ -266,7 +266,7 @@ EvalResult evaluate_config(const TunableParams& params) {
         
         double ms = std::chrono::duration<double, std::milli>(end - start).count();
         
-        if(status != SolverStatus::SOLVED && status != SolverStatus::FEASIBLE) {
+        if(status != SolverStatus::OPTIMAL && status != SolverStatus::FEASIBLE) {
             fails++;
             total_time += 1000.0; // Penalty time
         } else {

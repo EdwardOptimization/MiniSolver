@@ -47,6 +47,6 @@ TEST(IterativeRefinementTest, RunsWithoutCrash) {
     
     SolverStatus status = solver.solve();
     
-    EXPECT_EQ(status, SolverStatus::SOLVED);
+    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
 }
 

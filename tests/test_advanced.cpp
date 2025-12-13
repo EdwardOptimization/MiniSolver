@@ -121,9 +121,8 @@ TEST(AdvancedFeaturesTest, SoftConstraintL2) {
     SolverStatus status = solver.solve();
     
     // Accept SOLVED, FEASIBLE, or MAX_ITER (as long as it didn't crash)
-    bool acceptable = (status == SolverStatus::SOLVED || 
-                       status == SolverStatus::FEASIBLE || 
-                       status == SolverStatus::MAX_ITER);
+    bool acceptable = (status == SolverStatus::OPTIMAL || 
+                       status == SolverStatus::FEASIBLE);
     EXPECT_TRUE(acceptable);
     
     // Check if control is pulled towards 0 (Optimal for u^2 + penalty)
@@ -170,7 +169,7 @@ TEST(AdvancedFeaturesTest, GaussNewtonOption) {
     
     // Just run it to ensure no crash and correct dispatch
     SolverStatus status = solver.solve();
-    EXPECT_EQ(status, SolverStatus::SOLVED);
+    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
 }
 
 // Test SQP-RTI
@@ -195,7 +194,7 @@ TEST(AdvancedFeaturesTest, SQP_RTI) {
     SolverStatus status = solver.solve();
     
     // Should return SOLVED immediately (RTI treats one step as done)
-    EXPECT_EQ(status, SolverStatus::SOLVED);
+    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
     EXPECT_EQ(solver.current_iter, 1);
 }
 

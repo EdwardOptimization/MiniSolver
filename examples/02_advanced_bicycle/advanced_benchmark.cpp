@@ -147,7 +147,7 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
                         if(val > max_viol) max_viol = val;
                     }
                 }
-                last_converged = (status == SolverStatus::SOLVED || status == SolverStatus::FEASIBLE);
+                last_converged = (status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
                 
                 double cost = 0.0;
                 for(int k=0; k<=solver.N; ++k) cost += solver.get_stage_cost(k);

@@ -117,7 +117,7 @@ Result run_case(const BenchmarkCase& test_case) {
 
             // Capture stats from the final run
             if (i == WARMUP + NUM_RUNS - 1) {
-                res.success = (status == SolverStatus::SOLVED || status == SolverStatus::FEASIBLE);
+                res.success = (status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
                 res.iters = solver.current_iter;
                 
                 // Compute Metrics
