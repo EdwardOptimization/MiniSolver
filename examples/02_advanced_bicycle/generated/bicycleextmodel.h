@@ -132,16 +132,22 @@ struct BicycleExtModel {
     }
 
     // --- 1. Compute Dynamics (f_resid, A, B) ---
+    // NEW SPLIT ARCHITECTURE: Reads State, writes ModelData
     template<typename T>
-    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        T x = kp.x(0);
-        T y = kp.x(1);
-        T theta = kp.x(2);
-        T kappa = kp.x(3);
-        T v = kp.x(4);
-        T a = kp.x(5);
-        T dkappa = kp.u(0);
-        T jerk = kp.u(1);
+    static void compute_dynamics(
+        const StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType type,
+        double dt)
+    {
+        T x = state.x(0);
+        T y = state.x(1);
+        T theta = state.x(2);
+        T kappa = state.x(3);
+        T v = state.x(4);
+        T a = state.x(5);
+        T dkappa = state.u(0);
+        T jerk = state.u(1);
 
         switch(type) {
             case IntegratorType::EULER_EXPLICIT:
@@ -152,29 +158,29 @@ struct BicycleExtModel {
                 T tmp_d2 = dt*sin(theta);
                 T tmp_d3 = tmp_d2*v;
                 T tmp_d4 = dt*v;
-                kp.f_resid(0) = tmp_d1 + x;
-                kp.f_resid(1) = tmp_d3 + y;
-                kp.f_resid(2) = kappa*tmp_d4 + theta;
-                kp.f_resid(3) = dkappa*dt + kappa;
-                kp.f_resid(4) = a*dt + v;
-                kp.f_resid(5) = a + dt*jerk;
-                kp.A.setZero();
-                kp.A(0,0) = 1;
-                kp.A(0,2) = -tmp_d3;
-                kp.A(0,4) = tmp_d0;
-                kp.A(1,1) = 1;
-                kp.A(1,2) = tmp_d1;
-                kp.A(1,4) = tmp_d2;
-                kp.A(2,2) = 1;
-                kp.A(2,3) = tmp_d4;
-                kp.A(2,4) = dt*kappa;
-                kp.A(3,3) = 1;
-                kp.A(4,4) = 1;
-                kp.A(4,5) = dt;
-                kp.A(5,5) = 1;
-                kp.B.setZero();
-                kp.B(3,0) = dt;
-                kp.B(5,1) = dt;
+                model.f_resid(0) = tmp_d1 + x;
+                model.f_resid(1) = tmp_d3 + y;
+                model.f_resid(2) = kappa*tmp_d4 + theta;
+                model.f_resid(3) = dkappa*dt + kappa;
+                model.f_resid(4) = a*dt + v;
+                model.f_resid(5) = a + dt*jerk;
+                model.A.setZero();
+                model.A(0,0) = 1;
+                model.A(0,2) = -tmp_d3;
+                model.A(0,4) = tmp_d0;
+                model.A(1,1) = 1;
+                model.A(1,2) = tmp_d1;
+                model.A(1,4) = tmp_d2;
+                model.A(2,2) = 1;
+                model.A(2,3) = tmp_d4;
+                model.A(2,4) = dt*kappa;
+                model.A(3,3) = 1;
+                model.A(4,4) = 1;
+                model.A(4,5) = dt;
+                model.A(5,5) = 1;
+                model.B.setZero();
+                model.B(3,0) = dt;
+                model.B(5,1) = dt;
                 break;
             }
             case IntegratorType::RK2_EXPLICIT:
@@ -198,36 +204,36 @@ struct BicycleExtModel {
                 T tmp_d15 = kappa*tmp_d0;
                 T tmp_d16 = 0.25*pow(dt, 3)*tmp_d15;
                 T tmp_d17 = tmp_d13*tmp_d3;
-                kp.f_resid(0) = tmp_d4 + x;
-                kp.f_resid(1) = tmp_d7 + y;
-                kp.f_resid(2) = theta + tmp_d1*tmp_d9;
-                kp.f_resid(3) = kappa + tmp_d8;
-                kp.f_resid(4) = dt*(a + 0.5*tmp_d10) + v;
-                kp.f_resid(5) = a + tmp_d10;
-                kp.A.setZero();
-                kp.A(0,0) = 1;
-                kp.A(0,2) = -tmp_d7;
-                kp.A(0,3) = -tmp_d11*tmp_d14;
-                kp.A(0,4) = dt*tmp_d3 - tmp_d14*tmp_d15;
-                kp.A(0,5) = 0.5*tmp_d12*tmp_d3 - tmp_d16*tmp_d5;
-                kp.A(1,1) = 1;
-                kp.A(1,2) = tmp_d4;
-                kp.A(1,3) = tmp_d11*tmp_d17;
-                kp.A(1,4) = tmp_d15*tmp_d17 + tmp_d6;
-                kp.A(1,5) = tmp_d14 + tmp_d16*tmp_d3;
-                kp.A(2,2) = 1;
-                kp.A(2,3) = tmp_d1;
-                kp.A(2,4) = dt*tmp_d9;
-                kp.A(2,5) = tmp_d13*tmp_d9;
-                kp.A(3,3) = 1;
-                kp.A(4,4) = 1;
-                kp.A(4,5) = dt;
-                kp.A(5,5) = 1;
-                kp.B.setZero();
-                kp.B(2,0) = tmp_d0*tmp_d13;
-                kp.B(3,0) = dt;
-                kp.B(4,1) = tmp_d13;
-                kp.B(5,1) = dt;
+                model.f_resid(0) = tmp_d4 + x;
+                model.f_resid(1) = tmp_d7 + y;
+                model.f_resid(2) = theta + tmp_d1*tmp_d9;
+                model.f_resid(3) = kappa + tmp_d8;
+                model.f_resid(4) = dt*(a + 0.5*tmp_d10) + v;
+                model.f_resid(5) = a + tmp_d10;
+                model.A.setZero();
+                model.A(0,0) = 1;
+                model.A(0,2) = -tmp_d7;
+                model.A(0,3) = -tmp_d11*tmp_d14;
+                model.A(0,4) = dt*tmp_d3 - tmp_d14*tmp_d15;
+                model.A(0,5) = 0.5*tmp_d12*tmp_d3 - tmp_d16*tmp_d5;
+                model.A(1,1) = 1;
+                model.A(1,2) = tmp_d4;
+                model.A(1,3) = tmp_d11*tmp_d17;
+                model.A(1,4) = tmp_d15*tmp_d17 + tmp_d6;
+                model.A(1,5) = tmp_d14 + tmp_d16*tmp_d3;
+                model.A(2,2) = 1;
+                model.A(2,3) = tmp_d1;
+                model.A(2,4) = dt*tmp_d9;
+                model.A(2,5) = tmp_d13*tmp_d9;
+                model.A(3,3) = 1;
+                model.A(4,4) = 1;
+                model.A(4,5) = dt;
+                model.A(5,5) = 1;
+                model.B.setZero();
+                model.B(2,0) = tmp_d0*tmp_d13;
+                model.B(3,0) = dt;
+                model.B(4,1) = tmp_d13;
+                model.B(5,1) = dt;
                 break;
             }
             case IntegratorType::RK4_EXPLICIT:
@@ -289,177 +295,183 @@ struct BicycleExtModel {
                 T tmp_d53 = pow(dt, 3)*tmp_d11;
                 T tmp_d54 = 0.75*tmp_d53;
                 T tmp_d55 = 0.25*tmp_d53;
-                kp.f_resid(0) = tmp_d23 + x;
-                kp.f_resid(1) = tmp_d22*tmp_d31 + y;
-                kp.f_resid(2) = theta + tmp_d22*(kappa*v + tmp_d17*tmp_d32 + tmp_d2*tmp_d32 + tmp_d33*tmp_d8);
-                kp.f_resid(3) = kappa + 1.0*tmp_d10;
-                kp.f_resid(4) = tmp_d22*(6*a + 3.0*dt*jerk) + v;
-                kp.f_resid(5) = a + jerk*tmp_d34;
-                kp.A.setZero();
-                kp.A(0,0) = 1;
-                kp.A(0,2) = -tmp_d22*tmp_d31;
-                kp.A(0,3) = tmp_d22*(-tmp_d18*tmp_d39 - tmp_d28*tmp_d37 - tmp_d35*tmp_d36);
-                kp.A(0,4) = tmp_d22*(tmp_d0 - tmp_d11*tmp_d39 - tmp_d12*tmp_d28 + tmp_d14 + tmp_d21 - tmp_d3*tmp_d36 + tmp_d6);
-                kp.A(0,5) = tmp_d22*(dt*tmp_d14 + 1.0*dt*tmp_d20 + 1.0*dt*tmp_d5 - tmp_d25*tmp_d42 - tmp_d28*tmp_d44 - tmp_d45*tmp_d46);
-                kp.A(1,1) = 1;
-                kp.A(1,2) = tmp_d23;
-                kp.A(1,3) = tmp_d22*(tmp_d15*tmp_d37 + tmp_d18*tmp_d48 + tmp_d35*tmp_d47);
-                kp.A(1,4) = tmp_d22*(tmp_d11*tmp_d48 + tmp_d12*tmp_d15 + tmp_d24 + tmp_d26 + tmp_d27 + tmp_d3*tmp_d47 + tmp_d30);
-                kp.A(1,5) = tmp_d22*(dt*tmp_d27 + tmp_d15*tmp_d44 + tmp_d36 + tmp_d38 + tmp_d42*tmp_d5 + tmp_d46*tmp_d49);
-                kp.A(2,2) = 1;
-                kp.A(2,3) = tmp_d22*(a*tmp_d34 + 2.0*tmp_d7 + 6*v);
-                kp.A(2,4) = tmp_d22*(6*kappa + 3.0*tmp_d10);
-                kp.A(2,5) = tmp_d22*(dt*tmp_d33 + 2.0*tmp_d12);
-                kp.A(3,3) = 1;
-                kp.A(4,4) = 1;
-                kp.A(4,5) = tmp_d34;
-                kp.A(5,5) = 1;
-                kp.B.setZero();
-                kp.B(0,0) = tmp_d22*(-tmp_d28*tmp_d50 - tmp_d51*tmp_d52);
-                kp.B(0,1) = tmp_d22*(0.5*tmp_d14*tmp_d40 + 0.5*tmp_d20*tmp_d40 - tmp_d28*tmp_d54 - tmp_d45*tmp_d55);
-                kp.B(1,0) = tmp_d22*(tmp_d15*tmp_d50 + tmp_d20*tmp_d41*tmp_d52);
-                kp.B(1,1) = tmp_d22*(tmp_d15*tmp_d54 + tmp_d27*tmp_d41 + tmp_d49*tmp_d55 + tmp_d51);
-                kp.B(2,0) = tmp_d22*(dt*tmp_d8 + tmp_d17*tmp_d34 + tmp_d2*tmp_d34);
-                kp.B(2,1) = tmp_d22*(tmp_d11*tmp_d41 + tmp_d33*tmp_d41);
-                kp.B(3,0) = tmp_d34;
-                kp.B(4,1) = tmp_d41;
-                kp.B(5,1) = tmp_d34;
+                model.f_resid(0) = tmp_d23 + x;
+                model.f_resid(1) = tmp_d22*tmp_d31 + y;
+                model.f_resid(2) = theta + tmp_d22*(kappa*v + tmp_d17*tmp_d32 + tmp_d2*tmp_d32 + tmp_d33*tmp_d8);
+                model.f_resid(3) = kappa + 1.0*tmp_d10;
+                model.f_resid(4) = tmp_d22*(6*a + 3.0*dt*jerk) + v;
+                model.f_resid(5) = a + jerk*tmp_d34;
+                model.A.setZero();
+                model.A(0,0) = 1;
+                model.A(0,2) = -tmp_d22*tmp_d31;
+                model.A(0,3) = tmp_d22*(-tmp_d18*tmp_d39 - tmp_d28*tmp_d37 - tmp_d35*tmp_d36);
+                model.A(0,4) = tmp_d22*(tmp_d0 - tmp_d11*tmp_d39 - tmp_d12*tmp_d28 + tmp_d14 + tmp_d21 - tmp_d3*tmp_d36 + tmp_d6);
+                model.A(0,5) = tmp_d22*(dt*tmp_d14 + 1.0*dt*tmp_d20 + 1.0*dt*tmp_d5 - tmp_d25*tmp_d42 - tmp_d28*tmp_d44 - tmp_d45*tmp_d46);
+                model.A(1,1) = 1;
+                model.A(1,2) = tmp_d23;
+                model.A(1,3) = tmp_d22*(tmp_d15*tmp_d37 + tmp_d18*tmp_d48 + tmp_d35*tmp_d47);
+                model.A(1,4) = tmp_d22*(tmp_d11*tmp_d48 + tmp_d12*tmp_d15 + tmp_d24 + tmp_d26 + tmp_d27 + tmp_d3*tmp_d47 + tmp_d30);
+                model.A(1,5) = tmp_d22*(dt*tmp_d27 + tmp_d15*tmp_d44 + tmp_d36 + tmp_d38 + tmp_d42*tmp_d5 + tmp_d46*tmp_d49);
+                model.A(2,2) = 1;
+                model.A(2,3) = tmp_d22*(a*tmp_d34 + 2.0*tmp_d7 + 6*v);
+                model.A(2,4) = tmp_d22*(6*kappa + 3.0*tmp_d10);
+                model.A(2,5) = tmp_d22*(dt*tmp_d33 + 2.0*tmp_d12);
+                model.A(3,3) = 1;
+                model.A(4,4) = 1;
+                model.A(4,5) = tmp_d34;
+                model.A(5,5) = 1;
+                model.B.setZero();
+                model.B(0,0) = tmp_d22*(-tmp_d28*tmp_d50 - tmp_d51*tmp_d52);
+                model.B(0,1) = tmp_d22*(0.5*tmp_d14*tmp_d40 + 0.5*tmp_d20*tmp_d40 - tmp_d28*tmp_d54 - tmp_d45*tmp_d55);
+                model.B(1,0) = tmp_d22*(tmp_d15*tmp_d50 + tmp_d20*tmp_d41*tmp_d52);
+                model.B(1,1) = tmp_d22*(tmp_d15*tmp_d54 + tmp_d27*tmp_d41 + tmp_d49*tmp_d55 + tmp_d51);
+                model.B(2,0) = tmp_d22*(dt*tmp_d8 + tmp_d17*tmp_d34 + tmp_d2*tmp_d34);
+                model.B(2,1) = tmp_d22*(tmp_d11*tmp_d41 + tmp_d33*tmp_d41);
+                model.B(3,0) = tmp_d34;
+                model.B(4,1) = tmp_d41;
+                model.B(5,1) = tmp_d34;
                 break;
             }
         }
     }
 
     // --- 2. Compute Constraints (g_val, C, D) ---
+    // NEW SPLIT ARCHITECTURE: Reads/writes State, writes ModelData
     template<typename T>
-    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        T kappa = kp.x(3);
-        T v = kp.x(4);
-        T a = kp.x(5);
-        T dkappa = kp.u(0);
-        T jerk = kp.u(1);
+    static void compute_constraints(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
+        T kappa = state.x(3);
+        T v = state.x(4);
+        T a = state.x(5);
+        T dkappa = state.u(0);
+        T jerk = state.u(1);
 
         // --- Special Constraints Pre-Calculation ---
 
 
         // g_val
-        kp.g_val(0,0) = v - 15.0;
-        kp.g_val(1,0) = -v;
-        kp.g_val(2,0) = a - 5.0;
-        kp.g_val(3,0) = -a - 5.0;
-        kp.g_val(4,0) = kappa - 0.5;
-        kp.g_val(5,0) = -kappa - 0.5;
-        kp.g_val(6,0) = jerk - 50.0;
-        kp.g_val(7,0) = -jerk - 50.0;
-        kp.g_val(8,0) = dkappa - 2.0;
-        kp.g_val(9,0) = -dkappa - 2.0;
+        state.g_val(0,0) = v - 15.0;
+        state.g_val(1,0) = -v;
+        state.g_val(2,0) = a - 5.0;
+        state.g_val(3,0) = -a - 5.0;
+        state.g_val(4,0) = kappa - 0.5;
+        state.g_val(5,0) = -kappa - 0.5;
+        state.g_val(6,0) = jerk - 50.0;
+        state.g_val(7,0) = -jerk - 50.0;
+        state.g_val(8,0) = dkappa - 2.0;
+        state.g_val(9,0) = -dkappa - 2.0;
 
         // C
-        kp.C(0,0) = 0;
-        kp.C(0,1) = 0;
-        kp.C(0,2) = 0;
-        kp.C(0,3) = 0;
-        kp.C(0,4) = 1;
-        kp.C(0,5) = 0;
-        kp.C(1,0) = 0;
-        kp.C(1,1) = 0;
-        kp.C(1,2) = 0;
-        kp.C(1,3) = 0;
-        kp.C(1,4) = -1;
-        kp.C(1,5) = 0;
-        kp.C(2,0) = 0;
-        kp.C(2,1) = 0;
-        kp.C(2,2) = 0;
-        kp.C(2,3) = 0;
-        kp.C(2,4) = 0;
-        kp.C(2,5) = 1;
-        kp.C(3,0) = 0;
-        kp.C(3,1) = 0;
-        kp.C(3,2) = 0;
-        kp.C(3,3) = 0;
-        kp.C(3,4) = 0;
-        kp.C(3,5) = -1;
-        kp.C(4,0) = 0;
-        kp.C(4,1) = 0;
-        kp.C(4,2) = 0;
-        kp.C(4,3) = 1;
-        kp.C(4,4) = 0;
-        kp.C(4,5) = 0;
-        kp.C(5,0) = 0;
-        kp.C(5,1) = 0;
-        kp.C(5,2) = 0;
-        kp.C(5,3) = -1;
-        kp.C(5,4) = 0;
-        kp.C(5,5) = 0;
-        kp.C(6,0) = 0;
-        kp.C(6,1) = 0;
-        kp.C(6,2) = 0;
-        kp.C(6,3) = 0;
-        kp.C(6,4) = 0;
-        kp.C(6,5) = 0;
-        kp.C(7,0) = 0;
-        kp.C(7,1) = 0;
-        kp.C(7,2) = 0;
-        kp.C(7,3) = 0;
-        kp.C(7,4) = 0;
-        kp.C(7,5) = 0;
-        kp.C(8,0) = 0;
-        kp.C(8,1) = 0;
-        kp.C(8,2) = 0;
-        kp.C(8,3) = 0;
-        kp.C(8,4) = 0;
-        kp.C(8,5) = 0;
-        kp.C(9,0) = 0;
-        kp.C(9,1) = 0;
-        kp.C(9,2) = 0;
-        kp.C(9,3) = 0;
-        kp.C(9,4) = 0;
-        kp.C(9,5) = 0;
+        model.C(0,0) = 0;
+        model.C(0,1) = 0;
+        model.C(0,2) = 0;
+        model.C(0,3) = 0;
+        model.C(0,4) = 1;
+        model.C(0,5) = 0;
+        model.C(1,0) = 0;
+        model.C(1,1) = 0;
+        model.C(1,2) = 0;
+        model.C(1,3) = 0;
+        model.C(1,4) = -1;
+        model.C(1,5) = 0;
+        model.C(2,0) = 0;
+        model.C(2,1) = 0;
+        model.C(2,2) = 0;
+        model.C(2,3) = 0;
+        model.C(2,4) = 0;
+        model.C(2,5) = 1;
+        model.C(3,0) = 0;
+        model.C(3,1) = 0;
+        model.C(3,2) = 0;
+        model.C(3,3) = 0;
+        model.C(3,4) = 0;
+        model.C(3,5) = -1;
+        model.C(4,0) = 0;
+        model.C(4,1) = 0;
+        model.C(4,2) = 0;
+        model.C(4,3) = 1;
+        model.C(4,4) = 0;
+        model.C(4,5) = 0;
+        model.C(5,0) = 0;
+        model.C(5,1) = 0;
+        model.C(5,2) = 0;
+        model.C(5,3) = -1;
+        model.C(5,4) = 0;
+        model.C(5,5) = 0;
+        model.C(6,0) = 0;
+        model.C(6,1) = 0;
+        model.C(6,2) = 0;
+        model.C(6,3) = 0;
+        model.C(6,4) = 0;
+        model.C(6,5) = 0;
+        model.C(7,0) = 0;
+        model.C(7,1) = 0;
+        model.C(7,2) = 0;
+        model.C(7,3) = 0;
+        model.C(7,4) = 0;
+        model.C(7,5) = 0;
+        model.C(8,0) = 0;
+        model.C(8,1) = 0;
+        model.C(8,2) = 0;
+        model.C(8,3) = 0;
+        model.C(8,4) = 0;
+        model.C(8,5) = 0;
+        model.C(9,0) = 0;
+        model.C(9,1) = 0;
+        model.C(9,2) = 0;
+        model.C(9,3) = 0;
+        model.C(9,4) = 0;
+        model.C(9,5) = 0;
 
         // D
-        kp.D(0,0) = 0;
-        kp.D(0,1) = 0;
-        kp.D(1,0) = 0;
-        kp.D(1,1) = 0;
-        kp.D(2,0) = 0;
-        kp.D(2,1) = 0;
-        kp.D(3,0) = 0;
-        kp.D(3,1) = 0;
-        kp.D(4,0) = 0;
-        kp.D(4,1) = 0;
-        kp.D(5,0) = 0;
-        kp.D(5,1) = 0;
-        kp.D(6,0) = 0;
-        kp.D(6,1) = 1;
-        kp.D(7,0) = 0;
-        kp.D(7,1) = -1;
-        kp.D(8,0) = 1;
-        kp.D(8,1) = 0;
-        kp.D(9,0) = -1;
-        kp.D(9,1) = 0;
+        model.D(0,0) = 0;
+        model.D(0,1) = 0;
+        model.D(1,0) = 0;
+        model.D(1,1) = 0;
+        model.D(2,0) = 0;
+        model.D(2,1) = 0;
+        model.D(3,0) = 0;
+        model.D(3,1) = 0;
+        model.D(4,0) = 0;
+        model.D(4,1) = 0;
+        model.D(5,0) = 0;
+        model.D(5,1) = 0;
+        model.D(6,0) = 0;
+        model.D(6,1) = 1;
+        model.D(7,0) = 0;
+        model.D(7,1) = -1;
+        model.D(8,0) = 1;
+        model.D(8,1) = 0;
+        model.D(9,0) = -1;
+        model.D(9,1) = 0;
 
     }
 
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
     template<typename T, int Mode>
-    static void compute_cost_impl(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        T x = kp.x(0);
-        T y = kp.x(1);
-        T theta = kp.x(2);
-        T kappa = kp.x(3);
-        T v = kp.x(4);
-        T a = kp.x(5);
-        T dkappa = kp.u(0);
-        T jerk = kp.u(1);
-        T v_ref = kp.p(0);
-        T x_ref = kp.p(1);
-        T y_ref = kp.p(2);
-        T w_pos = kp.p(8);
-        T w_vel = kp.p(9);
-        T w_theta = kp.p(10);
-        T w_kappa = kp.p(11);
-        T w_a = kp.p(12);
-        T w_dkappa = kp.p(13);
-        T w_jerk = kp.p(14);
+    static void compute_cost_impl(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model) {
+        T x = state.x(0);
+        T y = state.x(1);
+        T theta = state.x(2);
+        T kappa = state.x(3);
+        T v = state.x(4);
+        T a = state.x(5);
+        T dkappa = state.u(0);
+        T jerk = state.u(1);
+        T v_ref = state.p(0);
+        T x_ref = state.p(1);
+        T y_ref = state.p(2);
+        T w_pos = state.p(8);
+        T w_vel = state.p(9);
+        T w_theta = state.p(10);
+        T w_kappa = state.p(11);
+        T w_a = state.p(12);
+        T w_dkappa = state.p(13);
+        T w_jerk = state.p(14);
 
         T tmp_j0 = 2*w_theta;
         T tmp_j1 = 2*w_kappa;
@@ -469,119 +481,138 @@ struct BicycleExtModel {
         T tmp_j5 = 2*w_pos;
 
         // q
-        kp.q(0,0) = w_pos*(2*x - 2*x_ref);
-        kp.q(1,0) = w_pos*(2*y - 2*y_ref);
-        kp.q(2,0) = theta*tmp_j0;
-        kp.q(3,0) = kappa*tmp_j1;
-        kp.q(4,0) = w_vel*(2*v - 2*v_ref);
-        kp.q(5,0) = a*tmp_j2;
+        model.q(0,0) = w_pos*(2*x - 2*x_ref);
+        model.q(1,0) = w_pos*(2*y - 2*y_ref);
+        model.q(2,0) = theta*tmp_j0;
+        model.q(3,0) = kappa*tmp_j1;
+        model.q(4,0) = w_vel*(2*v - 2*v_ref);
+        model.q(5,0) = a*tmp_j2;
 
         // r
-        kp.r(0,0) = dkappa*tmp_j3;
-        kp.r(1,0) = jerk*tmp_j4;
+        model.r(0,0) = dkappa*tmp_j3;
+        model.r(1,0) = jerk*tmp_j4;
 
         // Q (Mode 0=GN, 1=Exact)
-        kp.Q(0,0) = tmp_j5;
-        kp.Q(0,1) = 0;
-        kp.Q(0,2) = 0;
-        kp.Q(0,3) = 0;
-        kp.Q(0,4) = 0;
-        kp.Q(0,5) = 0;
-        kp.Q(1,0) = 0;
-        kp.Q(1,1) = tmp_j5;
-        kp.Q(1,2) = 0;
-        kp.Q(1,3) = 0;
-        kp.Q(1,4) = 0;
-        kp.Q(1,5) = 0;
-        kp.Q(2,0) = 0;
-        kp.Q(2,1) = 0;
-        kp.Q(2,2) = tmp_j0;
-        kp.Q(2,3) = 0;
-        kp.Q(2,4) = 0;
-        kp.Q(2,5) = 0;
-        kp.Q(3,0) = 0;
-        kp.Q(3,1) = 0;
-        kp.Q(3,2) = 0;
-        kp.Q(3,3) = tmp_j1;
-        kp.Q(3,4) = 0;
-        kp.Q(3,5) = 0;
-        kp.Q(4,0) = 0;
-        kp.Q(4,1) = 0;
-        kp.Q(4,2) = 0;
-        kp.Q(4,3) = 0;
-        kp.Q(4,4) = 2*w_vel;
-        kp.Q(4,5) = 0;
-        kp.Q(5,0) = 0;
-        kp.Q(5,1) = 0;
-        kp.Q(5,2) = 0;
-        kp.Q(5,3) = 0;
-        kp.Q(5,4) = 0;
-        kp.Q(5,5) = tmp_j2;
+        model.Q(0,0) = tmp_j5;
+        model.Q(0,1) = 0;
+        model.Q(0,2) = 0;
+        model.Q(0,3) = 0;
+        model.Q(0,4) = 0;
+        model.Q(0,5) = 0;
+        model.Q(1,0) = 0;
+        model.Q(1,1) = tmp_j5;
+        model.Q(1,2) = 0;
+        model.Q(1,3) = 0;
+        model.Q(1,4) = 0;
+        model.Q(1,5) = 0;
+        model.Q(2,0) = 0;
+        model.Q(2,1) = 0;
+        model.Q(2,2) = tmp_j0;
+        model.Q(2,3) = 0;
+        model.Q(2,4) = 0;
+        model.Q(2,5) = 0;
+        model.Q(3,0) = 0;
+        model.Q(3,1) = 0;
+        model.Q(3,2) = 0;
+        model.Q(3,3) = tmp_j1;
+        model.Q(3,4) = 0;
+        model.Q(3,5) = 0;
+        model.Q(4,0) = 0;
+        model.Q(4,1) = 0;
+        model.Q(4,2) = 0;
+        model.Q(4,3) = 0;
+        model.Q(4,4) = 2*w_vel;
+        model.Q(4,5) = 0;
+        model.Q(5,0) = 0;
+        model.Q(5,1) = 0;
+        model.Q(5,2) = 0;
+        model.Q(5,3) = 0;
+        model.Q(5,4) = 0;
+        model.Q(5,5) = tmp_j2;
 
         // R (Mode 0=GN, 1=Exact)
-        kp.R(0,0) = tmp_j3;
-        kp.R(0,1) = 0;
-        kp.R(1,0) = 0;
-        kp.R(1,1) = tmp_j4;
+        model.R(0,0) = tmp_j3;
+        model.R(0,1) = 0;
+        model.R(1,0) = 0;
+        model.R(1,1) = tmp_j4;
 
         // H (Mode 0=GN, 1=Exact)
-        kp.H(0,0) = 0;
-        kp.H(0,1) = 0;
-        kp.H(0,2) = 0;
-        kp.H(0,3) = 0;
-        kp.H(0,4) = 0;
-        kp.H(0,5) = 0;
-        kp.H(1,0) = 0;
-        kp.H(1,1) = 0;
-        kp.H(1,2) = 0;
-        kp.H(1,3) = 0;
-        kp.H(1,4) = 0;
-        kp.H(1,5) = 0;
+        model.H(0,0) = 0;
+        model.H(0,1) = 0;
+        model.H(0,2) = 0;
+        model.H(0,3) = 0;
+        model.H(0,4) = 0;
+        model.H(0,5) = 0;
+        model.H(1,0) = 0;
+        model.H(1,1) = 0;
+        model.H(1,2) = 0;
+        model.H(1,3) = 0;
+        model.H(1,4) = 0;
+        model.H(1,5) = 0;
 
-        kp.cost = pow(a, 2)*w_a + pow(dkappa, 2)*w_dkappa + pow(jerk, 2)*w_jerk + pow(kappa, 2)*w_kappa + pow(theta, 2)*w_theta + w_pos*(pow(x - x_ref, 2) + pow(y - y_ref, 2)) + w_vel*pow(v - v_ref, 2);
+        state.cost = pow(a, 2)*w_a + pow(dkappa, 2)*w_dkappa + pow(jerk, 2)*w_jerk + pow(kappa, 2)*w_kappa + pow(theta, 2)*w_theta + w_pos*(pow(x - x_ref, 2) + pow(y - y_ref, 2)) + w_vel*pow(v - v_ref, 2);
     }
 
 template<typename T>
-    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        compute_cost_impl<T, 0>(kp);
+    static void compute_cost_gn(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model) {
+        compute_cost_impl<T, 0>(state, model);
     }
 
     template<typename T>
-    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        compute_cost_impl<T, 1>(kp);
+    static void compute_cost_exact(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model) {
+        compute_cost_impl<T, 1>(state, model);
     }
 
     template<typename T>
-    static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        compute_cost_impl<T, 1>(kp);
+    static void compute_cost(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model) {
+        compute_cost_impl<T, 1>(state, model);
     }
 
 
-    // --- 4. Compute All (Convenience) ---
+    // --- 4. Compute All (Convenience wrappers for backward compatibility) ---
+    // These are kept for tools that still use the old API
     template<typename T>
-    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
-        compute_cost(kp); // Default GN
+    static void compute(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType type,
+        double dt)
+    {
+        compute_dynamics(state, model, type, dt);
+        compute_constraints(state, model);
+        compute_cost(state, model); // Default GN
     }
 
     template<typename T>
-    static void compute_exact(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
-        compute_cost_exact(kp); // Exact Hessian
+    static void compute_exact(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType type,
+        double dt)
+    {
+        compute_dynamics(state, model, type, dt);
+        compute_constraints(state, model);
+        compute_cost_exact(state, model); // Exact Hessian
     }
 
     // --- 5. Sparse Kernels (Generated) ---
     
     // --- 6. Fused Riccati Kernel (Generated) ---
-    // Updates kp.Q_bar, R_bar, H_bar, q_bar, r_bar in one go.
+    // NEW SPLIT ARCHITECTURE: Reads Model, writes Workspace
+    // Updates workspace Q_bar, R_bar, H_bar, q_bar, r_bar in one go.
     // Uses Vxx, Vx from next step.
     template<typename T>
     static void compute_fused_riccati_step(
         const MSMat<T, NX, NX>& Vxx, 
         const MSVec<T, NX>& Vx,
-        KnotPointV2<T,NX,NU,NC,NP>& kp) 
+        const ModelData<T,NX,NU,NC>& model,
+        SolverWorkspace<T,NX,NU,NC>& work) 
     {
         T P_0_0 = Vxx(0,0);
         T P_0_1 = Vxx(0,1);
@@ -610,33 +641,33 @@ template<typename T>
         T p_3 = Vx(3);
         T p_4 = Vx(4);
         T p_5 = Vx(5);
-        T A_0_0 = kp.A(0,0);
-        T A_0_2 = kp.A(0,2);
-        T A_0_3 = kp.A(0,3);
-        T A_0_4 = kp.A(0,4);
-        T A_0_5 = kp.A(0,5);
-        T A_1_1 = kp.A(1,1);
-        T A_1_2 = kp.A(1,2);
-        T A_1_3 = kp.A(1,3);
-        T A_1_4 = kp.A(1,4);
-        T A_1_5 = kp.A(1,5);
-        T A_2_2 = kp.A(2,2);
-        T A_2_3 = kp.A(2,3);
-        T A_2_4 = kp.A(2,4);
-        T A_2_5 = kp.A(2,5);
-        T A_3_3 = kp.A(3,3);
-        T A_4_4 = kp.A(4,4);
-        T A_4_5 = kp.A(4,5);
-        T A_5_5 = kp.A(5,5);
-        T B_0_0 = kp.B(0,0);
-        T B_0_1 = kp.B(0,1);
-        T B_1_0 = kp.B(1,0);
-        T B_1_1 = kp.B(1,1);
-        T B_2_0 = kp.B(2,0);
-        T B_2_1 = kp.B(2,1);
-        T B_3_0 = kp.B(3,0);
-        T B_4_1 = kp.B(4,1);
-        T B_5_1 = kp.B(5,1);
+        T A_0_0 = model.A(0,0);
+        T A_0_2 = model.A(0,2);
+        T A_0_3 = model.A(0,3);
+        T A_0_4 = model.A(0,4);
+        T A_0_5 = model.A(0,5);
+        T A_1_1 = model.A(1,1);
+        T A_1_2 = model.A(1,2);
+        T A_1_3 = model.A(1,3);
+        T A_1_4 = model.A(1,4);
+        T A_1_5 = model.A(1,5);
+        T A_2_2 = model.A(2,2);
+        T A_2_3 = model.A(2,3);
+        T A_2_4 = model.A(2,4);
+        T A_2_5 = model.A(2,5);
+        T A_3_3 = model.A(3,3);
+        T A_4_4 = model.A(4,4);
+        T A_4_5 = model.A(4,5);
+        T A_5_5 = model.A(5,5);
+        T B_0_0 = model.B(0,0);
+        T B_0_1 = model.B(0,1);
+        T B_1_0 = model.B(1,0);
+        T B_1_1 = model.B(1,1);
+        T B_2_0 = model.B(2,0);
+        T B_2_1 = model.B(2,1);
+        T B_3_0 = model.B(3,0);
+        T B_4_1 = model.B(4,1);
+        T B_5_1 = model.B(5,1);
 
         // CSE Intermediate Variables
         T tmp_ric0 = A_0_2*P_0_0;
@@ -695,69 +726,69 @@ template<typename T>
         T tmp_ric53 = B_0_1*P_0_4 + B_1_1*P_1_4 + B_2_1*P_2_4 + B_4_1*P_4_4 + B_5_1*P_4_5;
         T tmp_ric54 = B_0_1*P_0_5 + B_1_1*P_1_5 + B_2_1*P_2_5 + B_4_1*P_4_5 + B_5_1*P_5_5;
 
-        // Accumulate Results
-        kp.Q_bar(0,0) += pow(A_0_0, 2)*P_0_0;
-        kp.Q_bar(0,1) += A_0_0*A_1_1*P_0_1;
-        kp.Q_bar(0,2) += A_0_0*tmp_ric0 + A_0_0*tmp_ric1 + A_0_0*tmp_ric2;
-        kp.Q_bar(0,3) += A_0_0*tmp_ric3 + A_0_0*tmp_ric4 + A_0_0*tmp_ric5 + A_0_0*tmp_ric6;
-        kp.Q_bar(0,4) += A_0_0*tmp_ric10 + A_0_0*tmp_ric7 + A_0_0*tmp_ric8 + A_0_0*tmp_ric9;
-        kp.Q_bar(0,5) += A_0_0*tmp_ric11 + A_0_0*tmp_ric12 + A_0_0*tmp_ric13 + A_0_0*tmp_ric14 + A_0_0*tmp_ric15;
-        kp.Q_bar(1,1) += pow(A_1_1, 2)*P_1_1;
-        kp.Q_bar(1,2) += A_1_1*tmp_ric16 + A_1_1*tmp_ric17 + A_1_1*tmp_ric18;
-        kp.Q_bar(1,3) += A_1_1*tmp_ric19 + A_1_1*tmp_ric20 + A_1_1*tmp_ric21 + A_1_1*tmp_ric22;
-        kp.Q_bar(1,4) += A_1_1*tmp_ric23 + A_1_1*tmp_ric24 + A_1_1*tmp_ric25 + A_1_1*tmp_ric26;
-        kp.Q_bar(1,5) += A_1_1*tmp_ric27 + A_1_1*tmp_ric28 + A_1_1*tmp_ric29 + A_1_1*tmp_ric30 + A_1_1*tmp_ric31;
-        kp.Q_bar(2,2) += A_0_2*tmp_ric32 + A_1_2*tmp_ric33 + A_2_2*tmp_ric34;
-        kp.Q_bar(2,3) += A_0_3*tmp_ric32 + A_1_3*tmp_ric33 + A_2_3*tmp_ric34 + A_3_3*(A_0_2*P_0_3 + A_1_2*P_1_3 + A_2_2*P_2_3);
-        kp.Q_bar(2,4) += A_0_4*tmp_ric32 + A_1_4*tmp_ric33 + A_2_4*tmp_ric34 + A_4_4*tmp_ric35;
-        kp.Q_bar(2,5) += A_0_5*tmp_ric32 + A_1_5*tmp_ric33 + A_2_5*tmp_ric34 + A_4_5*tmp_ric35 + A_5_5*(A_0_2*P_0_5 + A_1_2*P_1_5 + A_2_2*P_2_5);
-        kp.Q_bar(3,3) += A_0_3*tmp_ric36 + A_1_3*tmp_ric37 + A_2_3*tmp_ric38 + A_3_3*(A_0_3*P_0_3 + A_1_3*P_1_3 + A_2_3*P_2_3 + A_3_3*P_3_3);
-        kp.Q_bar(3,4) += A_0_4*tmp_ric36 + A_1_4*tmp_ric37 + A_2_4*tmp_ric38 + A_4_4*tmp_ric39;
-        kp.Q_bar(3,5) += A_0_5*tmp_ric36 + A_1_5*tmp_ric37 + A_2_5*tmp_ric38 + A_4_5*tmp_ric39 + A_5_5*(A_0_3*P_0_5 + A_1_3*P_1_5 + A_2_3*P_2_5 + A_3_3*P_3_5);
-        kp.Q_bar(4,4) += A_0_4*tmp_ric40 + A_1_4*tmp_ric41 + A_2_4*tmp_ric42 + A_4_4*tmp_ric43;
-        kp.Q_bar(4,5) += A_0_5*tmp_ric40 + A_1_5*tmp_ric41 + A_2_5*tmp_ric42 + A_4_5*tmp_ric43 + A_5_5*(A_0_4*P_0_5 + A_1_4*P_1_5 + A_2_4*P_2_5 + A_4_4*P_4_5);
-        kp.Q_bar(5,5) += A_0_5*(tmp_ric11 + tmp_ric12 + tmp_ric13 + tmp_ric14 + tmp_ric15) + A_1_5*(tmp_ric27 + tmp_ric28 + tmp_ric29 + tmp_ric30 + tmp_ric31) + A_2_5*(A_0_5*P_0_2 + A_1_5*P_1_2 + A_2_5*P_2_2 + A_4_5*P_2_4 + A_5_5*P_2_5) + A_4_5*(A_0_5*P_0_4 + A_1_5*P_1_4 + A_2_5*P_2_4 + A_4_5*P_4_4 + A_5_5*P_4_5) + A_5_5*(A_0_5*P_0_5 + A_1_5*P_1_5 + A_2_5*P_2_5 + A_4_5*P_4_5 + A_5_5*P_5_5);
-        kp.R_bar(0,0) += B_0_0*tmp_ric44 + B_1_0*tmp_ric45 + B_2_0*tmp_ric46 + B_3_0*tmp_ric47;
-        kp.R_bar(0,1) += B_0_1*tmp_ric44 + B_1_1*tmp_ric45 + B_2_1*tmp_ric46 + B_4_1*tmp_ric48 + B_5_1*tmp_ric49;
-        kp.R_bar(1,1) += B_0_1*tmp_ric50 + B_1_1*tmp_ric51 + B_2_1*tmp_ric52 + B_4_1*tmp_ric53 + B_5_1*tmp_ric54;
-        kp.H_bar(0,0) += A_0_0*tmp_ric44;
-        kp.H_bar(0,1) += A_1_1*tmp_ric45;
-        kp.H_bar(0,2) += A_0_2*tmp_ric44 + A_1_2*tmp_ric45 + A_2_2*tmp_ric46;
-        kp.H_bar(0,3) += A_0_3*tmp_ric44 + A_1_3*tmp_ric45 + A_2_3*tmp_ric46 + A_3_3*tmp_ric47;
-        kp.H_bar(0,4) += A_0_4*tmp_ric44 + A_1_4*tmp_ric45 + A_2_4*tmp_ric46 + A_4_4*tmp_ric48;
-        kp.H_bar(0,5) += A_0_5*tmp_ric44 + A_1_5*tmp_ric45 + A_2_5*tmp_ric46 + A_4_5*tmp_ric48 + A_5_5*tmp_ric49;
-        kp.H_bar(1,0) += A_0_0*tmp_ric50;
-        kp.H_bar(1,1) += A_1_1*tmp_ric51;
-        kp.H_bar(1,2) += A_0_2*tmp_ric50 + A_1_2*tmp_ric51 + A_2_2*tmp_ric52;
-        kp.H_bar(1,3) += A_0_3*tmp_ric50 + A_1_3*tmp_ric51 + A_2_3*tmp_ric52 + A_3_3*(B_0_1*P_0_3 + B_1_1*P_1_3 + B_2_1*P_2_3 + B_4_1*P_3_4 + B_5_1*P_3_5);
-        kp.H_bar(1,4) += A_0_4*tmp_ric50 + A_1_4*tmp_ric51 + A_2_4*tmp_ric52 + A_4_4*tmp_ric53;
-        kp.H_bar(1,5) += A_0_5*tmp_ric50 + A_1_5*tmp_ric51 + A_2_5*tmp_ric52 + A_4_5*tmp_ric53 + A_5_5*tmp_ric54;
-        kp.q_bar(0,0) += A_0_0*p_0;
-        kp.q_bar(1,0) += A_1_1*p_1;
-        kp.q_bar(2,0) += A_0_2*p_0 + A_1_2*p_1 + A_2_2*p_2;
-        kp.q_bar(3,0) += A_0_3*p_0 + A_1_3*p_1 + A_2_3*p_2 + A_3_3*p_3;
-        kp.q_bar(4,0) += A_0_4*p_0 + A_1_4*p_1 + A_2_4*p_2 + A_4_4*p_4;
-        kp.q_bar(5,0) += A_0_5*p_0 + A_1_5*p_1 + A_2_5*p_2 + A_4_5*p_4 + A_5_5*p_5;
-        kp.r_bar(0,0) += B_0_0*p_0 + B_1_0*p_1 + B_2_0*p_2 + B_3_0*p_3;
-        kp.r_bar(1,0) += B_0_1*p_0 + B_1_1*p_1 + B_2_1*p_2 + B_4_1*p_4 + B_5_1*p_5;
+        // Accumulate Results to Workspace
+        work.Q_bar(0,0) += pow(A_0_0, 2)*P_0_0;
+        work.Q_bar(0,1) += A_0_0*A_1_1*P_0_1;
+        work.Q_bar(0,2) += A_0_0*tmp_ric0 + A_0_0*tmp_ric1 + A_0_0*tmp_ric2;
+        work.Q_bar(0,3) += A_0_0*tmp_ric3 + A_0_0*tmp_ric4 + A_0_0*tmp_ric5 + A_0_0*tmp_ric6;
+        work.Q_bar(0,4) += A_0_0*tmp_ric10 + A_0_0*tmp_ric7 + A_0_0*tmp_ric8 + A_0_0*tmp_ric9;
+        work.Q_bar(0,5) += A_0_0*tmp_ric11 + A_0_0*tmp_ric12 + A_0_0*tmp_ric13 + A_0_0*tmp_ric14 + A_0_0*tmp_ric15;
+        work.Q_bar(1,1) += pow(A_1_1, 2)*P_1_1;
+        work.Q_bar(1,2) += A_1_1*tmp_ric16 + A_1_1*tmp_ric17 + A_1_1*tmp_ric18;
+        work.Q_bar(1,3) += A_1_1*tmp_ric19 + A_1_1*tmp_ric20 + A_1_1*tmp_ric21 + A_1_1*tmp_ric22;
+        work.Q_bar(1,4) += A_1_1*tmp_ric23 + A_1_1*tmp_ric24 + A_1_1*tmp_ric25 + A_1_1*tmp_ric26;
+        work.Q_bar(1,5) += A_1_1*tmp_ric27 + A_1_1*tmp_ric28 + A_1_1*tmp_ric29 + A_1_1*tmp_ric30 + A_1_1*tmp_ric31;
+        work.Q_bar(2,2) += A_0_2*tmp_ric32 + A_1_2*tmp_ric33 + A_2_2*tmp_ric34;
+        work.Q_bar(2,3) += A_0_3*tmp_ric32 + A_1_3*tmp_ric33 + A_2_3*tmp_ric34 + A_3_3*(A_0_2*P_0_3 + A_1_2*P_1_3 + A_2_2*P_2_3);
+        work.Q_bar(2,4) += A_0_4*tmp_ric32 + A_1_4*tmp_ric33 + A_2_4*tmp_ric34 + A_4_4*tmp_ric35;
+        work.Q_bar(2,5) += A_0_5*tmp_ric32 + A_1_5*tmp_ric33 + A_2_5*tmp_ric34 + A_4_5*tmp_ric35 + A_5_5*(A_0_2*P_0_5 + A_1_2*P_1_5 + A_2_2*P_2_5);
+        work.Q_bar(3,3) += A_0_3*tmp_ric36 + A_1_3*tmp_ric37 + A_2_3*tmp_ric38 + A_3_3*(A_0_3*P_0_3 + A_1_3*P_1_3 + A_2_3*P_2_3 + A_3_3*P_3_3);
+        work.Q_bar(3,4) += A_0_4*tmp_ric36 + A_1_4*tmp_ric37 + A_2_4*tmp_ric38 + A_4_4*tmp_ric39;
+        work.Q_bar(3,5) += A_0_5*tmp_ric36 + A_1_5*tmp_ric37 + A_2_5*tmp_ric38 + A_4_5*tmp_ric39 + A_5_5*(A_0_3*P_0_5 + A_1_3*P_1_5 + A_2_3*P_2_5 + A_3_3*P_3_5);
+        work.Q_bar(4,4) += A_0_4*tmp_ric40 + A_1_4*tmp_ric41 + A_2_4*tmp_ric42 + A_4_4*tmp_ric43;
+        work.Q_bar(4,5) += A_0_5*tmp_ric40 + A_1_5*tmp_ric41 + A_2_5*tmp_ric42 + A_4_5*tmp_ric43 + A_5_5*(A_0_4*P_0_5 + A_1_4*P_1_5 + A_2_4*P_2_5 + A_4_4*P_4_5);
+        work.Q_bar(5,5) += A_0_5*(tmp_ric11 + tmp_ric12 + tmp_ric13 + tmp_ric14 + tmp_ric15) + A_1_5*(tmp_ric27 + tmp_ric28 + tmp_ric29 + tmp_ric30 + tmp_ric31) + A_2_5*(A_0_5*P_0_2 + A_1_5*P_1_2 + A_2_5*P_2_2 + A_4_5*P_2_4 + A_5_5*P_2_5) + A_4_5*(A_0_5*P_0_4 + A_1_5*P_1_4 + A_2_5*P_2_4 + A_4_5*P_4_4 + A_5_5*P_4_5) + A_5_5*(A_0_5*P_0_5 + A_1_5*P_1_5 + A_2_5*P_2_5 + A_4_5*P_4_5 + A_5_5*P_5_5);
+        work.R_bar(0,0) += B_0_0*tmp_ric44 + B_1_0*tmp_ric45 + B_2_0*tmp_ric46 + B_3_0*tmp_ric47;
+        work.R_bar(0,1) += B_0_1*tmp_ric44 + B_1_1*tmp_ric45 + B_2_1*tmp_ric46 + B_4_1*tmp_ric48 + B_5_1*tmp_ric49;
+        work.R_bar(1,1) += B_0_1*tmp_ric50 + B_1_1*tmp_ric51 + B_2_1*tmp_ric52 + B_4_1*tmp_ric53 + B_5_1*tmp_ric54;
+        work.H_bar(0,0) += A_0_0*tmp_ric44;
+        work.H_bar(0,1) += A_1_1*tmp_ric45;
+        work.H_bar(0,2) += A_0_2*tmp_ric44 + A_1_2*tmp_ric45 + A_2_2*tmp_ric46;
+        work.H_bar(0,3) += A_0_3*tmp_ric44 + A_1_3*tmp_ric45 + A_2_3*tmp_ric46 + A_3_3*tmp_ric47;
+        work.H_bar(0,4) += A_0_4*tmp_ric44 + A_1_4*tmp_ric45 + A_2_4*tmp_ric46 + A_4_4*tmp_ric48;
+        work.H_bar(0,5) += A_0_5*tmp_ric44 + A_1_5*tmp_ric45 + A_2_5*tmp_ric46 + A_4_5*tmp_ric48 + A_5_5*tmp_ric49;
+        work.H_bar(1,0) += A_0_0*tmp_ric50;
+        work.H_bar(1,1) += A_1_1*tmp_ric51;
+        work.H_bar(1,2) += A_0_2*tmp_ric50 + A_1_2*tmp_ric51 + A_2_2*tmp_ric52;
+        work.H_bar(1,3) += A_0_3*tmp_ric50 + A_1_3*tmp_ric51 + A_2_3*tmp_ric52 + A_3_3*(B_0_1*P_0_3 + B_1_1*P_1_3 + B_2_1*P_2_3 + B_4_1*P_3_4 + B_5_1*P_3_5);
+        work.H_bar(1,4) += A_0_4*tmp_ric50 + A_1_4*tmp_ric51 + A_2_4*tmp_ric52 + A_4_4*tmp_ric53;
+        work.H_bar(1,5) += A_0_5*tmp_ric50 + A_1_5*tmp_ric51 + A_2_5*tmp_ric52 + A_4_5*tmp_ric53 + A_5_5*tmp_ric54;
+        work.q_bar(0,0) += A_0_0*p_0;
+        work.q_bar(1,0) += A_1_1*p_1;
+        work.q_bar(2,0) += A_0_2*p_0 + A_1_2*p_1 + A_2_2*p_2;
+        work.q_bar(3,0) += A_0_3*p_0 + A_1_3*p_1 + A_2_3*p_2 + A_3_3*p_3;
+        work.q_bar(4,0) += A_0_4*p_0 + A_1_4*p_1 + A_2_4*p_2 + A_4_4*p_4;
+        work.q_bar(5,0) += A_0_5*p_0 + A_1_5*p_1 + A_2_5*p_2 + A_4_5*p_4 + A_5_5*p_5;
+        work.r_bar(0,0) += B_0_0*p_0 + B_1_0*p_1 + B_2_0*p_2 + B_3_0*p_3;
+        work.r_bar(1,0) += B_0_1*p_0 + B_1_1*p_1 + B_2_1*p_2 + B_4_1*p_4 + B_5_1*p_5;
 
         // Fill Lower Triangles (Symmetry)
-        kp.Q_bar(1,0) = kp.Q_bar(0,1);
-        kp.Q_bar(2,0) = kp.Q_bar(0,2);
-        kp.Q_bar(3,0) = kp.Q_bar(0,3);
-        kp.Q_bar(4,0) = kp.Q_bar(0,4);
-        kp.Q_bar(5,0) = kp.Q_bar(0,5);
-        kp.Q_bar(2,1) = kp.Q_bar(1,2);
-        kp.Q_bar(3,1) = kp.Q_bar(1,3);
-        kp.Q_bar(4,1) = kp.Q_bar(1,4);
-        kp.Q_bar(5,1) = kp.Q_bar(1,5);
-        kp.Q_bar(3,2) = kp.Q_bar(2,3);
-        kp.Q_bar(4,2) = kp.Q_bar(2,4);
-        kp.Q_bar(5,2) = kp.Q_bar(2,5);
-        kp.Q_bar(4,3) = kp.Q_bar(3,4);
-        kp.Q_bar(5,3) = kp.Q_bar(3,5);
-        kp.Q_bar(5,4) = kp.Q_bar(4,5);
-        kp.R_bar(1,0) = kp.R_bar(0,1);
+        work.Q_bar(1,0) = work.Q_bar(0,1);
+        work.Q_bar(2,0) = work.Q_bar(0,2);
+        work.Q_bar(3,0) = work.Q_bar(0,3);
+        work.Q_bar(4,0) = work.Q_bar(0,4);
+        work.Q_bar(5,0) = work.Q_bar(0,5);
+        work.Q_bar(2,1) = work.Q_bar(1,2);
+        work.Q_bar(3,1) = work.Q_bar(1,3);
+        work.Q_bar(4,1) = work.Q_bar(1,4);
+        work.Q_bar(5,1) = work.Q_bar(1,5);
+        work.Q_bar(3,2) = work.Q_bar(2,3);
+        work.Q_bar(4,2) = work.Q_bar(2,4);
+        work.Q_bar(5,2) = work.Q_bar(2,5);
+        work.Q_bar(4,3) = work.Q_bar(3,4);
+        work.Q_bar(5,3) = work.Q_bar(3,5);
+        work.Q_bar(5,4) = work.Q_bar(4,5);
+        work.R_bar(1,0) = work.R_bar(0,1);
 
     }
     

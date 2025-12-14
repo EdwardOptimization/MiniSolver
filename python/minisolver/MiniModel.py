@@ -194,15 +194,16 @@ class OptimalControlModel:
 
         # Unpack State/Control/Params
         if source_kp:
+            # NEW: Use state instead of kp
             for i, s in enumerate(self.states):
                 if is_used(s):
-                    code += f"        T {s} = kp.x({i});\n"
+                    code += f"        T {s} = state.x({i});\n"
             for i, u in enumerate(self.controls):
                 if is_used(u):
-                    code += f"        T {u} = kp.u({i});\n"
+                    code += f"        T {u} = state.u({i});\n"
             for i, p in enumerate(self.parameters):
                 if is_used(p):
-                    code += f"        T {p} = kp.p({i});\n"
+                    code += f"        T {p} = state.p({i});\n"
         else:
             # Source from function args x_in, u_in (and p_in)
             unpacked_x = False
@@ -231,7 +232,15 @@ class OptimalControlModel:
                 code += "        (void)p_in;\n"
         return code
 
-    def _generate_assign_block(self, assignments, reduced):
+    def _generate_assign_block(self, assignments, reduced, target='model'):
+        """
+        Generate assignment code for split architecture.
+        
+        Args:
+            assignments: List of (name, idx, rows, cols)
+            reduced: Reduced expressions from CSE
+            target: 'state' or 'model' to determine the target object
+        """
         code = ""
         for name, idx, rows, cols in assignments:
             if idx >= len(reduced): continue
@@ -245,12 +254,12 @@ class OptimalControlModel:
                         val = mat[r, c]
                     
                     if sp.sympify(val).is_zero is True:
-                        code += f"        kp.{name}({r},{c}) = 0;\n"
+                        code += f"        {target}.{name}({r},{c}) = 0;\n"
                     else:
-                        code += f"        kp.{name}({r},{c}) = {sp.ccode(val)};\n"
+                        code += f"        {target}.{name}({r},{c}) = {sp.ccode(val)};\n"
         return code
 
-    def _generate_assign_block_exact(self, assignments_obj, reduced, offset_obj, assignments_con, offset_con):
+    def _generate_assign_block_exact(self, assignments_obj, reduced, offset_obj, assignments_con, offset_con, target='model'):
         """
         Special assignment block for Hessians that conditionally adds Constraint Hessians.
         """
@@ -279,12 +288,12 @@ class OptimalControlModel:
                     code_val_obj = sp.ccode(val_obj)
                     code_val_con = sp.ccode(val_con)
                     
-                    # C++ logic: kp.Q(r,c) = Q_obj + (Exact ? Q_con : 0);
+                    # C++ logic: model.Q(r,c) = Q_obj + (Exact ? Q_con : 0);
                     if val_con == 0:
-                        code += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
+                        code += f"        {target}.{name}({r},{c}) = {code_val_obj};\n"
                     else:
-                        code += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
-                        code += f"        if constexpr (Exact) kp.{name}({r},{c}) += {code_val_con};\n"
+                        code += f"        {target}.{name}({r},{c}) = {code_val_obj};\n"
+                        code += f"        if constexpr (Exact) {target}.{name}({r},{c}) += {code_val_con};\n"
         return code
 
     def _generate_special_constraint_preamble(self):
@@ -435,38 +444,39 @@ class OptimalControlModel:
         for r in range(nx):
             code += f"        T p_{r} = Vx({r});\n"
             
+        # NEW: Read from model, write to work
         # A (Non-zeros)
         for r in range(nx):
             for c in range(nx):
                 if A_sym[r, c] != 0:
-                    code += f"        T A_{r}_{c} = kp.A({r},{c});\n"
+                    code += f"        T A_{r}_{c} = model.A({r},{c});\n"
         
         # B (Non-zeros)
         for r in range(nx):
             for c in range(nu):
                 if B_sym[r, c] != 0:
-                    code += f"        T B_{r}_{c} = kp.B({r},{c});\n"
+                    code += f"        T B_{r}_{c} = model.B({r},{c});\n"
                     
         code += "\n        // CSE Intermediate Variables\n"
         for sym, expr in replacements:
             code += f"        T {sym} = {sp.ccode(expr)};\n"
             
-        code += "\n        // Accumulate Results\n"
+        code += "\n        // Accumulate Results to Workspace\n"
         for i, (name, r, c) in enumerate(targets):
             val = reduced_exprs[i]
-            # Accumulate: kp.Q_bar += val
-            code += f"        kp.{name}({r},{c}) += {sp.ccode(val)};\n"
+            # NEW: Accumulate to work.Q_bar instead of kp.Q_bar
+            code += f"        work.{name}({r},{c}) += {sp.ccode(val)};\n"
             
         # 5.2 Fill Lower Triangles (Symmetry)
         code += "\n        // Fill Lower Triangles (Symmetry)\n"
         # Qxx
         for r in range(nx):
             for c in range(r + 1, nx):
-                code += f"        kp.Q_bar({c},{r}) = kp.Q_bar({r},{c});\n"
+                code += f"        work.Q_bar({c},{r}) = work.Q_bar({r},{c});\n"
         # Quu
         for r in range(nu):
             for c in range(r + 1, nu):
-                code += f"        kp.R_bar({c},{r}) = kp.R_bar({r},{c});\n"
+                code += f"        work.R_bar({c},{r}) = work.R_bar({r},{c});\n"
                 
         return code
 
@@ -581,17 +591,17 @@ class OptimalControlModel:
             for name, val in repl_dyn:
                 code_compute_dyn_body += f"                T {name} = {sp.ccode(val)};\n"
             
-            # Assignments
+            # Assignments - NEW: Write to model instead of kp
             # f_resid (x_next)
             if nx > 0:
                 mat = reduced_dyn[0]
                 for r in range(nx):
                     val = mat[r]
-                    code_compute_dyn_body += f"                kp.f_resid({r}) = {sp.ccode(val)};\n"
+                    code_compute_dyn_body += f"                model.f_resid({r}) = {sp.ccode(val)};\n"
             
             # A
             if nx > 0:
-                code_compute_dyn_body += f"                kp.A.setZero();\n"
+                code_compute_dyn_body += f"                model.A.setZero();\n"
                 mat = reduced_dyn[1]
                 for r in range(nx):
                     for c in range(nx):
@@ -599,11 +609,11 @@ class OptimalControlModel:
                         if sp.sympify(val).is_zero is True:
                              pass # Already zero
                         else:
-                             code_compute_dyn_body += f"                kp.A({r},{c}) = {sp.ccode(val)};\n"
+                             code_compute_dyn_body += f"                model.A({r},{c}) = {sp.ccode(val)};\n"
             
             # B
             if nx > 0 and nu > 0:
-                code_compute_dyn_body += f"                kp.B.setZero();\n"
+                code_compute_dyn_body += f"                model.B.setZero();\n"
                 mat = reduced_dyn[2]
                 for r in range(nx):
                     for c in range(nu):
@@ -611,7 +621,7 @@ class OptimalControlModel:
                         if sp.sympify(val).is_zero is True:
                              pass # Already zero
                         else:
-                             code_compute_dyn_body += f"                kp.B({r},{c}) = {sp.ccode(val)};\n"
+                             code_compute_dyn_body += f"                model.B({r},{c}) = {sp.ccode(val)};\n"
 
             code_compute_dyn_body += "                break;\n"
             code_compute_dyn_body += "            }\n"
@@ -740,8 +750,11 @@ class OptimalControlModel:
         code_compute_con += "\n"
         for name, val in repl_con:
             code_compute_con += f"        T {name} = {sp.ccode(val)};\n"
-        assign_con = [("g_val", 0, nc, 1), ("C", 1, nc, nx), ("D", 2, nc, nu)]
-        code_compute_con += self._generate_assign_block(assign_con, reduced_con)
+        # NEW: g_val goes to state, C and D go to model
+        assign_con_state = [("g_val", 0, nc, 1)]
+        assign_con_model = [("C", 1, nc, nx), ("D", 2, nc, nu)]
+        code_compute_con += self._generate_assign_block(assign_con_state, reduced_con, target='state')
+        code_compute_con += self._generate_assign_block(assign_con_model, reduced_con, target='model')
 
         # Compute Cost Body
         # Template param: 0 = Exact (with Con Hessian), 1 = GN (without Con Hessian)
@@ -751,7 +764,9 @@ class OptimalControlModel:
         # Mode 1: Exact (Q = Q_obj + Q_con)
         
         code_cost_impl = "template<typename T, int Mode>\n"
-        code_cost_impl += "    static void compute_cost_impl(KnotPointV2<T,NX,NU,NC,NP>& kp) {\n"
+        code_cost_impl += "    static void compute_cost_impl(\n"
+        code_cost_impl += "        StateNode<T,NX,NU,NC,NP>& state,\n"
+        code_cost_impl += "        ModelData<T,NX,NU,NC>& model) {\n"
         
         # Determine symbols used in Cost + Constraint Hessians
         # We must use the *derivative* expressions, because parameters used only in linear terms
@@ -780,21 +795,18 @@ class OptimalControlModel:
                 # Re-creating with same name works in SymPy.
                 s_lam = sp.symbols(f"lam_{i}")
                 if s_lam in used_syms:
-                    code_unpack += f"        T lam_{i} = kp.lam({i});\n"
+                    code_unpack += f"        T lam_{i} = state.lam({i});\n"
         
         code_cse = "\n"
         for name, val in repl_cost:
             code_cse += f"        T {name} = {sp.ccode(val)};\n"
             
         code_assign = ""
+        # NEW: q and r go to model
         assign_grads = [("q", 0, nx, 1), ("r", 1, nu, 1)]
-        code_assign += self._generate_assign_block(assign_grads, reduced_cost)
+        code_assign += self._generate_assign_block(assign_grads, reduced_cost, target='model')
         
-        # The key difference: generate_assign_block_exact handles the conditional addition
-        # Mode 1 -> Exact. Mode 0 -> GN.
-        # We need to adapt _generate_assign_block_exact to use the integer template.
-        
-        # Inline modified generation logic here
+        # NEW: Q, R, H go to model (Mode 0=GN, 1=Exact)
         target_names = ["Q", "R", "H"]
         offset_obj = 2
         offset_con = 5
@@ -818,16 +830,17 @@ class OptimalControlModel:
                     code_val_obj = sp.ccode(val_obj)
                     code_val_con = sp.ccode(val_con)
                     
-                    # kp.Q = Q_obj
+                    # NEW: Write to model instead of kp
                     if val_con == 0:
-                        code_assign += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
+                        code_assign += f"        model.{name}({r},{c}) = {code_val_obj};\n"
                     else:
-                        code_assign += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
+                        code_assign += f"        model.{name}({r},{c}) = {code_val_obj};\n"
                         # Add constraint hessian only if Mode == 1
-                        code_assign += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {code_val_con};\n"
+                        code_assign += f"        if constexpr (Mode == 1) model.{name}({r},{c}) += {code_val_con};\n"
         
+        # NEW: cost goes to state
         if len(reduced_cost) > 8:
-            code_assign += f"\n        kp.cost = {sp.ccode(reduced_cost[8])};\n"
+            code_assign += f"\n        state.cost = {sp.ccode(reduced_cost[8])};\n"
             
         code_cost_impl += code_unpack + code_cse + code_assign
         code_cost_impl += "    }\n\n"
@@ -845,22 +858,27 @@ class OptimalControlModel:
         # New approach: compute_cost takes a flag? 
         # But signature is fixed in solver.
         
-        # Let's provide explicit named functions.
+        # NEW: Wrapper functions with split architecture
         code_wrappers = "template<typename T>\n"
-        code_wrappers += "    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) {\n"
-        code_wrappers += "        compute_cost_impl<T, 0>(kp);\n"
+        code_wrappers += "    static void compute_cost_gn(\n"
+        code_wrappers += "        StateNode<T,NX,NU,NC,NP>& state,\n"
+        code_wrappers += "        ModelData<T,NX,NU,NC>& model) {\n"
+        code_wrappers += "        compute_cost_impl<T, 0>(state, model);\n"
         code_wrappers += "    }\n\n"
         
         code_wrappers += "    template<typename T>\n"
-        code_wrappers += "    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {\n"
-        code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
+        code_wrappers += "    static void compute_cost_exact(\n"
+        code_wrappers += "        StateNode<T,NX,NU,NC,NP>& state,\n"
+        code_wrappers += "        ModelData<T,NX,NU,NC>& model) {\n"
+        code_wrappers += "        compute_cost_impl<T, 1>(state, model);\n"
         code_wrappers += "    }\n\n"
         
-        # Default alias (Exact for backward compat, or GN?)
-        # Let's make it Exact to be safe.
+        # Default alias (Exact for backward compat)
         code_wrappers += "    template<typename T>\n"
-        code_wrappers += "    static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) {\n"
-        code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
+        code_wrappers += "    static void compute_cost(\n"
+        code_wrappers += "        StateNode<T,NX,NU,NC,NP>& state,\n"
+        code_wrappers += "        ModelData<T,NX,NU,NC>& model) {\n"
+        code_wrappers += "        compute_cost_impl<T, 1>(state, model);\n"
         code_wrappers += "    }\n"
         
         code_compute_cost = code_cost_impl + code_wrappers

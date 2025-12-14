@@ -78,68 +78,45 @@ struct {{MODEL_NAME}} {
     }
 
     // --- 1. Compute Dynamics (f_resid, A, B) ---
-    // NEW SPLIT ARCHITECTURE: Reads State, writes ModelData
     template<typename T>
-    static void compute_dynamics(
-        const StateNode<T,NX,NU,NC,NP>& state,
-        ModelData<T,NX,NU,NC>& model,
-        IntegratorType type,
-        double dt)
-    {
+    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
 {{COMPUTE_DYNAMICS_BODY}}
     }
 
     // --- 2. Compute Constraints (g_val, C, D) ---
-    // NEW SPLIT ARCHITECTURE: Reads/writes State, writes ModelData
     template<typename T>
-    static void compute_constraints(
-        StateNode<T,NX,NU,NC,NP>& state,
-        ModelData<T,NX,NU,NC>& model)
-    {
+    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
 {{COMPUTE_CONSTRAINTS_BODY}}
     }
 
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
     {{COMPUTE_COST_SECTION}}
 
-    // --- 4. Compute All (Convenience wrappers for backward compatibility) ---
-    // These are kept for tools that still use the old API
+    // --- 4. Compute All (Convenience) ---
     template<typename T>
-    static void compute(
-        StateNode<T,NX,NU,NC,NP>& state,
-        ModelData<T,NX,NU,NC>& model,
-        IntegratorType type,
-        double dt)
-    {
-        compute_dynamics(state, model, type, dt);
-        compute_constraints(state, model);
-        compute_cost(state, model); // Default GN
+    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp); // Default GN
     }
 
     template<typename T>
-    static void compute_exact(
-        StateNode<T,NX,NU,NC,NP>& state,
-        ModelData<T,NX,NU,NC>& model,
-        IntegratorType type,
-        double dt)
-    {
-        compute_dynamics(state, model, type, dt);
-        compute_constraints(state, model);
-        compute_cost_exact(state, model); // Exact Hessian
+    static void compute_exact(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost_exact(kp); // Exact Hessian
     }
 
     // --- 5. Sparse Kernels (Generated) ---
     // [[SPARSE_KERNELS_START]]
     // --- 6. Fused Riccati Kernel (Generated) ---
-    // NEW SPLIT ARCHITECTURE: Reads Model, writes Workspace
-    // Updates workspace Q_bar, R_bar, H_bar, q_bar, r_bar in one go.
+    // Updates kp.Q_bar, R_bar, H_bar, q_bar, r_bar in one go.
     // Uses Vxx, Vx from next step.
     template<typename T>
     static void compute_fused_riccati_step(
         const MSMat<T, NX, NX>& Vxx, 
         const MSVec<T, NX>& Vx,
-        const ModelData<T,NX,NU,NC>& model,
-        SolverWorkspace<T,NX,NU,NC>& work) 
+        KnotPointV2<T,NX,NU,NC,NP>& kp) 
     {
 {{FUSED_RICCATI_STEP_BODY}}
     }

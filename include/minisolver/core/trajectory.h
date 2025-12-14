@@ -8,92 +8,124 @@
 namespace minisolver {
 
 // =============================================================================
-// TRAJECTORY CLASS: Maintains backward compatibility while supporting new arch
+// TRAJECTORY CLASS: True Split Architecture (State/Model/Workspace)
 // =============================================================================
 template<typename Knot, int MAX_N>
 class Trajectory {
 public:
     using TrajArray = std::array<Knot, MAX_N + 1>;
     
-    // Double Buffering for KnotPointV2 compatibility
-    TrajArray memory_A;
-    TrajArray memory_B;
+    // Extract types from Knot (assuming Knot has these typedefs or we deduce them)
+    static const int NX = Knot::NX;
+    static const int NU = Knot::NU;
+    static const int NC = Knot::NC;
+    static const int NP = Knot::NP;
     
-    TrajArray* active_ptr;
-    TrajArray* candidate_ptr;
+    using State = StateNode<double, NX, NU, NC, NP>;
+    using Model = ModelData<double, NX, NU, NC>;
+    using Work = SolverWorkspace<double, NX, NU, NC>;
+    
+    // === THREE-LAYER STORAGE ===
+    // 1. State: Double-buffered (Active / Candidate)
+    std::array<State, MAX_N + 1> state_A;
+    std::array<State, MAX_N + 1> state_B;
+    State* active_state;
+    State* candidate_state;
+    
+    // 2. ModelData: Single-buffered (read-only during Line Search/SOC)
+    std::array<Model, MAX_N + 1> model_data;
+    
+    // 3. Workspace: Single-buffered (recomputed as needed)
+    std::array<Work, MAX_N + 1> workspace;
     
     int N; // Current valid horizon
 
     Trajectory(int initial_N) : N(initial_N) {
-        active_ptr = &memory_A;
-        candidate_ptr = &memory_B;
+        active_state = &state_A[0];
+        candidate_state = &state_B[0];
         
-        // Initialize
-        for(auto& kp : *active_ptr) kp.initialize_defaults();
-        for(auto& kp : *candidate_ptr) kp.initialize_defaults();
+        // Initialize all memory
+        for(int i = 0; i <= MAX_N; ++i) {
+            state_A[i].initialize_defaults();
+            state_B[i].initialize_defaults();
+            model_data[i].set_zero();
+            workspace[i].set_zero();
+        }
     }
     
     void resize(int new_n) {
-        if (new_n > MAX_N) return; // Error handling needed
+        if (new_n > MAX_N) return;
         N = new_n;
     }
     
-    // Accessors
-    Knot& operator[](int k) { return (*active_ptr)[k]; }
-    const Knot& operator[](int k) const { return (*active_ptr)[k]; }
+    // === ACCESSORS FOR THREE-LAYER ARCHITECTURE ===
+    State* get_active_state() { return active_state; }
+    const State* get_active_state() const { return active_state; }
     
-    TrajArray& active() { return *active_ptr; }
-    TrajArray& candidate() { return *candidate_ptr; }
-    const TrajArray& active() const { return *active_ptr; }
+    State* get_candidate_state() { return candidate_state; }
+    const State* get_candidate_state() const { return candidate_state; }
     
+    Model* get_model_data() { return &model_data[0]; }
+    const Model* get_model_data() const { return &model_data[0]; }
+    
+    Work* get_workspace() { return &workspace[0]; }
+    const Work* get_workspace() const { return &workspace[0]; }
+    
+    // Legacy accessor for backward compatibility (returns active state)
+    State& operator[](int k) { return active_state[k]; }
+    const State& operator[](int k) const { return active_state[k]; }
+    
+    // Legacy array accessors for backward compatibility
+    // Note: These return State*, but old code expects TrajArray&
+    // We'll create temporary compatibility wrappers
+    State* active() { return active_state; }
+    const State* active() const { return active_state; }
+    
+    State* candidate() { return candidate_state; }
+    const State* candidate() const { return candidate_state; }
+    
+    // Swap active and candidate states
     void swap() {
-        std::swap(active_ptr, candidate_ptr);
+        std::swap(active_state, candidate_state);
     }
     
-    // Helper to copy active to candidate (for trial steps)
+    // === LIGHTWEIGHT PREPARE_CANDIDATE (KEY OPTIMIZATION) ===
+    // Only copy State (vectors), NOT matrices!
+    // This is the 98% bandwidth saving mentioned in the original scheme
     void prepare_candidate() {
-        // Deep copy needed for base state?
-        // In Line Search, we update candidate based on active.
-        // x_cand = x_act + alpha * dx_act.
-        // So we don't necessarily need full copy if we write all fields.
-        // But for safety (params, etc.), copy is good.
-        // Optimization: Only copy params once?
-        *candidate_ptr = *active_ptr; 
+        for(int k = 0; k <= N; ++k) {
+            candidate_state[k].copy_from(active_state[k]);
+        }
     }
     // Shifts the trajectory for Warm Start (MPC)
-    // Moves x[k] <- x[k+1], u[k] <- u[k+1]
-    // Duplicates the last step
     void shift() {
-        auto& traj = *active_ptr;
-        for(int k=0; k < N; ++k) {
-            traj[k].x = traj[k+1].x;
-            traj[k].u = traj[k+1].u;
-            traj[k].s = traj[k+1].s;
-            traj[k].lam = traj[k+1].lam;
-            traj[k].p = traj[k+1].p; // [FIX] Shift parameters
-            // Parameters (p) should usually NOT be shifted if they are time-dependent (like reference),
-            // but for autonomous systems, we might shift. 
-            // Standard MPC: Shift guess (x,u), but keep parameters aligned with absolute time or update them externally.
-            // Here we only shift primal/dual variables.
+        for(int k = 0; k < N; ++k) {
+            active_state[k].x = active_state[k+1].x;
+            active_state[k].u = active_state[k+1].u;
+            active_state[k].s = active_state[k+1].s;
+            active_state[k].lam = active_state[k+1].lam;
+            active_state[k].soft_s = active_state[k+1].soft_s;
+            active_state[k].soft_dual = active_state[k+1].soft_dual;
+            active_state[k].p = active_state[k+1].p;
         }
         // Duplicate last step
-        traj[N].x = traj[N-1].x; // Should integrate dynamics, but copy is safe approx
-        traj[N].u = traj[N-1].u;
-        traj[N].s = traj[N-1].s;
-        traj[N].lam = traj[N-1].lam;
-        // Do not duplicate last parameter!!! Let user set new value!!!
-        // traj[N].p = traj[N-1].p;
+        active_state[N].x = active_state[N-1].x;
+        active_state[N].u = active_state[N-1].u;
+        active_state[N].s = active_state[N-1].s;
+        active_state[N].lam = active_state[N-1].lam;
+        active_state[N].soft_s = active_state[N-1].soft_s;
+        active_state[N].soft_dual = active_state[N-1].soft_dual;
     }
     
-    // Reset trajectory data to initial construction state (Zero x/u/p, Default s/lam)
+    // Reset trajectory data
     void reset() {
-        for(auto& kp : *active_ptr) { 
-            kp.set_zero(); 
-            kp.initialize_defaults(); 
-        }
-        for(auto& kp : *candidate_ptr) { 
-            kp.set_zero(); 
-            kp.initialize_defaults(); 
+        for(int i = 0; i <= MAX_N; ++i) {
+            state_A[i].set_zero();
+            state_A[i].initialize_defaults();
+            state_B[i].set_zero();
+            state_B[i].initialize_defaults();
+            model_data[i].set_zero();
+            workspace[i].set_zero();
         }
     }
     
