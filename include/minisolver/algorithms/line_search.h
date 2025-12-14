@@ -51,7 +51,6 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
         const int NX = Model::NX;
         
         auto* state = traj.get_active_state();
-        auto* model = traj.get_model_data();
         
         for(int k=0; k<=N; ++k) {
             total_merit += state[k].cost; 
@@ -110,19 +109,19 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
 
                 if (type == 1 && w > 1e-6) {
-                    total_merit += merit_nu * std::abs(state[k].g_val(i) + state[k].s(i) - state[k].soft_s(i));
+                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
                 }
                 else if (type == 2 && w > 1e-6) {
                     // L2 Soft: No hard violation penalty (handled in Cost)
                 }
                 else {
-                    total_merit += merit_nu * std::abs(state[k].g_val(i) + state[k].s(i));
+                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i));
                 }
             }
             
             // Dynamic Defect Violation (Multiple Shooting)
             if (k < N) {
-                MSVec<double, NX> defect = state[k+1].x - model[k].f_resid;
+                MSVec<double, NX> defect = t[k+1].x - kp.f_resid;
                 // L1 Norm of defect
                 for(int j=0; j<NX; ++j) {
                     total_merit += merit_nu * std::abs(defect(j));
@@ -144,93 +143,63 @@ public:
                   const SolverConfig& config) override 
     {
         int N = trajectory.N;
-        auto* active_state = trajectory.get_active_state();
-        auto* candidate_state = trajectory.get_candidate_state();
-        auto* active_model = trajectory.get_model_data();
-        auto* workspace = trajectory.get_workspace();
+        auto& active = trajectory.active();
         
         // 1. Update Nu
         double max_dual = 0.0;
         for(int k=0; k<=N; ++k) {
-            double local_max = MatOps::norm_inf(active_state[k].lam);
+            double local_max = MatOps::norm_inf(active[k].lam);
             if(local_max > max_dual) max_dual = local_max;
         }
         double required_nu = max_dual * 1.1 + 1.0; 
         if (required_nu > merit_nu) merit_nu = required_nu;
 
         // 2. Initial Merit
-        double phi_0 = compute_merit(trajectory, N, mu, config);
+        double phi_0 = compute_merit(active, N, mu, config);
         
-        // 3. Calc max alpha - TODO: update fraction_to_boundary_rule to use trajectory
-        double alpha = 1.0;  // Simplified for now
-        for(int k=0; k<=N; ++k) {
-            const int NC = Model::NC;
-            for(int i=0; i<NC; ++i) {
-                double s = active_state[k].s(i);
-                double ds = workspace[k].ds(i);
-                if (ds < 0) alpha = std::min(alpha, -config.line_search_tau * s / ds);
-                
-                double lam = active_state[k].lam(i);
-                double dlam = workspace[k].dlam(i);
-                if (dlam < 0) alpha = std::min(alpha, -config.line_search_tau * lam / dlam);
-            }
-        }
+        // 3. Calc max alpha
+        double alpha = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
 
         trajectory.prepare_candidate();
-        
-        // Get candidate model storage (we'll write new evaluations here)
-        // Note: In Line Search, we evaluate at candidate point, so we need temporary storage
-        // For now, reuse active_model as it will be overwritten in next iteration
-        auto* candidate_model = active_model;  // Simplified: reuse model storage
+        auto& candidate = trajectory.candidate();
         
         bool accepted = false;
         int ls_iter = 0;
         
         while (ls_iter < config.line_search_max_iters) {
-            // Update candidate state
+            // Update
             for(int k=0; k<=N; ++k) {
-                candidate_state[k].x = active_state[k].x + alpha * workspace[k].dx;
-                candidate_state[k].u = active_state[k].u + alpha * workspace[k].du;
-                candidate_state[k].s = active_state[k].s + alpha * workspace[k].ds;
-                candidate_state[k].lam = active_state[k].lam + alpha * workspace[k].dlam;
-                candidate_state[k].soft_s = active_state[k].soft_s + alpha * workspace[k].dsoft_s;
-                candidate_state[k].soft_dual = active_state[k].soft_dual + alpha * workspace[k].dsoft_dual;
-                candidate_state[k].p = active_state[k].p; 
+                candidate[k].x = active[k].x + alpha * active[k].dx;
+                candidate[k].u = active[k].u + alpha * active[k].du;
+                candidate[k].s = active[k].s + alpha * active[k].ds;
+                candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+                
+                // Update soft vars
+                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+                
+                candidate[k].p = active[k].p; 
                 
                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
                 
                 // Optional Rollout (Single Shooting)
                 if (config.enable_line_search_rollout && k < N) {
-                    if (k==0) candidate_state[0].x = active_state[0].x; 
-                    candidate_state[k+1].x = Model::integrate(candidate_state[k].x, candidate_state[k].u, 
-                                                               candidate_state[k].p, current_dt, config.integrator);
+                    if (k==0) candidate[0].x = active[0].x; 
+                    candidate[k+1].x = Model::integrate(candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
                 }
 
-                // Compute Residuals at candidate point
+                // Compute Residuals
                 if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                    Model::compute_cost_gn(candidate_state[k], candidate_model[k]);
-                    Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate_state[k], candidate_model[k]);
+                    Model::compute_cost_gn(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
                 } else {
-                    Model::compute_cost_exact(candidate_state[k], candidate_model[k]);
-                    Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate_state[k], candidate_model[k]);
+                    Model::compute_cost_exact(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
                 }
             }
             
-            // Evaluate merit at candidate (need to temporarily switch active to candidate for compute_merit)
-            // For now, compute directly
-            double phi_alpha = 0.0;
-            for(int k=0; k<=N; ++k) {
-                phi_alpha += candidate_state[k].cost;
-                const int NC = Model::NC;
-                for(int i=0; i<NC; ++i) {
-                    if(candidate_state[k].s(i) > config.min_barrier_slack) 
-                        phi_alpha -= mu * std::log(candidate_state[k].s(i));
-                    else 
-                        phi_alpha += config.barrier_inf_cost;
-                }
-            }
+            double phi_alpha = compute_merit(candidate, N, mu, config);
             
             // Armijo condition could be added here: phi_alpha < phi_0 - eta * alpha * ...
             // For now, simple decrease.
@@ -262,21 +231,19 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     
     std::vector<std::pair<double, double>> filter;
 
-    std::pair<double, double> compute_metrics(const TrajectoryType& traj, int N, double mu, const SolverConfig& config) {
+    std::pair<double, double> compute_metrics(const TrajArray& t, int N, double mu, const SolverConfig& config) {
         double theta = 0.0; 
         double phi = 0.0;   
         const int NC = Model::NC;
         const int NX = Model::NX;
         
-        auto* state = traj.get_active_state();
-        auto* model = traj.get_model_data();
-        
         for(int k=0; k<=N; ++k) {
+            const auto& kp = t[k];
             
             // Objective (Phi) Calculation
-            phi += state[k].cost;
+            phi += kp.cost;
             for(int i=0; i<NC; ++i) {
-                if(state[k].s(i) > config.min_barrier_slack) phi -= mu * std::log(state[k].s(i));
+                if(kp.s(i) > config.min_barrier_slack) phi -= mu * std::log(kp.s(i));
                 else phi += config.barrier_inf_cost;
                 
                 // L1 Soft Constraint: Dual Barrier
@@ -292,24 +259,24 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 // L1 Soft Constraint
                 if (type == 1 && w > 1e-6) {
                     // Barrier terms
-                    if (state[k].soft_s(i) > config.min_barrier_slack)
-                        phi -= mu * std::log(state[k].soft_s(i));
+                    if (kp.soft_s(i) > config.min_barrier_slack)
+                        phi -= mu * std::log(kp.soft_s(i));
                     else
                         phi += config.barrier_inf_cost;
 
-                    if (w - state[k].lam(i) > 1e-9)
-                        phi -= mu * std::log(w - state[k].lam(i));
+                    if (w - kp.lam(i) > 1e-9)
+                        phi -= mu * std::log(w - kp.lam(i));
                     else 
                         phi += config.barrier_inf_cost;
 
                     // L1 Linear Penalty
-                    phi += w * state[k].soft_s(i);
+                    phi += w * kp.soft_s(i);
                 }
                 
                 // L2 Soft Constraint
                 else if (type == 2 && w > 1e-6) {
                     // L2 Quadratic Penalty: 0.5 * w * (g + s)^2
-                    double viol = state[k].g_val(i) + state[k].s(i);
+                    double viol = kp.g_val(i) + kp.s(i);
                     phi += 0.5 * w * viol * viol;
                 }
             }
@@ -328,7 +295,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 
                 if (type == 1 && w > 1e-6) {
                     // L1: Check extended system residual
-                    theta += std::abs(state[k].g_val(i) + state[k].s(i) - state[k].soft_s(i));
+                    theta += std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
                 } 
                 else if (type == 2 && w > 1e-6) {
                     // L2: Soft constraint means no hard infeasibility.
@@ -342,13 +309,13 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
                 else {
                     // Hard
-                    theta += std::abs(state[k].g_val(i) + state[k].s(i));
+                    theta += std::abs(kp.g_val(i) + kp.s(i));
                 }
             }
             
             // Dynamic Defect
             if (k < N) {
-                MSVec<double, NX> defect = state[k+1].x - model[k].f_resid;
+                MSVec<double, NX> defect = t[k+1].x - kp.f_resid;
                 for(int j=0; j<NX; ++j) {
                     theta += std::abs(defect(j));
                 }
@@ -397,32 +364,17 @@ public:
                   const SolverConfig& config) override 
     {
         int N = trajectory.N;
-        auto* active_state = trajectory.get_active_state();
-        auto* candidate_state = trajectory.get_candidate_state();
-        auto* active_model = trajectory.get_model_data();
-        auto* workspace = trajectory.get_workspace();
+        auto& active = trajectory.active();
         
-        auto m_0 = compute_metrics(trajectory, N, mu, config);
+        auto m_0 = compute_metrics(active, N, mu, config);
         double theta_0 = m_0.first;
         double phi_0 = m_0.second;
         
-        // Fraction to Boundary - inline computation
-        double alpha = 1.0;
-        const int NC = Model::NC;
-        for(int k=0; k<=N; ++k) {
-            for(int i=0; i<NC; ++i) {
-                double s = active_state[k].s(i);
-                double ds = workspace[k].ds(i);
-                if (ds < 0) alpha = std::min(alpha, -config.line_search_tau * s / ds);
-                
-                double lam = active_state[k].lam(i);
-                double dlam = workspace[k].dlam(i);
-                if (dlam < 0) alpha = std::min(alpha, -config.line_search_tau * lam / dlam);
-            }
-        }
+        // Fraction to Boundary
+        double alpha = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
         
         trajectory.prepare_candidate();
-        auto* candidate_model = active_model;  // Reuse for candidate evaluations
+        auto& candidate = trajectory.candidate();
         
         bool accepted = false;
         int ls_iter = 0;
@@ -430,114 +382,109 @@ public:
         
         while (ls_iter < config.line_search_max_iters) {
             for(int k=0; k<=N; ++k) {
-                candidate_state[k].x = active_state[k].x + alpha * workspace[k].dx;
-                candidate_state[k].u = active_state[k].u + alpha * workspace[k].du;
-                candidate_state[k].s = active_state[k].s + alpha * workspace[k].ds;
-                candidate_state[k].lam = active_state[k].lam + alpha * workspace[k].dlam;
-                candidate_state[k].soft_s = active_state[k].soft_s + alpha * workspace[k].dsoft_s;
-                candidate_state[k].soft_dual = active_state[k].soft_dual + alpha * workspace[k].dsoft_dual;
-                candidate_state[k].p = active_state[k].p; 
+                candidate[k].x = active[k].x + alpha * active[k].dx;
+                candidate[k].u = active[k].u + alpha * active[k].du;
+                candidate[k].s = active[k].s + alpha * active[k].ds;
+                candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+                candidate[k].p = active[k].p; 
                 
                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
                 
                 // Optional Rollout
                 if (config.enable_line_search_rollout && k < N) {
-                    if (k==0) candidate_state[0].x = active_state[0].x;
-                    candidate_state[k+1].x = Model::integrate(candidate_state[k].x, candidate_state[k].u, 
-                                                               candidate_state[k].p, current_dt, config.integrator);
+                    if (k==0) candidate[0].x = active[0].x;
+                    candidate[k+1].x = Model::integrate(candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
                 }
                 
                 // Compute Residuals
                 if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                    Model::compute_cost_gn(candidate_state[k], candidate_model[k]);
-                    Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate_state[k], candidate_model[k]);
+                    Model::compute_cost_gn(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
                 } else {
-                    Model::compute_cost_exact(candidate_state[k], candidate_model[k]);
-                    Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate_state[k], candidate_model[k]);
+                    Model::compute_cost_exact(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
                 }
             }
             
-            // Swap temporarily to evaluate candidate
-            trajectory.swap();
-            auto m_alpha = compute_metrics(trajectory, N, mu, config);
-            trajectory.swap(); // Swap back
+            auto m_alpha = compute_metrics(candidate, N, mu, config);
             if (is_acceptable(m_alpha.first, m_alpha.second, theta_0, phi_0, config)) {
                 accepted = true;
             }
             
-// DISABLED_SOC:             // SOC Logic - TODO: Re-implement with new architecture
-// DISABLED_SOC:             if (false && !accepted && config.enable_soc && !soc_attempted && ls_iter == 0 && alpha > config.soc_trigger_alpha) {
-// DISABLED_SOC:                 if (config.print_level >= PrintLevel::DEBUG) 
-// DISABLED_SOC:                      MLOG_DEBUG("Step rejected. Attempting SOC.");
-// DISABLED_SOC:                 
-// DISABLED_SOC:                 auto soc_data = std::make_unique<TrajArray>();
-// DISABLED_SOC:                 *soc_data = active; // [FIX] Copy system matrices from active trajectory
-// DISABLED_SOC:                 
-// DISABLED_SOC:                 // [NEW] Use solve_soc
-// DISABLED_SOC:                 // Note: solve_soc takes 'soc_rhs_traj'. We want to pass the current trial point 'candidate' as RHS source.
-// DISABLED_SOC:                 // soc_data will store the correction step.
-// DISABLED_SOC:                 // The linear_solver needs to solve J * dx_soc = -g(candidate)
-// DISABLED_SOC:                 
-// DISABLED_SOC:                 bool soc_success = linear_solver.solve_soc(*soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
-// DISABLED_SOC:                 
-// DISABLED_SOC:                 if (soc_success) {
-// DISABLED_SOC:                     for(int k=0; k<=N; ++k) {
-// DISABLED_SOC:                         // Apply correction: x_new = x_candidate + dx_soc
-// DISABLED_SOC:                         // But wait, we need to re-evaluate merit for this new point in next iteration?
-// DISABLED_SOC:                         // Actually, standard SOC applies correction and tries to accept immediately.
-// DISABLED_SOC:                         // Or we update 'candidate' and let the loop continue with same alpha?
-// DISABLED_SOC:                         // If we update candidate, we are effectively testing alpha=1.0 step + soc.
-// DISABLED_SOC:                         
-// DISABLED_SOC:                         // Let's modify candidate directly and re-check acceptability.
-// DISABLED_SOC:                         candidate[k].x += (*soc_data)[k].dx;
-// DISABLED_SOC:                         candidate[k].u += (*soc_data)[k].du;
-// DISABLED_SOC:                         candidate[k].s += (*soc_data)[k].ds;
-// DISABLED_SOC:                         candidate[k].lam += (*soc_data)[k].dlam;
-// DISABLED_SOC:                         
-// DISABLED_SOC:                         // Re-evaluate dynamics/constraints for SOC candidate
-// DISABLED_SOC:                         double current_dt = (k < N) ? dt_traj[k] : 0.0;
-// DISABLED_SOC:                         if (config.enable_line_search_rollout && k < N) {
-// DISABLED_SOC:                              if (k==0) candidate[0].x = active[0].x; // Base doesn't change? Wait, SOC modifies base? No.
-// DISABLED_SOC:                              // SOC modifies the trial point. 
-// DISABLED_SOC:                              // x_trial = x_k + alpha*dx + dx_soc.
-// DISABLED_SOC:                              // Here candidate is already x_k + alpha*dx.
-// DISABLED_SOC:                              // So we just add dx_soc.
-// DISABLED_SOC:                              // But rollout needs consistent integration.
-// DISABLED_SOC:                              if (k==0) {} // x0 fixed
-// DISABLED_SOC:                              else candidate[k].x = Model::integrate(candidate[k-1].x, candidate[k-1].u, candidate[k-1].p, dt_traj[k-1], config.integrator);
-// DISABLED_SOC:                         }
-// DISABLED_SOC:                         // Compute Residuals
-// DISABLED_SOC:                 if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-// DISABLED_SOC:                     Model::compute_cost_gn(candidate[k]);
-// DISABLED_SOC:                     Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-// DISABLED_SOC:                     Model::compute_constraints(candidate[k]);
-// DISABLED_SOC:                 } else {
-// DISABLED_SOC:                     Model::compute_cost_exact(candidate[k]);
-// DISABLED_SOC:                     Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-// DISABLED_SOC:                     Model::compute_constraints(candidate[k]);
-// DISABLED_SOC:                 }
-// DISABLED_SOC:                     }
-// DISABLED_SOC:                     
-// DISABLED_SOC:                     auto m_soc = compute_metrics(candidate, N, mu, config);
-// DISABLED_SOC:                     if (is_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config)) {
-// DISABLED_SOC:                         if (config.print_level >= PrintLevel::DEBUG) 
-// DISABLED_SOC:                              MLOG_DEBUG("SOC Accepted.");
-// DISABLED_SOC:                         accepted = true;
-// DISABLED_SOC:                     }
-// DISABLED_SOC:                 }
-// DISABLED_SOC:                 
-// DISABLED_SOC:                 soc_attempted = true;
-// DISABLED_SOC:                 if (accepted) break;
-// DISABLED_SOC:             }
-// DISABLED_SOC: 
-// DISABLED_SOC:             if (accepted) break;
-// DISABLED_SOC:             alpha *= config.line_search_backtrack_factor; 
-// DISABLED_SOC:             ls_iter++;
-// DISABLED_SOC:         }
-// DISABLED_SOC:         
-// DISABLED_SOC:         if (accepted) {
+            // SOC Logic
+            if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0 && alpha > config.soc_trigger_alpha) {
+                if (config.print_level >= PrintLevel::DEBUG) 
+                     MLOG_DEBUG("Step rejected. Attempting SOC.");
+                
+                auto soc_data = std::make_unique<TrajArray>();
+                *soc_data = active; // [FIX] Copy system matrices from active trajectory
+                
+                // [NEW] Use solve_soc
+                // Note: solve_soc takes 'soc_rhs_traj'. We want to pass the current trial point 'candidate' as RHS source.
+                // soc_data will store the correction step.
+                // The linear_solver needs to solve J * dx_soc = -g(candidate)
+                
+                bool soc_success = linear_solver.solve_soc(*soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
+                
+                if (soc_success) {
+                    for(int k=0; k<=N; ++k) {
+                        // Apply correction: x_new = x_candidate + dx_soc
+                        // But wait, we need to re-evaluate merit for this new point in next iteration?
+                        // Actually, standard SOC applies correction and tries to accept immediately.
+                        // Or we update 'candidate' and let the loop continue with same alpha?
+                        // If we update candidate, we are effectively testing alpha=1.0 step + soc.
+                        
+                        // Let's modify candidate directly and re-check acceptability.
+                        candidate[k].x += (*soc_data)[k].dx;
+                        candidate[k].u += (*soc_data)[k].du;
+                        candidate[k].s += (*soc_data)[k].ds;
+                        candidate[k].lam += (*soc_data)[k].dlam;
+                        
+                        // Re-evaluate dynamics/constraints for SOC candidate
+                        double current_dt = (k < N) ? dt_traj[k] : 0.0;
+                        if (config.enable_line_search_rollout && k < N) {
+                             if (k==0) candidate[0].x = active[0].x; // Base doesn't change? Wait, SOC modifies base? No.
+                             // SOC modifies the trial point. 
+                             // x_trial = x_k + alpha*dx + dx_soc.
+                             // Here candidate is already x_k + alpha*dx.
+                             // So we just add dx_soc.
+                             // But rollout needs consistent integration.
+                             if (k==0) {} // x0 fixed
+                             else candidate[k].x = Model::integrate(candidate[k-1].x, candidate[k-1].u, candidate[k-1].p, dt_traj[k-1], config.integrator);
+                        }
+                        // Compute Residuals
+                if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                    Model::compute_cost_gn(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
+                } else {
+                    Model::compute_cost_exact(candidate[k]);
+                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate[k]);
+                }
+                    }
+                    
+                    auto m_soc = compute_metrics(candidate, N, mu, config);
+                    if (is_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config)) {
+                        if (config.print_level >= PrintLevel::DEBUG) 
+                             MLOG_DEBUG("SOC Accepted.");
+                        accepted = true;
+                    }
+                }
+                
+                soc_attempted = true;
+                if (accepted) break;
+            }
+
+            if (accepted) break;
+            alpha *= config.line_search_backtrack_factor; 
+            ls_iter++;
+        }
+        
+        if (accepted) {
             trajectory.swap();
             filter.push_back({theta_0, phi_0}); 
         } else {

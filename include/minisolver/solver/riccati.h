@@ -536,7 +536,8 @@ namespace internal {
         }
         
         // Terminal knot
-        for(int i=0; i<NC; ++i) {
+        constexpr int NC_term = Knot::NC;
+        for(int i=0; i<NC_term; ++i) {
             workspace[N].ds(i) = -state[N].g_val(i);
             workspace[N].dlam(i) = (mu - state[N].s(i) * state[N].lam(i)) / state[N].s(i);
         } 

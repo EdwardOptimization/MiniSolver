@@ -63,10 +63,10 @@ public:
             // I will add a placeholder for that and call the dispatch.
             
             MLOG_ERROR("GPU Backend implementation incomplete (Data Packing missing). Falling back to CPU.");
-            return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, workspace, affine_traj);
+            return cpu_serial_solve<TrajectoryType, Model>(traj, N, mu, reg, strategy, config, workspace, affine_traj);
 #else
             MLOG_WARN("CUDA not enabled. Falling back to CPU.");
-            return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, workspace, affine_traj);
+            return cpu_serial_solve<TrajectoryType, Model>(traj, N, mu, reg, strategy, config, workspace, affine_traj);
 #endif
         }
 
@@ -153,5 +153,7 @@ public:
 // DISABLED_REFINE:         return true; 
 // DISABLED_REFINE:     }
 // DISABLED_REFINE: };
+
+};
 
 }
