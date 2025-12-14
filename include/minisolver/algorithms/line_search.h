@@ -396,17 +396,32 @@ public:
                   const SolverConfig& config) override 
     {
         int N = trajectory.N;
-        auto& active = trajectory.active();
+        auto* active_state = trajectory.get_active_state();
+        auto* candidate_state = trajectory.get_candidate_state();
+        auto* active_model = trajectory.get_model_data();
+        auto* workspace = trajectory.get_workspace();
         
-        auto m_0 = compute_metrics(active, N, mu, config);
+        auto m_0 = compute_metrics(trajectory, N, mu, config);
         double theta_0 = m_0.first;
         double phi_0 = m_0.second;
         
-        // Fraction to Boundary
-        double alpha = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
+        // Fraction to Boundary - inline computation
+        double alpha = 1.0;
+        const int NC = Model::NC;
+        for(int k=0; k<=N; ++k) {
+            for(int i=0; i<NC; ++i) {
+                double s = active_state[k].s(i);
+                double ds = workspace[k].ds(i);
+                if (ds < 0) alpha = std::min(alpha, -config.line_search_tau * s / ds);
+                
+                double lam = active_state[k].lam(i);
+                double dlam = workspace[k].dlam(i);
+                if (dlam < 0) alpha = std::min(alpha, -config.line_search_tau * lam / dlam);
+            }
+        }
         
         trajectory.prepare_candidate();
-        auto& candidate = trajectory.candidate();
+        auto* candidate_model = active_model;  // Reuse for candidate evaluations
         
         bool accepted = false;
         int ls_iter = 0;
@@ -414,40 +429,45 @@ public:
         
         while (ls_iter < config.line_search_max_iters) {
             for(int k=0; k<=N; ++k) {
-                candidate[k].x = active[k].x + alpha * active[k].dx;
-                candidate[k].u = active[k].u + alpha * active[k].du;
-                candidate[k].s = active[k].s + alpha * active[k].ds;
-                candidate[k].lam = active[k].lam + alpha * active[k].dlam;
-                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
-                candidate[k].p = active[k].p; 
+                candidate_state[k].x = active_state[k].x + alpha * workspace[k].dx;
+                candidate_state[k].u = active_state[k].u + alpha * workspace[k].du;
+                candidate_state[k].s = active_state[k].s + alpha * workspace[k].ds;
+                candidate_state[k].lam = active_state[k].lam + alpha * workspace[k].dlam;
+                candidate_state[k].soft_s = active_state[k].soft_s + alpha * workspace[k].dsoft_s;
+                candidate_state[k].soft_dual = active_state[k].soft_dual + alpha * workspace[k].dsoft_dual;
+                candidate_state[k].p = active_state[k].p; 
                 
                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
                 
                 // Optional Rollout
                 if (config.enable_line_search_rollout && k < N) {
-                    if (k==0) candidate[0].x = active[0].x;
-                    candidate[k+1].x = Model::integrate(candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
+                    if (k==0) candidate_state[0].x = active_state[0].x;
+                    candidate_state[k+1].x = Model::integrate(candidate_state[k].x, candidate_state[k].u, 
+                                                               candidate_state[k].p, current_dt, config.integrator);
                 }
                 
                 // Compute Residuals
                 if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                    Model::compute_cost_gn(candidate[k]);
-                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate[k]);
+                    Model::compute_cost_gn(candidate_state[k], candidate_model[k]);
+                    Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate_state[k], candidate_model[k]);
                 } else {
-                    Model::compute_cost_exact(candidate[k]);
-                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate[k]);
+                    Model::compute_cost_exact(candidate_state[k], candidate_model[k]);
+                    Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
+                    Model::compute_constraints(candidate_state[k], candidate_model[k]);
                 }
             }
             
-            auto m_alpha = compute_metrics(candidate, N, mu, config);
+            // Swap temporarily to evaluate candidate
+            trajectory.swap();
+            auto m_alpha = compute_metrics(trajectory, N, mu, config);
+            trajectory.swap(); // Swap back
             if (is_acceptable(m_alpha.first, m_alpha.second, theta_0, phi_0, config)) {
                 accepted = true;
             }
             
-            // SOC Logic
-            if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0 && alpha > config.soc_trigger_alpha) {
+            // SOC Logic - TODO: Re-implement with new architecture
+            if (false && !accepted && config.enable_soc && !soc_attempted && ls_iter == 0 && alpha > config.soc_trigger_alpha) {
                 if (config.print_level >= PrintLevel::DEBUG) 
                      MLOG_DEBUG("Step rejected. Attempting SOC.");
                 
