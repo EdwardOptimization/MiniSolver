@@ -366,18 +366,20 @@ public:
     }
 
     void warm_start(const typename TrajectoryType::TrajArray& init_traj) {
-        auto& current_traj = trajectory.active();
+        // TODO: Reimplement with new split architecture
+        auto* state = trajectory.get_active_state();
         for(int k=0; k <= N; ++k) {
-            current_traj[k].x = init_traj[k].x;
-            current_traj[k].u = init_traj[k].u;
+            state[k].x = init_traj[k].x;
+            state[k].u = init_traj[k].u;
+            state[k].p = init_traj[k].p;
             double eps = 1e-2;
-            current_traj[k].s = init_traj[k].s.cwiseMax(eps);
-            current_traj[k].lam = init_traj[k].lam.cwiseMax(eps);
+            state[k].s = init_traj[k].s.cwiseMax(eps);
+            state[k].lam = init_traj[k].lam.cwiseMax(eps);
             for(int i=0; i<NC; ++i) {
-                if (current_traj[k].s(i) * current_traj[k].lam(i) < config.mu_init) {
+                if (state[k].s(i) * state[k].lam(i) < config.mu_init) {
                     double shift = std::sqrt(config.mu_init);
-                    current_traj[k].s(i) = std::max(current_traj[k].s(i), shift);
-                    current_traj[k].lam(i) = std::max(current_traj[k].lam(i), shift);
+                    state[k].s(i) = std::max(state[k].s(i), shift);
+                    state[k].lam(i) = std::max(state[k].lam(i), shift);
                 }
             }
         }
@@ -1129,9 +1131,9 @@ private:
                          // Clamp for safety
                          lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
                          
-                         traj[k].lam(i) = lam_val;
-                         traj[k].s(i) = mu / lam_val;
-                         traj[k].soft_s(i) = mu / (w - lam_val);
+                         state[k].lam(i) = lam_val;
+                         state[k].s(i) = mu / lam_val;
+                         state[k].soft_s(i) = mu / (w - lam_val);
                      } 
                      else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
                          // Central Path:
@@ -1145,14 +1147,14 @@ private:
                          double delta = b*b - 4*c; // b^2 + 4*mu*w > 0 always
                          double lam_val = (-b + std::sqrt(delta)) / 2.0;
                          
-                         traj[k].lam(i) = std::max(1e-8, lam_val);
-                         traj[k].s(i) = mu / traj[k].lam(i);
+                         state[k].lam(i) = std::max(1e-8, lam_val);
+                         state[k].s(i) = mu / state[k].lam(i);
                          // soft_s not used in L2
                      } 
                      else { // Hard Constraint
                          double s_val = std::max(1e-6, -g);
-                         traj[k].s(i) = s_val;
-                         traj[k].lam(i) = mu / s_val;
+                         state[k].s(i) = s_val;
+                         state[k].lam(i) = mu / s_val;
                      }
                  }
             }
@@ -1198,14 +1200,14 @@ private:
              compute_barrier_derivatives<Knot, Model>(traj[k], mu, config, riccati_workspace, nullptr, nullptr);
              // 3. Check NaNs
              for(int i=0; i<NC; ++i) {
-                 if (std::isnan(traj[k].g_val(i)) || std::isnan(traj[k].s(i))) 
+                 if (std::isnan(active_state[k].g_val(i)) || std::isnan(active_state[k].s(i))) 
                      return SolverStatus::NUMERICAL_ERROR;
              }
              // 4. Collect Metrics
-             double r_norm = MatOps::norm_inf(traj[k].r_bar);
+             double r_norm = MatOps::norm_inf(workspace[k].r_bar);
              if(r_norm > max_dual_inf) max_dual_inf = r_norm;
              for(int i=0; i<NC; ++i) {
-                double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu);
+                double comp = std::abs(active_state[k].s(i) * active_state[k].lam(i) - mu);
                 if(comp > max_kkt_error) max_kkt_error = comp;
              }
         }

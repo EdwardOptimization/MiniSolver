@@ -15,7 +15,7 @@ namespace minisolver {
 template<typename TrajectoryType, typename Model>
 class RiccatiSolver : public LinearSolver<TrajectoryType> {
 public:
-    using Knot = typename TrajectoryType::Knot;
+    using Knot = typename TrajectoryType::KnotType;
     
     // Persistent workspace to avoid re-allocation
     RiccatiWorkspace<Knot> workspace;

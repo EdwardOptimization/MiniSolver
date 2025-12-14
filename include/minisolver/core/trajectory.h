@@ -14,6 +14,7 @@ template<typename Knot, int MAX_N>
 class Trajectory {
 public:
     using TrajArray = std::array<Knot, MAX_N + 1>;
+    using KnotType = Knot;  // For compatibility
     
     // Extract types from Knot (assuming Knot has these typedefs or we deduce them)
     static const int NX = Knot::NX;

@@ -109,19 +109,19 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
 
                 if (type == 1 && w > 1e-6) {
-                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                    total_merit += merit_nu * std::abs(state[k].g_val(i) + state[k].s(i) - state[k].soft_s(i));
                 }
                 else if (type == 2 && w > 1e-6) {
                     // L2 Soft: No hard violation penalty (handled in Cost)
                 }
                 else {
-                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i));
+                    total_merit += merit_nu * std::abs(state[k].g_val(i) + state[k].s(i));
                 }
             }
             
             // Dynamic Defect Violation (Multiple Shooting)
             if (k < N) {
-                MSVec<double, NX> defect = t[k+1].x - kp.f_resid;
+                MSVec<double, NX> defect = state[k+1].x - model[k].f_resid;
                 // L1 Norm of defect
                 for(int j=0; j<NX; ++j) {
                     total_merit += merit_nu * std::abs(defect(j));

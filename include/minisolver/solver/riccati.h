@@ -293,10 +293,10 @@ namespace internal {
     template<typename TrajectoryType, typename ModelType>
     bool cpu_serial_solve(TrajectoryType& traj, int N, double mu, double reg, minisolver::InertiaStrategy strategy, 
                           const minisolver::SolverConfig& config,
-                          RiccatiWorkspace<typename TrajectoryType::Knot>& ws,
+                          RiccatiWorkspace<typename TrajectoryType::KnotType>& ws,
                           const TrajectoryType* affine_traj = nullptr,
                           const TrajectoryType* soc_traj = nullptr) { // [NEW] Added arg
-        using Knot = typename TrajectoryType::Knot;
+        using Knot = typename TrajectoryType::KnotType;
 
         // Get pointers to the three layers
         auto* state = traj.get_active_state();
