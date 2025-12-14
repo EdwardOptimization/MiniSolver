@@ -12,16 +12,16 @@ namespace minisolver {
 // However, MiniSolver<Model, N> owns the RiccatiSolver.
 // So we can make RiccatiSolver<TrajArray, Model>
 
-template<typename TrajArray, typename Model>
-class RiccatiSolver : public LinearSolver<TrajArray> {
+template<typename TrajectoryType, typename Model>
+class RiccatiSolver : public LinearSolver<TrajectoryType> {
 public:
-    using Knot = typename TrajArray::value_type;
+    using Knot = typename TrajectoryType::Knot;
     
     // Persistent workspace to avoid re-allocation
     RiccatiWorkspace<Knot> workspace;
 
-    bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy, 
-               const SolverConfig& config, const TrajArray* affine_traj = nullptr) override {
+    bool solve(TrajectoryType& traj, int N, double mu, double reg, InertiaStrategy strategy, 
+               const SolverConfig& config, const TrajectoryType* affine_traj = nullptr) override {
         
         // GPU Dispatch
         if (config.backend == Backend::GPU_MPX || config.backend == Backend::GPU_PCR) {
