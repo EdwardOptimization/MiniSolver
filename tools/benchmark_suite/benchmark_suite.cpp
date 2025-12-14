@@ -123,11 +123,11 @@ Result run_case(const BenchmarkCase& test_case) {
                 // Compute Metrics
                 double max_viol = 0.0;
                 double total_cost = 0.0;
-                auto& traj = solver.trajectory.active();
+                auto* state = solver.trajectory.get_active_state();
                 for(int k=0; k<=N; ++k) {
-                    total_cost += traj[k].cost;
+                    total_cost += state[k].cost;
                     for(int j=0; j<CarModel::NC; ++j) {
-                        double v = traj[k].g_val(j); // Violations are g(x) > 0
+                        double v = state[k].g_val(j); // Violations are g(x) > 0
                         if (v > max_viol) max_viol = v;
                     }
                 }
