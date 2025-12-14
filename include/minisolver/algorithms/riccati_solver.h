@@ -152,8 +152,6 @@ public:
 // DISABLED_REFINE: 
 // DISABLED_REFINE:         return true; 
 // DISABLED_REFINE:     }
-// DISABLED_REFINE: };
-
 };
 
 }

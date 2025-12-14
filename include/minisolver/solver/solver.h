@@ -780,6 +780,7 @@ public:
 // DISABLED_REFINE:         }
         
         // Mehrotra Predictor-Corrector Logic - TODO: Re-implement with new architecture
+#if 0  // DISABLED: Mehrotra temporarily disabled during refactoring
         if (false && config.barrier_strategy == BarrierStrategy::MEHROTRA) {
             // 1. Affine Step (Predictor)
             // Reuse candidate trajectory storage for affine step results
@@ -915,6 +916,7 @@ public:
                 if (reg > config.reg_max) reg = config.reg_max;
             }
         }
+#endif  // DISABLED: Mehrotra
 
         if (solve_success && reg > config.reg_min) {
              reg = std::max(config.reg_min, reg / config.reg_scale_down);
