@@ -1,0 +1,10 @@
+Language:        Cpp
+# use WebKit style (default 4 spaces, no newline for brackets)
+BasedOnStyle:    WebKit
+
+# fine-tune configuration
+ColumnLimit:     100
+# allow short functions to be written on a single line (suitable for math libraries)
+AllowShortFunctionsOnASingleLine: Inline
+# sort include files
+SortIncludes:    true

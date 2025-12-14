@@ -1,0 +1,13 @@
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v16.0.6  # use the clang-format version, recommended to fix
+    hooks:
+      - id: clang-format
+        types_or: [c++, c, cuda] # for C++, C and CUDA files
+        # exclude generated directory, because that is automatically generated code, does not need to be formatted
+        exclude: |
+            (?x)^(
+                examples/.*/generated/.*|
+                include/model/.*
+            )$

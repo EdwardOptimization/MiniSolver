@@ -10,8 +10,45 @@ on:
   workflow_dispatch:
 
 jobs:
+  # =========================================================
+  # Task 1: Code Style Check
+  # Goal: Ensure all submitted code conforms to .clang-format specification
+  # =========================================================
+  style-check:
+    name: Check Code Style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Clang-Format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Verify C++ Formatting
+        run: |
+          echo ">> Verifying C++ code style against .clang-format..."
+          # 1. Find all .h, .cpp, .cu files
+          # 2. grep -v exclude 'generated' directory (automatically generated code should not be forced to format)
+          # 3. clang-format parameters:
+          #    -style=file: use .clang-format in project root
+          #    --dry-run:    only check, do not modify
+          #    --Werror:     report format errors directly (Exit Code 1)
+          
+          find include src examples tests tools -type f \( -name "*.h" -o -name "*.cpp" -o -name "*.cu" \) \
+            | grep -v "generated" \
+            | xargs clang-format -style=file --dry-run --Werror
+            
+          echo ">> Style check passed! ✨"
+
+  # =========================================================
+  # Task 2: Build and Test
+  # =========================================================
   build-and-test:
     name: ${{ matrix.os }} - ${{ matrix.backend }} - ${{ matrix.build_type }}
+    # Only run build if style check passes <<<
+    needs: style-check 
     runs-on: ${{ matrix.os }}
     
     # Matrix strategy: Automatically combine different operating systems, backends, and build types for parallel testing
@@ -45,10 +82,13 @@ jobs:
       run: |
         # Update apt and install build tools
         sudo apt-get update
-        sudo apt-get install -y cmake g++ make
-        
-        # Install Python dependencies
-        pip install sympy
+        sudo apt-get install -y cmake g++ make unzip
+        # Install dependencies from requirements.txt if it exists
+        if [ -f "requirements.txt" ]; then
+          pip install -r requirements.txt
+        else
+          pip install sympy
+        fi
         
     # 4. Execute code generation (simulate build.sh logic)
     - name: Generate Model Code
@@ -66,11 +106,16 @@ jobs:
     # 5. Configure CMake
     - name: Configure CMake
       run: |
-        # Create build directory and configure
-        # ${{ matrix.cmake_args }} will automatically switch backend definition based on current matrix task
+        # only enable Sanitizers in Debug mode (memory checking)
+        SANITIZER_FLAGS=""
+        if [ "${{ matrix.build_type }}" == "Debug" ]; then
+          SANITIZER_FLAGS="-DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'"
+        fi
+
         cmake -B build \
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-          ${{ matrix.cmake_args }}
+          ${{ matrix.cmake_args }} \
+          $SANITIZER_FLAGS
 
     # 6. Compile project
     - name: Build Project
