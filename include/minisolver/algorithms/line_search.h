@@ -347,7 +347,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
             
             // Dynamic Defect
             if (k < N) {
-                MSVec<double, NX> defect = t[k+1].x - state[k].f_resid;
+                MSVec<double, NX> defect = t[k+1].x - model[k].f_resid;
                 for(int j=0; j<NX; ++j) {
                     theta += std::abs(defect(j));
                 }

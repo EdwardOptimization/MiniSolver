@@ -62,6 +62,53 @@ namespace internal {
         }
     }
 
+    // NEW: Split architecture version
+    template<typename State, typename Model, typename Workspace, typename ModelType>
+    void compute_barrier_derivatives_split(
+        State& state, Model& model, Workspace& workspace,
+        double mu, const minisolver::SolverConfig& config,
+        RiccatiWorkspace<typename ModelType::KnotType>& /*ws*/) {
+        
+        constexpr int NC = ModelType::NC;
+        constexpr int NX = ModelType::NX;
+        constexpr int NU = ModelType::NU;
+        
+        if constexpr (NC == 0) {
+            // No constraints: Q_bar = Q, R_bar = R, etc.
+            workspace.Q_bar = model.Q;
+            workspace.R_bar = model.R;
+            workspace.H_bar = model.H;
+            workspace.q_bar = model.q;
+            workspace.r_bar = model.r;
+            return;
+        }
+        
+        // Barrier Hessian modification
+        MSVec<double, NC> sigma;
+        MSVec<double, NC> grad_mod;
+        
+        for(int i=0; i<NC; ++i) {
+            double s_i = state.s(i);
+            double lam_i = state.lam(i);
+            double g_i = state.g_val(i);
+            
+            // Simplified barrier (no soft constraints for now)
+            sigma(i) = mu / (s_i * s_i) + lam_i / s_i;
+            grad_mod(i) = -mu / s_i + lam_i - sigma(i) * (g_i + s_i);
+        }
+        
+        MSMat<double, NC, NC> SigmaMat = sigma.asDiagonal();
+        MSMat<double, NC, NX> tempC = SigmaMat * model.C;
+        MSMat<double, NC, NU> tempD = SigmaMat * model.D;
+        
+        workspace.Q_bar.noalias() = model.Q + model.C.transpose() * tempC;
+        workspace.R_bar.noalias() = model.R + model.D.transpose() * tempD;
+        workspace.H_bar.noalias() = model.H + model.D.transpose() * tempC;
+        workspace.q_bar.noalias() = model.q + model.C.transpose() * grad_mod;
+        workspace.r_bar.noalias() = model.r + model.D.transpose() * grad_mod;
+    }
+    
+    // OLD: Legacy version (kept for compatibility, will be removed)
     template<typename Knot, typename ModelType>
     void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverConfig& config, RiccatiWorkspace<Knot>& ws, const Knot* aff_kp = nullptr, const Knot* soc_kp = nullptr) {
         (void)ws; // Suppress unused parameter warning
@@ -303,15 +350,13 @@ namespace internal {
         auto* model = traj.get_model_data();
         auto* workspace = traj.get_workspace();
 
+        // Compute barrier derivatives for all knots
         for(int k=0; k<=N; ++k) {
-            // TODO: Update compute_barrier_derivatives to use split architecture
-            // For now, create temporary KnotPoint-like access
-            // const Knot* aff_kp = (affine_traj) ? &((*affine_traj)[k]) : nullptr;
-            // const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
-            // compute_barrier_derivatives<Knot, ModelType>(traj[k], mu, config, ws, aff_kp, soc_kp);
-            
-            // SIMPLIFIED: Just assemble KKT without barrier derivatives for now
-            // Will implement proper barrier derivatives later
+            compute_barrier_derivatives_split<typename TrajectoryType::State, 
+                                             typename TrajectoryType::Model,
+                                             typename TrajectoryType::Work,
+                                             ModelType>(
+                state[k], model[k], workspace[k], mu, config, ws);
         }
 
         MSVec<double, Knot::NX> Vx = workspace[N].q_bar;
@@ -320,20 +365,20 @@ namespace internal {
         for(int i=0; i<Knot::NX; ++i) Vxx(i,i) += reg;
 
         for(int k = N - 1; k >= 0; --k) {
-            auto& kp = traj[k];
-
             // [FUSED KERNEL OPTIMIZATION]
             if constexpr (internal::has_fused_riccati_step<ModelType>::value) {
                 // One-shot update of Qxx, Quu, Qux, qx, ru using fused kernel
-                ModelType::compute_fused_riccati_step(Vxx, Vx, kp);
+                ModelType::compute_fused_riccati_step(Vxx, Vx, model[k], workspace[k]);
                 
                 // If defect correction is enabled, apply the additional defect term
                 if (config.enable_defect_correction) {
                     MSVec<double, Knot::NX> defect;
                     if (soc_traj) {
-                        defect = (*soc_traj)[k].f_resid - (*soc_traj)[k+1].x;
+                        auto* soc_model = soc_traj->get_model_data();
+                        auto* soc_state = soc_traj->get_active_state();
+                        defect = soc_model[k].f_resid - soc_state[k+1].x;
                     } else {
-                        defect = model[k].f_resid - traj[k+1].x;
+                        defect = model[k].f_resid - state[k+1].x;
                     }
                     
                     // Vxx * defect
@@ -359,9 +404,11 @@ namespace internal {
                     // Defect correction
                     MSVec<double, Knot::NX> defect;
                     if (soc_traj) {
-                        defect = (*soc_traj)[k].f_resid - (*soc_traj)[k+1].x;
+                        auto* soc_model = soc_traj->get_model_data();
+                        auto* soc_state = soc_traj->get_active_state();
+                        defect = soc_model[k].f_resid - soc_state[k+1].x;
                     } else {
-                        defect = model[k].f_resid - traj[k+1].x;
+                        defect = model[k].f_resid - state[k+1].x;
                     }
                     
                     ws.Vxx_d = Vxx * defect;
@@ -402,7 +449,7 @@ namespace internal {
                 
                 // 1. Try to factorize the matrix
                 // Use the solver in workspace, do not call is_pos_def
-                ws.llt_solver.compute(kp.R_bar); 
+                ws.llt_solver.compute(workspace[k].R_bar); 
                 
                 // 2. Check the factorization result
                 if (!MatOps::is_llt_success(ws.llt_solver)) {
@@ -410,9 +457,9 @@ namespace internal {
                      // Failure handling A: Directly return false
                      if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
                         // Try the last chance: unified regularization
-                        for(int i=0; i<Knot::NU; ++i) kp.R_bar(i,i) += config.regularization_step; // e.g. 1e-6
+                        for(int i=0; i<Knot::NU; ++i) workspace[k].R_bar(i,i) += config.regularization_step; // e.g. 1e-6
                         
-                        ws.llt_solver.compute(kp.R_bar);
+                        ws.llt_solver.compute(workspace[k].R_bar);
                         if (!MatOps::is_llt_success(ws.llt_solver)) return false; // Give up
                     }
                      
@@ -420,8 +467,8 @@ namespace internal {
                      if (strategy == minisolver::InertiaStrategy::IGNORE_SINGULAR) {
                          bool fixed = false;
                          for(int i=0; i<Knot::NU; ++i) {
-                             if (kp.R_bar(i,i) < config.singular_threshold) { 
-                                 kp.R_bar(i,i) += config.huge_penalty;
+                             if (workspace[k].R_bar(i,i) < config.singular_threshold) { 
+                                 workspace[k].R_bar(i,i) += config.huge_penalty;
                                  fixed = true;
                              }
                          }
@@ -430,7 +477,7 @@ namespace internal {
                          // or the corrected matrix needs to be re-calculated:
                          if (fixed) {
                              // Re-factorize the corrected matrix (Retry Factorization)
-                             ws.llt_solver.compute(kp.R_bar);
+                             ws.llt_solver.compute(workspace[k].R_bar);
                              if (!MatOps::is_llt_success(ws.llt_solver)) return false;
                          } else {
                              // The matrix is not positive definite, but the diagonal elements are all greater than the threshold, 
@@ -444,48 +491,54 @@ namespace internal {
                 // Now directly solve, no need to compute again
 
                 // 3. Solve Quu * d = -Qu
-                kp.d = -kp.r_bar;
-                MatOps::solve_llt_inplace(ws.llt_solver, kp.d);
+                workspace[k].d = -workspace[k].r_bar;
+                MatOps::solve_llt_inplace(ws.llt_solver, workspace[k].d);
                 
                 // 4. Solve Quu * K = -Qux
-                kp.K = -kp.H_bar;
-                MatOps::solve_llt_inplace(ws.llt_solver, kp.K);
+                workspace[k].K = -workspace[k].H_bar;
+                MatOps::solve_llt_inplace(ws.llt_solver, workspace[k].K);
             }
 
-            Vx = kp.q_bar;
-            MatOps::mult_add_transA_v(Vx, kp.H_bar, kp.d);
+            Vx = workspace[k].q_bar;
+            MatOps::mult_add_transA_v(Vx, workspace[k].H_bar, workspace[k].d);
 
-            Vxx = kp.Q_bar;
-            MatOps::mult_add_transA(Vxx, kp.H_bar, kp.K);
+            Vxx = workspace[k].Q_bar;
+            MatOps::mult_add_transA(Vxx, workspace[k].H_bar, workspace[k].K);
             MatOps::symmetrize(Vxx);
             for(int i=0; i<Knot::NX; ++i) Vxx(i,i) += reg;
         }
 
-        traj[0].dx.setZero(); 
+        workspace[0].dx.setZero(); 
 
         for(int k=0; k < N; ++k) {
-            auto& kp = traj[k];
-            kp.du.noalias() = kp.K * kp.dx + kp.d;
+            workspace[k].du.noalias() = workspace[k].K * workspace[k].dx + workspace[k].d;
             
             MSVec<double, Knot::NX> defect;
             if (soc_traj) {
-                defect = (*soc_traj)[k].f_resid - (*soc_traj)[k+1].x;
+                auto* soc_model = soc_traj->get_model_data();
+                auto* soc_state = soc_traj->get_active_state();
+                defect = soc_model[k].f_resid - soc_state[k+1].x;
             } else {
-                defect = kp.f_resid - traj[k+1].x;
+                defect = model[k].f_resid - state[k+1].x;
             }
 
-            traj[k+1].dx.noalias() = kp.A * kp.dx;
-            MatOps::mult_add(traj[k+1].dx, kp.B, kp.du);
-            traj[k+1].dx += defect;
+            workspace[k+1].dx.noalias() = model[k].A * workspace[k].dx;
+            MatOps::mult_add(workspace[k+1].dx, model[k].B, workspace[k].du);
+            workspace[k+1].dx += defect;
             
-            const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
-            const Knot* aff_kp = (affine_traj) ? &((*affine_traj)[k]) : nullptr;
-            recover_dual_search_directions<Knot, ModelType>(kp, mu, config, soc_kp, aff_kp); 
+            // TODO: Recover dual search directions (simplified for now)
+            // Just compute simple ds and dlam
+            for(int i=0; i<NC; ++i) {
+                workspace[k].ds(i) = -state[k].g_val(i) - workspace[k].dx.dot(model[k].C.row(i)) - workspace[k].du.dot(model[k].D.row(i));
+                workspace[k].dlam(i) = (mu - state[k].s(i) * state[k].lam(i)) / state[k].s(i) - state[k].lam(i) * workspace[k].ds(i) / state[k].s(i);
+            }
         }
         
-        const Knot* soc_kp_N = (soc_traj) ? &((*soc_traj)[N]) : nullptr;
-        const Knot* aff_kp_N = (affine_traj) ? &((*affine_traj)[N]) : nullptr;
-        recover_dual_search_directions<Knot, ModelType>(traj[N], mu, config, soc_kp_N, aff_kp_N); 
+        // Terminal knot
+        for(int i=0; i<NC; ++i) {
+            workspace[N].ds(i) = -state[N].g_val(i);
+            workspace[N].dlam(i) = (mu - state[N].s(i) * state[N].lam(i)) / state[N].s(i);
+        } 
         
         return true;
     }
