@@ -27,27 +27,30 @@ using MSMat = Eigen::Matrix<T, R, C>;
 template<typename T, int N>
 using MSVec = Eigen::Matrix<T, N, 1>;
 
+template<typename T, int N>
+using MSDiag = Eigen::DiagonalMatrix<T, N>;
+
 // Operations Abstraction
 struct MatOps {
     template<typename Derived>
-    static void setZero(Eigen::MatrixBase<Derived>& m) {
+    inline static void setZero(Eigen::MatrixBase<Derived>& m) {
         m.setZero();
     }
 
     template<typename Derived>
-    static void setIdentity(Eigen::MatrixBase<Derived>& m) {
+    inline static void setIdentity(Eigen::MatrixBase<Derived>& m) {
         m.setIdentity();
     }
 
     template<typename Derived>
-    static auto transpose(const Eigen::MatrixBase<Derived>& m) {
+    inline static auto transpose(const Eigen::MatrixBase<Derived>& m) {
         return m.transpose();
     }
 
     // Linear Solve: x = A^-1 * b using Cholesky (LLT)
     // Returns true on success, false on failure (not PD)
     template<typename Mat, typename Vec, typename ResVec>
-    static bool cholesky_solve(const Mat& A, const Vec& b, ResVec& x) {
+    inline static bool cholesky_solve(const Mat& A, const Vec& b, ResVec& x) {
         Eigen::LLT<Mat> llt(A);
         if (llt.info() == Eigen::NumericalIssue) return false;
         x = llt.solve(b);
@@ -56,34 +59,58 @@ struct MatOps {
     
     // Solve with return (for convenience, not error checked)
     template<typename Mat, typename Vec>
-    static auto cholesky_solve_ret(const Mat& A, const Vec& b) {
+    inline static auto cholesky_solve_ret(const Mat& A, const Vec& b) {
         Eigen::LLT<Mat> llt(A);
         return llt.solve(b);
     }
     
     // Check PD
     template<typename Mat>
-    static bool is_pos_def(const Mat& A) {
+    inline static bool is_pos_def(const Mat& A) {
         Eigen::LLT<Mat> llt(A);
         return llt.info() == Eigen::Success;
     }
 
     // Infinity Norm
     template<typename Derived>
-    static double norm_inf(const Eigen::MatrixBase<Derived>& m) {
+    inline static double norm_inf(const Eigen::MatrixBase<Derived>& m) {
         return m.template lpNorm<Eigen::Infinity>();
     }
     
     // Dot Product
     template<typename V1, typename V2>
-    static double dot(const V1& a, const V2& b) {
+    inline static double dot(const V1& a, const V2& b) {
         return a.dot(b);
     }
     
     // Element-wise Max with scalar
     template<typename V>
-    static V cwiseMax(const V& a, double val) {
+    inline static V cwiseMax(const V& a, double val) {
         return a.cwiseMax(val);
+    }
+
+    // Accumulate Mult: C += A * B
+    template<typename DerivedC, typename DerivedA, typename DerivedB>
+    inline static void mult_add(Eigen::MatrixBase<DerivedC>& C, const Eigen::MatrixBase<DerivedA>& A, const Eigen::MatrixBase<DerivedB>& B) {
+        C.noalias() += A * B;
+    }
+
+    // Accumulate Transpose Mult: D += A^T * B
+    template<typename DerivedD, typename DerivedA, typename DerivedB>
+    inline static void mult_add_transA(Eigen::MatrixBase<DerivedD>& D, const Eigen::MatrixBase<DerivedA>& A, const Eigen::MatrixBase<DerivedB>& B) {
+        D.noalias() += A.transpose() * B;
+    }
+    
+    // Accumulate Transpose Mult Vector: d += A^T * b
+    template<typename DerivedD, typename DerivedA, typename DerivedB>
+    inline static void mult_add_transA_v(Eigen::MatrixBase<DerivedD>& d, const Eigen::MatrixBase<DerivedA>& A, const Eigen::MatrixBase<DerivedB>& b) {
+        d.noalias() += A.transpose() * b;
+    }
+
+    // Symmetrize: m = 0.5 * (m + m^T)
+    template<typename Derived>
+    inline static void symmetrize(Eigen::MatrixBase<Derived>& m) {
+        m = 0.5 * (m + m.transpose());
     }
 };
 
@@ -107,24 +134,24 @@ namespace minisolver {
     // Operations Abstraction
     struct MatOps {
         template<typename Derived>
-        static void setZero(Derived& m) {
+        inline static void setZero(Derived& m) {
             m.setZero();
         }
 
         template<typename Derived>
-        static void setIdentity(Derived& m) {
+        inline static void setIdentity(Derived& m) {
             m.setIdentity();
         }
         
         // Return by value for MiniMatrix
         template<typename Derived>
-        static auto transpose(const Derived& m) {
+        inline static auto transpose(const Derived& m) {
             return m.transpose();
         }
 
         // Linear Solve: x = A^-1 * b using Cholesky (LLT)
         template<typename Mat, typename Vec, typename ResVec>
-        static bool cholesky_solve(const Mat& A, const Vec& b, ResVec& x) {
+        inline static bool cholesky_solve(const Mat& A, const Vec& b, ResVec& x) {
             MiniLLT<double, Mat::Rows> llt(A);
             if (llt.info() != 0) return false;
             
@@ -137,30 +164,54 @@ namespace minisolver {
         }
         
         template<typename Mat, typename Vec>
-        static auto cholesky_solve_ret(const Mat& A, const Vec& b) {
+        inline static auto cholesky_solve_ret(const Mat& A, const Vec& b) {
              MiniLLT<double, Mat::Rows> llt(A);
              return llt.solve(b);
         }
         
         template<typename Mat>
-        static bool is_pos_def(const Mat& A) {
+        inline static bool is_pos_def(const Mat& A) {
             MiniLLT<double, Mat::Rows> llt(A);
             return llt.info() == 0;
         }
 
         template<typename Derived>
-        static double norm_inf(const Derived& m) {
+        inline static double norm_inf(const Derived& m) {
             return m.lpNormInfinity();
         }
         
         template<typename V1, typename V2>
-        static double dot(const V1& a, const V2& b) {
+        inline static double dot(const V1& a, const V2& b) {
             return a.dot(b);
         }
         
         template<typename V>
-        static V cwiseMax(const V& a, double val) {
+        inline static V cwiseMax(const V& a, double val) {
             return a.cwiseMax(val);
+        }
+
+        // Accumulate Mult: C += A * B
+        template<typename DerivedC, typename DerivedA, typename DerivedB>
+        inline static void mult_add(DerivedC& C, const DerivedA& A, const DerivedB& B) {
+            C.mult_add(A, B);
+        }
+
+        // Accumulate Transpose Mult: D += A^T * B
+        template<typename DerivedD, typename DerivedA, typename DerivedB>
+        inline static void mult_add_transA(DerivedD& D, const DerivedA& A, const DerivedB& B) {
+            D.add_At_mul_B(A, B);
+        }
+        
+        // Accumulate Transpose Mult Vector: d += A^T * b
+        template<typename DerivedD, typename DerivedA, typename DerivedB>
+        inline static void mult_add_transA_v(DerivedD& d, const DerivedA& A, const DerivedB& b) {
+            d.add_At_mul_v(A, b);
+        }
+
+        // Symmetrize: m = 0.5 * (m + m^T)
+        template<typename Derived>
+        inline static void symmetrize(Derived& m) {
+            m.symmetrize();
         }
     };
 }

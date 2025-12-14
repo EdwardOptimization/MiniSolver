@@ -105,9 +105,9 @@ Result run_case(const BenchmarkCase& test_case) {
         setup_scenario(solver);
         solver.rollout_dynamics(); // Initial dynamics propagation
         
-        auto start = std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::steady_clock::now();
         SolverStatus status = solver.solve();
-        auto end = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::steady_clock::now();
         
         if (i >= WARMUP) {
             times.push_back(std::chrono::duration<double, std::milli>(end - start).count());

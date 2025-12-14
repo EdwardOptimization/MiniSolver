@@ -13,8 +13,15 @@ std::atomic<int> g_allocation_count(0);
 void* operator new(size_t size) {
     if (g_memory_check_active) {
         g_allocation_count++;
-        // Optional: print stack trace or size for debugging
-        // std::cout << "Allocated " << size << " bytes during check!\n";
+    }
+    void* p = malloc(size);
+    if (!p) throw std::bad_alloc();
+    return p;
+}
+
+void* operator new[](size_t size) {
+    if (g_memory_check_active) {
+        g_allocation_count++;
     }
     void* p = malloc(size);
     if (!p) throw std::bad_alloc();
@@ -25,7 +32,15 @@ void operator delete(void* p) noexcept {
     free(p);
 }
 
+void operator delete[](void* p) noexcept {
+    free(p);
+}
+
 void operator delete(void* p, size_t) noexcept {
+    free(p);
+}
+
+void operator delete[](void* p, size_t) noexcept {
     free(p);
 }
 
@@ -37,6 +52,7 @@ TEST(MemoryTest, ZeroMalloc_Compliance_Test) {
     SolverConfig config;
     config.print_level = PrintLevel::NONE; // Disable logging to avoid allocations
     config.max_iters = 5;
+    config.enable_profiling = false;
     
     // Ensure we use Custom Matrix if possible, or verify Eigen doesn't allocate for fixed size
     // Eigen fixed-size matrices generally don't allocate on heap.

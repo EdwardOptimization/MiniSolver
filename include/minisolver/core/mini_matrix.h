@@ -163,6 +163,20 @@ public:
         }
     }
 
+    // [OPTIMIZATION] In-place multiply-add: this += A * B
+    template<int K>
+    void mult_add(const MiniMatrix<T, R, K>& A, const MiniMatrix<T, K, C>& B) {
+        for(int i=0; i<R; ++i) {
+            for(int j=0; j<C; ++j) {
+                T sum = 0;
+                for(int k=0; k<K; ++k) {
+                    sum += A(i, k) * B(k, j);
+                }
+                (*this)(i, j) += sum;
+            }
+        }
+    }
+
     // [OPTIMIZATION] Accumulate transposed matrix multiplication: this += A^T * B
     // Avoids creating temporary A^T and product matrix
     // this: (R x C), A: (R_A x R), B: (R_A x C) -> A^T * B: (R x C)
@@ -220,6 +234,7 @@ public:
 template<typename T, int N>
 class MiniLLT {
     MiniMatrix<T, N, N> L;
+    std::array<T, N> inv_diag;
     bool success;
 public:
     MiniLLT(const MiniMatrix<T, N, N>& A) {
@@ -242,8 +257,9 @@ public:
                         return;
                     }
                     L(i, j) = std::sqrt(val);
+                    inv_diag[i] = T(1) / L(i, j);
                 } else {
-                    L(i, j) = (1.0 / L(j, j) * (A(i, j) - sum));
+                    L(i, j) = (A(i, j) - sum) * inv_diag[j];
                 }
             }
         }

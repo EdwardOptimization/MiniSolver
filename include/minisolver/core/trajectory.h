@@ -83,7 +83,8 @@ public:
         traj[N].u = traj[N-1].u;
         traj[N].s = traj[N-1].s;
         traj[N].lam = traj[N-1].lam;
-        traj[N].p = traj[N-1].p; // [FIX] Duplicate last parameter
+        // Do not duplicate last parameter!!! Let user set new value!!!
+        // traj[N].p = traj[N-1].p;
     }
     
     // Reset trajectory data to initial construction state (Zero x/u/p, Default s/lam)

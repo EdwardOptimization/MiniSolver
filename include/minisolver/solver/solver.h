@@ -25,7 +25,7 @@ namespace minisolver {
 
 class SolverTimer {
 public:
-    using Clock = std::chrono::high_resolution_clock;
+    using Clock = std::chrono::steady_clock;
     std::map<std::string, double> times;
     std::vector<std::pair<std::string, std::chrono::time_point<Clock>>> stack;
     bool enabled = false; // Default disabled, use for test memory allocation
@@ -360,6 +360,7 @@ public:
     }
     
     // Shifts trajectory for MPC warm start
+    // Only shift values (x, u, s, lam), keep parameters (p) unchanged
     void shift_trajectory() {
         trajectory.shift();
     }

@@ -137,7 +137,7 @@ struct SolverConfig {
     // --- General ---
     int max_iters = 100; // Give it enough room
     PrintLevel print_level = PrintLevel::ITER; 
-    bool enable_profiling = false; // Default disabled for Zero-Malloc compliance
+    bool enable_profiling = true; // False for test Zero-Malloc compliance
 
     // --- Advanced Features ---
     HessianApproximation hessian_approximation = HessianApproximation::GAUSS_NEWTON; // Default to GN for speed

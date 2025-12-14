@@ -131,21 +131,6 @@ namespace internal {
             }
         }
 
-        #ifdef USE_EIGEN
-        Eigen::DiagonalMatrix<double, Knot::NC> SigmaMat(sigma);
-        
-        MSMat<double, Knot::NC, Knot::NX> tempC = SigmaMat * kp.C;
-        MSMat<double, Knot::NC, Knot::NU> tempD = SigmaMat * kp.D;
-
-        kp.Q_bar.noalias() = kp.Q + kp.C.transpose() * tempC;
-        kp.R_bar.noalias() = kp.R + kp.D.transpose() * tempD;
-        kp.H_bar.noalias() = kp.H + kp.D.transpose() * tempC;
-        
-        kp.q_bar.noalias() = kp.q + kp.C.transpose() * grad_mod;
-        kp.r_bar.noalias() = kp.r + kp.D.transpose() * grad_mod;
-        
-        #else
-        // Custom Matrix Library with Diagonal Support
         MSDiag<double, Knot::NC> SigmaMat(sigma);
         
         MSMat<double, Knot::NC, Knot::NX> tempC = SigmaMat * kp.C;
@@ -157,7 +142,6 @@ namespace internal {
         
         kp.q_bar.noalias() = kp.q + kp.C.transpose() * grad_mod;
         kp.r_bar.noalias() = kp.r + kp.D.transpose() * grad_mod;
-        #endif
     }
 
     template<typename Knot, typename ModelType>
@@ -291,13 +275,8 @@ namespace internal {
                     MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
                     
                     // Add A^T * Vxx_d and B^T * Vxx_d to gradients
-#ifdef USE_EIGEN
-                    kp.q_bar.noalias() += kp.A.transpose() * Vxx_d; 
-                    kp.r_bar.noalias() += kp.B.transpose() * Vxx_d; 
-#else
-                    kp.q_bar.add_At_mul_v(kp.A, Vxx_d);
-                    kp.r_bar.add_At_mul_v(kp.B, Vxx_d);
-#endif
+                    MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vxx_d);
+                    MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vxx_d);
                 }
             }
             else {
@@ -326,40 +305,21 @@ namespace internal {
 
                     // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
                     // kp.q_bar += A^T * Vx
-    #ifdef USE_EIGEN
-                    kp.q_bar.noalias() += kp.A.transpose() * Vx;
-                    kp.q_bar.noalias() += kp.A.transpose() * Vxx_d; 
-                    
-                    kp.r_bar.noalias() += kp.B.transpose() * Vx;
-                    kp.r_bar.noalias() += kp.B.transpose() * Vxx_d; 
-    #else
-                    kp.q_bar.add_At_mul_v(kp.A, Vx);
-                    kp.q_bar.add_At_mul_v(kp.A, Vxx_d);
-                    
-                    kp.r_bar.add_At_mul_v(kp.B, Vx);
-                    kp.r_bar.add_At_mul_v(kp.B, Vxx_d);
-    #endif
+                    MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vx);
+                    MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vxx_d);
+
+                    MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vx);
+                    MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vxx_d);
                 } else {
                     // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
-    #ifdef USE_EIGEN
-                    kp.q_bar.noalias() += kp.A.transpose() * Vx;
-                    kp.r_bar.noalias() += kp.B.transpose() * Vx;
-    #else
-                    kp.q_bar.add_At_mul_v(kp.A, Vx);
-                    kp.r_bar.add_At_mul_v(kp.B, Vx);
-    #endif
+                    MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vx);
+                    MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vx);
                 }
                 
                 // Update Hessian Qxx (kp.Q_bar), Quu (kp.R_bar), Qux (kp.H_bar) in-place
-    #ifdef USE_EIGEN
-                kp.Q_bar.noalias() += kp.A.transpose() * VxxA;
-                kp.R_bar.noalias() += kp.B.transpose() * VxxB;
-                kp.H_bar.noalias() += kp.B.transpose() * VxxA;
-    #else
-                kp.Q_bar.add_At_mul_B(kp.A, VxxA);
-                kp.R_bar.add_At_mul_B(kp.B, VxxB);
-                kp.H_bar.add_At_mul_B(kp.B, VxxA);
-    #endif
+                MatOps::mult_add_transA(kp.Q_bar, kp.A, VxxA);
+                MatOps::mult_add_transA(kp.R_bar, kp.B, VxxB);
+                MatOps::mult_add_transA(kp.H_bar, kp.B, VxxA);
             } // End of Legacy Path
 
             if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
@@ -401,20 +361,11 @@ namespace internal {
             }
 
             Vx = kp.q_bar;
-#ifdef USE_EIGEN
-            Vx.noalias() += kp.H_bar.transpose() * kp.d;
-#else
-            Vx.add_At_mul_v(kp.H_bar, kp.d);
-#endif
+            MatOps::mult_add_transA_v(Vx, kp.H_bar, kp.d);
 
             Vxx = kp.Q_bar;
-#ifdef USE_EIGEN
-            Vxx.noalias() += kp.H_bar.transpose() * kp.K;
-            Vxx = 0.5 * (Vxx + Vxx.transpose());
-#else
-            Vxx.add_At_mul_B(kp.H_bar, kp.K);
-            Vxx.symmetrize();
-#endif
+            MatOps::mult_add_transA(Vxx, kp.H_bar, kp.K);
+            MatOps::symmetrize(Vxx);
             for(int i=0; i<Knot::NX; ++i) Vxx(i,i) += reg;
         }
 
@@ -432,7 +383,7 @@ namespace internal {
             }
 
             traj[k+1].dx.noalias() = kp.A * kp.dx;
-            traj[k+1].dx.noalias() += kp.B * kp.du;
+            MatOps::mult_add(traj[k+1].dx, kp.B, kp.du);
             traj[k+1].dx += defect;
             
             const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
