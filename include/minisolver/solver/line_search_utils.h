@@ -6,6 +6,68 @@
 
 namespace minisolver {
 
+// NEW: Split architecture version
+template<typename TrajectoryType, typename ModelType>
+double fraction_to_boundary_rule_split(const TrajectoryType& traj, int N, double tau = 0.995) {
+    auto* state = traj.get_active_state();
+    auto* workspace = traj.get_workspace();
+    
+    double alpha_s = 1.0;
+    double alpha_lam = 1.0;
+    double alpha_soft_s = 1.0;
+    double alpha_soft_dual = 1.0;
+    
+    const int NC = ModelType::NC;
+
+    for(int k=0; k<=N; ++k) {
+        for(int i=0; i<NC; ++i) {
+            double s = state[k].s(i);
+            double ds = workspace[k].ds(i);
+            double lam = state[k].lam(i);
+            double dlam = workspace[k].dlam(i);
+
+            // Lower bound for s: s + alpha * ds >= (1-tau) * s > 0
+            if (ds < 0) {
+                alpha_s = std::min(alpha_s, -tau * s / ds);
+            }
+            
+            // Lower bound for lam
+            if (dlam < 0) {
+                alpha_lam = std::min(alpha_lam, -tau * lam / dlam);
+            }
+            
+            double w = 0.0;
+            int type = 0;
+            if constexpr (NC > 0) {
+                 if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
+                    type = ModelType::constraint_types[i];
+                    w = ModelType::constraint_weights[i];
+                }
+            }
+            
+            // For L1, we explicitly track soft_s and soft_dual
+            if (type == 1 && w > 1e-6) {
+                double ss = state[k].soft_s(i);
+                double dss = workspace[k].dsoft_s(i);
+                if (dss < 0) {
+                    alpha_soft_s = std::min(alpha_soft_s, -tau * ss / dss);
+                }
+                
+                // soft_dual = w - lam
+                double sd = w - lam;
+                double dsd = -dlam;
+                if (dsd < 0 && sd > 1e-8) {
+                    alpha_soft_dual = std::min(alpha_soft_dual, -tau * sd / dsd);
+                }
+            }
+        }
+    }
+    
+    return std::min({alpha_s, alpha_lam, alpha_soft_s, alpha_soft_dual, 1.0});
+}
+
+// OLD: Legacy version
+
 // Fraction-to-Boundary Rule for Interior Point Methods
 // Updated to accept any container type and active horizon N
 template<typename TrajVector, typename ModelType>

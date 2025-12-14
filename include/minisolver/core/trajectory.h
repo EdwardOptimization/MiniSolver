@@ -68,6 +68,10 @@ public:
     Model* get_model_data() { return &model_data[0]; }
     const Model* get_model_data() const { return &model_data[0]; }
     
+    // Candidate model (same as active model - they share model data)
+    Model* get_candidate_model() { return &model_data[0]; }
+    const Model* get_candidate_model() const { return &model_data[0]; }
+    
     Work* get_workspace() { return &workspace[0]; }
     const Work* get_workspace() const { return &workspace[0]; }
     
