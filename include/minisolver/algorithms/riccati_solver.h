@@ -86,6 +86,7 @@ public:
         // TODO: Reimplement with new split architecture
         return true;  // Temporarily disabled
         
+}
 // DISABLED_REFINE:         if (!config.enable_iterative_refinement) return true;
 // DISABLED_REFINE:         
 // DISABLED_REFINE:         // [FIX] Implemented Linear Rollout Refinement (Defect Correction)

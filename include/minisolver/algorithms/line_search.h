@@ -27,8 +27,18 @@ public:
 
     virtual ~LineSearchStrategy() = default;
 
+    // Pure virtual interface - accepts any LinearSolver via template 
+    template<typename LS>
+    double search_impl(TrajectoryType& trajectory, 
+                       LS& linear_solver,
+                       const std::array<double, MAX_N>& dt_traj,
+                       double mu, double reg,
+                       const SolverConfig& config) {
+        return search(trajectory, linear_solver, dt_traj, mu, reg, config);
+    }
+    
     virtual double search(TrajectoryType& trajectory, 
-                          LinearSolver<TrajArray>& linear_solver,
+                          LinearSolver<TrajectoryType>& linear_solver,
                           const std::array<double, MAX_N>& dt_traj,
                           double mu, double reg,
                           const SolverConfig& config) = 0;
@@ -138,7 +148,7 @@ public:
     }
 
     double search(TrajectoryType& trajectory, 
-                  LinearSolver<TrajArray>& /*linear_solver*/,
+                  LinearSolver<TrajectoryType>& /*linear_solver*/,
                   const std::array<double, MAX_N>& dt_traj,
                   double mu, double /*reg*/,
                   const SolverConfig& config) override 
@@ -354,7 +364,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     /*
     void solve_soc(TrajArray& soc_traj, const TrajArray& active_traj, const TrajArray& trial_traj, 
                    int N, double mu, double reg, InertiaStrategy inertia,
-                   LinearSolver<TrajArray>& solver, const SolverConfig& config) {
+                   LinearSolver<TrajectoryType>& solver, const SolverConfig& config) {
         ...
     }
     */
@@ -365,7 +375,7 @@ public:
     }
     
     double search(TrajectoryType& trajectory, 
-                  LinearSolver<TrajArray>& linear_solver,
+                  LinearSolver<TrajectoryType>& linear_solver,
                   const std::array<double, MAX_N>& dt_traj,
                   double mu, double reg,
                   const SolverConfig& config) override 
@@ -425,7 +435,7 @@ public:
                 accepted = true;
             }
             
-#if 0 // DISABLED: SOC
+#if 0 // DISABLED: SOC during refactoring
             // SOC Logic
             if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0 && alpha > config.soc_trigger_alpha) {
                 if (config.print_level >= PrintLevel::DEBUG) 
@@ -491,6 +501,7 @@ public:
                 if (accepted) break;
             }
 
+#endif // DISABLED: SOC
             if (accepted) break;
             alpha *= config.line_search_backtrack_factor; 
             ls_iter++;
