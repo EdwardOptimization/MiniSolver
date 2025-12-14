@@ -15,6 +15,11 @@ namespace minisolver {
 template<typename TrajArray, typename Model>
 class RiccatiSolver : public LinearSolver<TrajArray> {
 public:
+    using Knot = typename TrajArray::value_type;
+    
+    // Persistent workspace to avoid re-allocation
+    RiccatiWorkspace<Knot> workspace;
+
     bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy, 
                const SolverConfig& config, const TrajArray* affine_traj = nullptr) override {
         
@@ -58,21 +63,21 @@ public:
             // I will add a placeholder for that and call the dispatch.
             
             MLOG_ERROR("GPU Backend implementation incomplete (Data Packing missing). Falling back to CPU.");
-            return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, affine_traj);
+            return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, workspace, affine_traj);
 #else
             MLOG_WARN("CUDA not enabled. Falling back to CPU.");
-            return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, affine_traj);
+            return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, workspace, affine_traj);
 #endif
         }
 
         // Call the static/template function with Model type info
-        return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, affine_traj);
+        return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, workspace, affine_traj);
     }
     
     // SOC Implementation
     bool solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N, double mu, double reg, InertiaStrategy strategy,
                    const SolverConfig& config) override {
-        return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, nullptr, &soc_rhs_traj);
+        return cpu_serial_solve<TrajArray, Model>(traj, N, mu, reg, strategy, config, workspace, nullptr, &soc_rhs_traj);
     }
 
     // Iterative Refinement Implementation

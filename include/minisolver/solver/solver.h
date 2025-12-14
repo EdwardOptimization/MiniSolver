@@ -79,7 +79,7 @@ public:
 
     // Components
     // Pass Model type to RiccatiSolver for static constraint info access
-    std::unique_ptr<LinearSolver<TrajArray>> linear_solver;
+    std::unique_ptr<RiccatiSolver<TrajArray, Model>> linear_solver;
     std::unique_ptr<LineSearchStrategy<Model, MAX_N>> line_search;
 
     int N; 
@@ -1167,6 +1167,7 @@ private:
         auto& traj = trajectory.active();
         double max_kkt_error = 0.0;
         double max_dual_inf = 0.0;
+        auto& riccati_workspace = linear_solver->workspace;
         for(int k=0; k<=N; ++k) {
              double current_dt = (k < N) ? dt_traj[k] : 0.0;
              
@@ -1182,7 +1183,7 @@ private:
              }
              
              // 2. Recompute Barrier Gradients (check riccati.h)
-             compute_barrier_derivatives<Knot, Model>(traj[k], mu, config);
+             compute_barrier_derivatives<Knot, Model>(traj[k], mu, config, riccati_workspace, nullptr, nullptr);
              // 3. Check NaNs
              for(int i=0; i<NC; ++i) {
                  if (std::isnan(traj[k].g_val(i)) || std::isnan(traj[k].s(i))) 

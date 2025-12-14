@@ -9,6 +9,27 @@
 
 namespace minisolver {
 
+template<typename Knot>
+struct RiccatiWorkspace {
+    // --- For compute_barrier_derivatives ---
+    MSDiag<double, Knot::NC> sigma_mat;
+    MSMat<double, Knot::NC, Knot::NX> temp_C;
+    MSMat<double, Knot::NC, Knot::NU> temp_D;
+    
+    // --- For backward_pass (Riccati Step) ---
+    MSMat<double, Knot::NX, Knot::NX> VxxA;
+    MSMat<double, Knot::NX, Knot::NU> VxxB;
+    MSVec<double, Knot::NX> Vxx_d;
+    MSMat<double, Knot::NU, Knot::NU> Quu_inv; // For fast_inverse case
+
+    // --- Linear Solver ---
+    MSLLT<MSMat<double, Knot::NU, Knot::NU>> llt_solver;
+
+    RiccatiWorkspace() {
+        // Pre-allocate or initialize if needed
+    }
+};
+
 namespace internal {
     // SFINAE Helper: Detect if Model has compute_fused_riccati_step<double> static method
     template <typename T, typename = void>
@@ -42,7 +63,8 @@ namespace internal {
     }
 
     template<typename Knot, typename ModelType>
-    void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverConfig& config, const Knot* aff_kp = nullptr, const Knot* soc_kp = nullptr) {
+    void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverConfig& config, RiccatiWorkspace<Knot>& ws, const Knot* aff_kp = nullptr, const Knot* soc_kp = nullptr) {
+        (void)ws; // Suppress unused parameter warning
         MSVec<double, Knot::NC> sigma;
         MSVec<double, Knot::NC> grad_mod;
 
@@ -212,18 +234,22 @@ namespace internal {
     }
 
     template<typename MatrixType>
-    bool fast_inverse(const MatrixType& A, MatrixType& A_inv) {
+    bool fast_inverse(const MatrixType& A, MatrixType& A_inv, double epsilon = 1e-9) {
         // Safe dimension check compatible with C++17
         constexpr int ROWS = MatrixType::RowsAtCompileTime; 
 
+        // --- Case 1: 1x1 Matrix ---
         if constexpr (ROWS == 1) { 
-            if (std::abs(A(0,0)) < 1e-9) return false;
-            A_inv(0,0) = 1.0 / A(0,0);
+            double val = A(0,0);
+            if (std::abs(val) < epsilon) return false;
+            A_inv(0,0) = 1.0 / val;
             return true;
         } 
+        // --- Case 2: 2x2 Matrix ---
         else if constexpr (ROWS == 2) {
             double det = A(0,0)*A(1,1) - A(0,1)*A(1,0);
-            if (std::abs(det) < 1e-9) return false;
+            if (std::abs(det) < epsilon) return false;
+            
             double inv_det = 1.0 / det;
             A_inv(0,0) =  A(1,1) * inv_det;
             A_inv(0,1) = -A(0,1) * inv_det;
@@ -231,6 +257,34 @@ namespace internal {
             A_inv(1,1) =  A(0,0) * inv_det;
             return true;
         }
+        // --- Case 3: 3x3 Matrix (Optional, high performance) ---
+        else if constexpr (ROWS == 3) {
+            // Sarrus Rule or Expansion by minors
+            double A00 = A(0,0), A01 = A(0,1), A02 = A(0,2);
+            double A10 = A(1,0), A11 = A(1,1), A12 = A(1,2);
+            double A20 = A(2,0), A21 = A(2,1), A22 = A(2,2);
+
+            double det = A00*(A11*A22 - A12*A21) -
+                         A01*(A10*A22 - A12*A20) +
+                         A02*(A10*A21 - A11*A20);
+                         
+            if (std::abs(det) < epsilon) return false;
+            double inv_det = 1.0 / det;
+
+            A_inv(0,0) = (A11*A22 - A12*A21) * inv_det;
+            A_inv(0,1) = (A02*A21 - A01*A22) * inv_det;
+            A_inv(0,2) = (A01*A12 - A02*A11) * inv_det;
+
+            A_inv(1,0) = (A12*A20 - A10*A22) * inv_det;
+            A_inv(1,1) = (A00*A22 - A02*A20) * inv_det;
+            A_inv(1,2) = (A02*A10 - A00*A12) * inv_det;
+
+            A_inv(2,0) = (A10*A21 - A11*A20) * inv_det;
+            A_inv(2,1) = (A01*A20 - A00*A21) * inv_det;
+            A_inv(2,2) = (A00*A11 - A01*A10) * inv_det;
+            return true;
+        }
+        // --- Case 4: General N > 3 (Fallback) ---
         else {
             return MatOps::cholesky_solve(A, MatrixType::Identity(), A_inv);
         }
@@ -238,7 +292,8 @@ namespace internal {
 
     template<typename TrajVector, typename ModelType>
     bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg, minisolver::InertiaStrategy strategy, 
-                          const minisolver::SolverConfig& config = minisolver::SolverConfig(),
+                          const minisolver::SolverConfig& config,
+                          RiccatiWorkspace<typename TrajVector::value_type>& ws,
                           const TrajVector* affine_traj = nullptr,
                           const TrajVector* soc_traj = nullptr) { // [NEW] Added arg
         using Knot = typename TrajVector::value_type;
@@ -246,7 +301,7 @@ namespace internal {
         for(int k=0; k<=N; ++k) {
             const Knot* aff_kp = (affine_traj) ? &((*affine_traj)[k]) : nullptr;
             const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
-            compute_barrier_derivatives<Knot, ModelType>(traj[k], mu, config, aff_kp, soc_kp); 
+            compute_barrier_derivatives<Knot, ModelType>(traj[k], mu, config, ws, aff_kp, soc_kp); 
         }
 
         MSVec<double, Knot::NX> Vx = traj[N].q_bar;
@@ -286,11 +341,9 @@ namespace internal {
                 // Use kp.R_bar as accumulator for Quu
                 // Use kp.H_bar as accumulator for Qux
                 
-                MSMat<double, Knot::NX, Knot::NX> VxxA;
-                VxxA.noalias() = Vxx * kp.A;
-                
-                MSMat<double, Knot::NX, Knot::NU> VxxB;
-                VxxB.noalias() = Vxx * kp.B; 
+                // [OPTIMIZED] Use Workspace for temporary matrices
+                ws.VxxA.noalias() = Vxx * kp.A;
+                ws.VxxB.noalias() = Vxx * kp.B; 
 
                 if (config.enable_defect_correction) {
                     // Defect correction
@@ -301,15 +354,15 @@ namespace internal {
                         defect = kp.f_resid - traj[k+1].x;
                     }
                     
-                    MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
+                    ws.Vxx_d = Vxx * defect;
 
                     // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
                     // kp.q_bar += A^T * Vx
                     MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vx);
-                    MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vxx_d);
+                    MatOps::mult_add_transA_v(kp.q_bar, kp.A, ws.Vxx_d);
 
                     MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vx);
-                    MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vxx_d);
+                    MatOps::mult_add_transA_v(kp.r_bar, kp.B, ws.Vxx_d);
                 } else {
                     // Update Gradient Qx (kp.q_bar) and Qu (kp.r_bar) in-place
                     MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vx);
@@ -317,9 +370,9 @@ namespace internal {
                 }
                 
                 // Update Hessian Qxx (kp.Q_bar), Quu (kp.R_bar), Qux (kp.H_bar) in-place
-                MatOps::mult_add_transA(kp.Q_bar, kp.A, VxxA);
-                MatOps::mult_add_transA(kp.R_bar, kp.B, VxxB);
-                MatOps::mult_add_transA(kp.H_bar, kp.B, VxxA);
+                MatOps::mult_add_transA(kp.Q_bar, kp.A, ws.VxxA);
+                MatOps::mult_add_transA(kp.R_bar, kp.B, ws.VxxB);
+                MatOps::mult_add_transA(kp.H_bar, kp.B, ws.VxxA);
             } // End of Legacy Path
 
             if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
@@ -328,15 +381,32 @@ namespace internal {
                 for(int i=0; i<Knot::NU; ++i) kp.R_bar(i,i) += config.reg_min; 
             }
 
-            if (strategy == minisolver::InertiaStrategy::REGULARIZATION && Knot::NU <= 2) {
-                MSMat<double, Knot::NU, Knot::NU> Quu_inv;
-                if (!fast_inverse(kp.R_bar, Quu_inv)) return false;
-                kp.d.noalias() = -Quu_inv * kp.r_bar; // Qu is in kp.r_bar
-                kp.K.noalias() = -Quu_inv * kp.H_bar; // Qux is in kp.H_bar
-            } 
+            if (strategy == minisolver::InertiaStrategy::REGULARIZATION && Knot::NU <= 3) {
+                if (!fast_inverse(kp.R_bar, ws.Quu_inv, config.singular_threshold)) return false;
+                
+                kp.d.noalias() = -ws.Quu_inv * kp.r_bar; // Qu is in kp.r_bar
+                kp.K.noalias() = -ws.Quu_inv * kp.H_bar; // Qux is in kp.H_bar
+            }
             else {
-                if(!MatOps::is_pos_def(kp.R_bar)) {
-                     if (strategy == minisolver::InertiaStrategy::REGULARIZATION) return false;
+                // [General Path] "Factorize Once, Solve Twice"
+                
+                // 1. Try to factorize the matrix
+                // Use the solver in workspace, do not call is_pos_def
+                ws.llt_solver.compute(kp.R_bar); 
+                
+                // 2. Check the factorization result
+                if (!MatOps::is_llt_success(ws.llt_solver)) {
+                     
+                     // Failure handling A: Directly return false
+                     if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
+                        // Try the last chance: unified regularization
+                        for(int i=0; i<Knot::NU; ++i) kp.R_bar(i,i) += config.regularization_step; // e.g. 1e-6
+                        
+                        ws.llt_solver.compute(kp.R_bar);
+                        if (!MatOps::is_llt_success(ws.llt_solver)) return false; // Give up
+                    }
+                     
+                     // Failure handling B: Try to fix (Ignore Singular)
                      if (strategy == minisolver::InertiaStrategy::IGNORE_SINGULAR) {
                          bool fixed = false;
                          for(int i=0; i<Knot::NU; ++i) {
@@ -345,19 +415,31 @@ namespace internal {
                                  fixed = true;
                              }
                          }
-                         if (fixed && !MatOps::is_pos_def(kp.R_bar)) return false; 
+                         
+                         // If no element is less than the threshold but the factorization still fails (non-diagonal dominant等情况),
+                         // or the corrected matrix needs to be re-calculated:
+                         if (fixed) {
+                             // Re-factorize the corrected matrix (Retry Factorization)
+                             ws.llt_solver.compute(kp.R_bar);
+                             if (!MatOps::is_llt_success(ws.llt_solver)) return false;
+                         } else {
+                             // The matrix is not positive definite, but the diagonal elements are all greater than the threshold, 
+                             // indicating a structural problem that cannot be simply fixed
+                             return false; 
+                         }
                      }
                 }
                 
-                // In-place solve: neg_Qu and neg_Qux logic replacement
-                // Solve Quu * d = -Qu  => Quu * d = -kp.r_bar
-                // Solve Quu * K = -Qux => Quu * K = -kp.H_bar
-                
+                // Here llt_solver has stored the successful factorization result L
+                // Now directly solve, no need to compute again
+
+                // 3. Solve Quu * d = -Qu
                 kp.d = -kp.r_bar;
-                if(!MatOps::cholesky_solve(kp.R_bar, kp.d, kp.d)) return false; // In-place solve supported? Assumed yes for now based on MatOps
+                MatOps::solve_llt_inplace(ws.llt_solver, kp.d);
                 
+                // 4. Solve Quu * K = -Qux
                 kp.K = -kp.H_bar;
-                if(!MatOps::cholesky_solve(kp.R_bar, kp.K, kp.K)) return false;
+                MatOps::solve_llt_inplace(ws.llt_solver, kp.K);
             }
 
             Vx = kp.q_bar;

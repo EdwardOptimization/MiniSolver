@@ -12,6 +12,7 @@ namespace minisolver {
 template<typename T, int R, int C>
 class MiniMatrix {
 public:
+    using Scalar = T;
     static constexpr int Rows = R;
     static constexpr int Cols = C;
     
@@ -214,6 +215,7 @@ template<typename T, int N>
 class MiniDiagonal {
 public:
     MiniMatrix<T, N, 1> diag;
+    MiniDiagonal() = default;
     MiniDiagonal(const MiniMatrix<T, N, 1>& d) : diag(d) {}
     
     // Diag * Matrix
@@ -237,6 +239,7 @@ class MiniLLT {
     std::array<T, N> inv_diag;
     bool success;
 public:
+    MiniLLT() : success(false) {}
     MiniLLT(const MiniMatrix<T, N, N>& A) {
         compute(A);
     }

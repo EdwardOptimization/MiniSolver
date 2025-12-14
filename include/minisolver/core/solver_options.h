@@ -87,7 +87,8 @@ struct SolverConfig {
     double reg_max = 1e9;
     double reg_scale_up = 100.0; // Aggressive scaling to recover quickly
     double reg_scale_down = 2.0;
-    
+    double regularization_step = 1e-6; // Step size for regularization
+
     // Inertia Tuning
     double singular_threshold = 1e-4; // For IGNORE_SINGULAR
     double huge_penalty = 1e9;        // Penalty for frozen directions

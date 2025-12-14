@@ -30,6 +30,9 @@ using MSVec = Eigen::Matrix<T, N, 1>;
 template<typename T, int N>
 using MSDiag = Eigen::DiagonalMatrix<T, N>;
 
+template<typename MatrixType>
+using MSLLT = Eigen::LLT<MatrixType>;
+
 // Operations Abstraction
 struct MatOps {
     template<typename Derived>
@@ -112,6 +115,18 @@ struct MatOps {
     inline static void symmetrize(Eigen::MatrixBase<Derived>& m) {
         m = 0.5 * (m + m.transpose());
     }
+
+    // In-place Cholesky Solve wrapper
+    template<typename LLTType, typename Vec>
+    inline static void solve_llt_inplace(const LLTType& llt, Vec& b) {
+        b = llt.solve(b);
+    }
+
+    // Check LLT success
+    template<typename LLTType>
+    inline static bool is_llt_success(const LLTType& llt) {
+        return llt.info() == Eigen::Success;
+    }
 };
 
 }
@@ -128,10 +143,13 @@ namespace minisolver {
     template<typename T, int N>
     using MSVec = MiniMatrix<T, N, 1>;
     
-    template<typename T, int N>
-    using MSDiag = MiniDiagonal<T, N>;
+template<typename T, int N>
+using MSDiag = MiniDiagonal<T, N>;
 
-    // Operations Abstraction
+template<typename MatrixType>
+using MSLLT = MiniLLT<typename MatrixType::Scalar, MatrixType::RowsAtCompileTime>;
+
+// Operations Abstraction
     struct MatOps {
         template<typename Derived>
         inline static void setZero(Derived& m) {
@@ -212,6 +230,18 @@ namespace minisolver {
         template<typename Derived>
         inline static void symmetrize(Derived& m) {
             m.symmetrize();
+        }
+
+        // In-place Cholesky Solve wrapper
+        template<typename LLTType, typename Vec>
+        inline static void solve_llt_inplace(LLTType& llt, Vec& b) {
+            llt.solve_in_place(b);
+        }
+
+        // Check LLT success
+        template<typename LLTType>
+        inline static bool is_llt_success(const LLTType& llt) {
+            return llt.info() == 0;
         }
     };
 }
