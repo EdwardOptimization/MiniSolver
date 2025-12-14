@@ -1,0 +1,100 @@
+name: MiniSolver CI Pipeline
+
+# Trigger mechanism: When code is pushed to the main branch, or a Pull Request is submitted
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  # Allow manual trigger on GitHub Actions page
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} - ${{ matrix.backend }} - ${{ matrix.build_type }}
+    runs-on: ${{ matrix.os }}
+    
+    # Matrix strategy: Automatically combine different operating systems, backends, and build types for parallel testing
+    strategy:
+      fail-fast: false # If one task fails, do not immediately cancel other tasks
+      matrix:
+        os: [ubuntu-latest] # Can expand to windows-latest, macos-latest
+        build_type: [Release, Debug]
+        backend: [Eigen, CustomMatrix] 
+        include:
+          # Set CMake parameters for different backends
+          - backend: Eigen
+            cmake_args: "-DUSE_EIGEN=ON"
+          - backend: CustomMatrix
+            cmake_args: "-DUSE_CUSTOM_MATRIX=ON"
+
+    steps:
+    # 1. Pull code
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # 2. Prepare Python environment (for code generation)
+    - name: Set up Python 3.x
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip' # Cache pip dependencies to speed up build
+
+    # 3. Install dependencies (SymPy & System Tools)
+    - name: Install Dependencies
+      run: |
+        # Update apt and install build tools
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ make
+        
+        # Install Python dependencies
+        pip install sympy
+        
+    # 4. Execute code generation (simulate build.sh logic)
+    - name: Generate Model Code
+      run: |
+        echo ">> Generating C++ headers from Python models..."
+        # Set PYTHONPATH to find minisolver module
+        export PYTHONPATH=$PYTHONPATH:$(pwd)/python
+        
+        # Run vehicle model generation script
+        python3 examples/01_car_tutorial/generate_model.py
+        
+        # Run advanced bicycle model generation script
+        python3 examples/02_advanced_bicycle/generate_advanced_model.py
+
+    # 5. Configure CMake
+    - name: Configure CMake
+      run: |
+        # Create build directory and configure
+        # ${{ matrix.cmake_args }} will automatically switch backend definition based on current matrix task
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          ${{ matrix.cmake_args }}
+
+    # 6. Compile project
+    - name: Build Project
+      run: |
+        # Use multi-core compilation to speed up
+        cmake --build build --config ${{ matrix.build_type }} -j$(nproc)
+
+    # 7. Run unit tests
+    - name: Run Unit Tests
+      working-directory: build
+      run: |
+        echo ">> Running GTest Suite..."
+        # --output-on-failure: Output detailed logs when tests fail for debugging
+        ctest --output-on-failure -C ${{ matrix.build_type }}
+
+    # 8. (Optional) Run Benchmark to ensure performance does not drop significantly
+    # Only run in Release mode to avoid misleading performance data in Debug mode
+    - name: Run Benchmark Check
+      if: matrix.build_type == 'Release'
+      working-directory: build
+      run: |
+        if [ -f "./tools/benchmark_suite/benchmark_suite" ]; then
+          echo ">> Running Benchmark Suite..."
+          ./tools/benchmark_suite/benchmark_suite
+        else
+          echo "Benchmark executable not found, skipping."
+        fi

@@ -83,14 +83,20 @@ else()
     
     # >>> Core Version Detection Logic <<<
     if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.11")
-        message(STATUS "CMake ${CMAKE_VERSION} >= 3.11, using FetchContent to download Eigen3...")
+        message(STATUS "CMake ${CMAKE_VERSION} >= 3.11, using FetchContent for Eigen3 (Header Only Mode)...")
         include(FetchContent)
         FetchContent_Declare(Eigen3 URL ${EIGEN_URL} DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        FetchContent_MakeAvailable(Eigen3)
-        # Fix potential issue where FetchContent doesn't expose the Target
-        if(NOT TARGET Eigen3::Eigen)
-            add_library(Eigen3::Eigen INTERFACE IMPORTED)
-            target_include_directories(Eigen3::Eigen INTERFACE ${eigen3_SOURCE_DIR})
+        
+        # Only download and extract, do not configure Eigen's CMakeLists.txt
+        FetchContent_GetProperties(Eigen3)
+        if(NOT eigen3_POPULATED)
+            FetchContent_Populate(Eigen3)
+            
+            # Manually define Target to bypass all Eigen test logic
+            if(NOT TARGET Eigen3::Eigen)
+                add_library(Eigen3::Eigen INTERFACE IMPORTED)
+                target_include_directories(Eigen3::Eigen INTERFACE "${eigen3_SOURCE_DIR}")
+            endif()
         endif()
     else()
         message(STATUS "CMake ${CMAKE_VERSION} < 3.11, using manual fallback mode to download Eigen3...")
@@ -106,7 +112,11 @@ endif()
 set(GTEST_URL "https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip")
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
-# >>> Core Version Detection Logic <<<
+# GTest is not a pure header-only library, we need to compile it, so keep MakeAvailable (or add_subdirectory)
+# But we need to explicitly disable its install and test options
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.11")
     message(STATUS "CMake >= 3.11, using FetchContent to download GoogleTest...")
     include(FetchContent)
