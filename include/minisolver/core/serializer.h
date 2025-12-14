@@ -70,12 +70,12 @@ public:
 
         // 2. Copy Trajectory (Primal + Dual) & Compute Cost
         state.trajectory.resize(solver.N + 1);
-        const auto& active_traj = solver.trajectory.active();
+        auto* active_state = solver.trajectory.get_active_state();
         
         state.total_cost = 0.0;
 
         for(int k=0; k<=solver.N; ++k) {
-            const auto& kp = active_traj[k];
+            const auto& kp = active_state[k];
             auto& data = state.trajectory[k];
 
             state.total_cost += kp.cost;
@@ -226,13 +226,13 @@ public:
 
         in.read((char*)solver.dt_traj.data(), sizeof(double) * N);
 
-        auto& traj = solver.trajectory.active();
+        auto* state = solver.trajectory.get_active_state();
         for(int k=0; k<=N; ++k) {
-            in.read((char*)traj[k].x.data(), sizeof(double) * NX);
-            in.read((char*)traj[k].u.data(), sizeof(double) * NU);
-            in.read((char*)traj[k].p.data(), sizeof(double) * NP);
-            in.read((char*)traj[k].s.data(), sizeof(double) * NC);
-            in.read((char*)traj[k].lam.data(), sizeof(double) * NC);
+            in.read((char*)state[k].x.data(), sizeof(double) * NX);
+            in.read((char*)state[k].u.data(), sizeof(double) * NU);
+            in.read((char*)state[k].p.data(), sizeof(double) * NP);
+            in.read((char*)state[k].s.data(), sizeof(double) * NC);
+            in.read((char*)state[k].lam.data(), sizeof(double) * NC);
         }
         
         std::cout << "[Serializer] Case loaded successfully.\n";
