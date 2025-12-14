@@ -79,7 +79,7 @@ public:
 
     // Components
     // Pass Model type to RiccatiSolver for static constraint info access
-    std::unique_ptr<RiccatiSolver<TrajArray, Model>> linear_solver;
+    std::unique_ptr<RiccatiSolver<TrajectoryType, Model>> linear_solver;
     std::unique_ptr<LineSearchStrategy<Model, MAX_N>> line_search;
 
     int N; 
@@ -116,7 +116,7 @@ public:
         dt_traj.fill(conf.default_dt);
         
         // Initialize Components with Model type
-        linear_solver = std::make_unique<RiccatiSolver<TrajArray, Model>>();
+        linear_solver = std::make_unique<RiccatiSolver<TrajectoryType, Model>>();
         
         if (config.line_search_type == LineSearchType::MERIT) {
             line_search = std::make_unique<MeritLineSearch<Model, MAX_N>>();
@@ -462,22 +462,22 @@ public:
         double total_cost = 0.0;
         double max_dual_inf = 0.0;
         double min_slack = 1e9;
-        auto& traj = trajectory.active();
+        auto* active_state = trajectory.get_active_state();
+        auto* workspace = trajectory.get_workspace();
 
         // Use helper for Primal Inf
-        double max_prim_inf = compute_max_violation(traj);
+        double max_prim_inf = compute_max_violation(trajectory);
 
         for(int k=0; k<=N; ++k) {
-            const auto& kp = traj[k];
-            total_cost += kp.cost;
+            total_cost += active_state[k].cost;
             for(int i=0; i<NC; ++i) {
-                if(kp.s(i) < min_slack) min_slack = kp.s(i);
+                if(active_state[k].s(i) < min_slack) min_slack = active_state[k].s(i);
             }
             // q_bar contains Vx (cost-to-go gradient / dynamics multiplier).
             // It is NOT a residual and should not be zero.
             // Only r_bar (control gradient) should be zero.
-            double g_norm = 0.0; // MatOps::norm_inf(kp.q_bar);
-            double r_norm = MatOps::norm_inf(kp.r_bar);
+            double g_norm = 0.0; // MatOps::norm_inf(workspace[k].q_bar);
+            double r_norm = MatOps::norm_inf(workspace[k].r_bar);
             double dual = std::max(g_norm, r_norm);
             if(dual > max_dual_inf) max_dual_inf = dual;
         }
@@ -501,20 +501,22 @@ public:
         MLOG_INFO(ss.str());
     }
 
-    bool has_nans(const typename TrajectoryType::TrajArray& t) {
+    bool has_nans(const TrajectoryType& t) {
         // Checking all variables is expensive (O(N * (NX+NU+NC))).
         // Instead, we only check the updates (dx, du, ds, dlam) and cost/constraints 
         // which are the sources of NaNs.
+        auto* state = t.get_active_state();
+        auto* workspace = t.get_workspace();
+        
         for(int k=0; k<=N; ++k) {
-            const auto& kp = t[k];
             // Check Search Directions (Most likely place for NaN from Linear Solve)
-            if(!kp.dx.allFinite()) return true;
-            if(!kp.du.allFinite()) return true;
-            if(!kp.ds.allFinite()) return true;
-            if(!kp.dlam.allFinite()) return true;
+            if(!workspace[k].dx.allFinite()) return true;
+            if(!workspace[k].du.allFinite()) return true;
+            if(!workspace[k].ds.allFinite()) return true;
+            if(!workspace[k].dlam.allFinite()) return true;
             
             // Check key scalar values
-            if(!std::isfinite(kp.cost)) return true;
+            if(!std::isfinite(state[k].cost)) return true;
         }
         return false;
     }
@@ -775,8 +777,8 @@ public:
              std::copy(traj.begin(), traj.end(), backup.begin());
         }
         
-        // Mehrotra Predictor-Corrector Logic
-        if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
+        // Mehrotra Predictor-Corrector Logic - TODO: Re-implement with new architecture
+        if (false && config.barrier_strategy == BarrierStrategy::MEHROTRA) {
             // 1. Affine Step (Predictor)
             // Reuse candidate trajectory storage for affine step results
             trajectory.prepare_candidate();
@@ -1043,10 +1045,10 @@ public:
     }
 
     void rollout_dynamics() {
-        auto& traj = trajectory.active();
+        auto* state = trajectory.get_active_state();
         for(int k=0; k<N; ++k) {
             double current_dt = dt_traj[k];
-            traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator);
+            state[k+1].x = Model::integrate(state[k].x, state[k].u, state[k].p, current_dt, config.integrator);
         }
     }
 
@@ -1070,9 +1072,9 @@ private:
         
         // 安全检查：如果 Warm Start 数据损坏，强制重置
         if (is_warm_started) {
-             auto& traj = trajectory.active();
+             auto* state = trajectory.get_active_state();
              for(int k=0; k<=N; ++k) {
-                 if (traj[k].s.minCoeff() <= 0 || traj[k].lam.minCoeff() <= 0 || has_nans(traj)) {
+                 if (state[k].s.minCoeff() <= 0 || state[k].lam.minCoeff() <= 0 || has_nans(trajectory)) {
                      need_init = true;
                      break;
                  }
@@ -1080,13 +1082,14 @@ private:
         }
         is_warm_started = false;
         if (need_init) {
-            auto& traj = trajectory.active();
+            auto* state = trajectory.get_active_state();
+            auto* model = trajectory.get_model_data();
             for(int k=0; k<=N; ++k) {
                  double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                 Model::compute(traj[k], config.integrator, current_dt);
+                 Model::compute(state[k], model[k], config.integrator, current_dt);
                  
                  for(int i=0; i<NC; ++i) {
-                     double g = traj[k].g_val(i);
+                     double g = state[k].g_val(i);
                      double w = 0.0;
                      int type = 0;
                      if constexpr (NC > 0) {
@@ -1231,10 +1234,10 @@ private:
 
 private:
     // helper function: calculate the maximum constraint violation of the current trajectory
-    double compute_max_violation(const TrajArray& traj) const {
+    double compute_max_violation(const TrajectoryType& traj) const {
         double max_viol = 0.0;
+        auto* state = traj.get_active_state();
         for(int k=0; k<=N; ++k) {
-            const auto& kp = traj[k];
             for(int i=0; i<NC; ++i) {
                 double viol = 0.0;
                 
@@ -1249,11 +1252,11 @@ private:
                 }
                 // unified violation calculation logic
                 if (type == 1 && w > 1e-6) { // L1
-                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                     viol = std::abs(state[k].g_val(i) + state[k].s(i) - state[k].soft_s(i));
                 } else if (type == 2 && w > 1e-6) { // L2
-                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i)/w);
+                     viol = std::abs(state[k].g_val(i) + state[k].s(i) - state[k].lam(i)/w);
                 } else { // Hard
-                     viol = std::abs(kp.g_val(i) + kp.s(i));
+                     viol = std::abs(state[k].g_val(i) + state[k].s(i));
                 }
                 if(viol > max_viol) max_viol = viol;
             }
