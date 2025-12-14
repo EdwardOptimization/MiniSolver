@@ -527,24 +527,26 @@ public:
         mu = config.restoration_mu; 
         reg = config.restoration_reg; 
         
-        auto& traj = trajectory.active();
+        auto* active_state = trajectory.get_active_state();
+        auto* model_data = trajectory.get_model_data();
         bool success = false;
         
         for(int r_iter=0; r_iter < config.max_restoration_iters; ++r_iter) { 
             for(int k=0; k<=N; ++k) {
                 double current_dt = (k < N) ? dt_traj[k] : 0.0; 
-                Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                Model::compute_constraints(traj[k]);
+                Model::compute_dynamics(active_state[k], model_data[k], config.integrator, current_dt);
+                Model::compute_constraints(active_state[k], model_data[k]);
                 
-                traj[k].Q.setIdentity(); 
-                traj[k].q.setZero();
+                // NEW: Write to model_data
+                model_data[k].Q.setIdentity(); 
+                model_data[k].q.setZero();
                 
                 if (k < N) {
-                    traj[k].R.setIdentity(); 
-                    traj[k].r.setZero();
+                    model_data[k].R.setIdentity(); 
+                    model_data[k].r.setZero();
                 } else {
-                    traj[k].R.setZero();
-                    traj[k].r.setZero();
+                    model_data[k].R.setZero();
+                    model_data[k].r.setZero();
                 }
             }
             
@@ -555,38 +557,40 @@ public:
             if (config.barrier_strategy != BarrierStrategy::MEHROTRA) { 
                  double rho = 1000.0; // Penalty weight from ALADIN concepts
                  for(int k=0; k<=N; ++k) {
-                     auto& kp = traj[k];
+                     auto& md = model_data[k];
                      
                      // Q += rho * C^T * C
-                     kp.Q.noalias() += rho * kp.C.transpose() * kp.C;
+                     md.Q.noalias() += rho * md.C.transpose() * md.C;
                      
                      // R += rho * D^T * D
-                     kp.R.noalias() += rho * kp.D.transpose() * kp.D;
+                     md.R.noalias() += rho * md.D.transpose() * md.D;
                      
                      // H += rho * D^T * C (Cross term)
-                     kp.H.noalias() += rho * kp.D.transpose() * kp.C;
+                     md.H.noalias() += rho * md.D.transpose() * md.C;
                      
                      // q += rho * C^T * g_val
                      // Note: Restoration usually ignores 's' in the quadratic penalty approximation 
                      // or treats it as fixed residuals g_val.
-                     kp.q.noalias() += rho * kp.C.transpose() * kp.g_val;
+                     md.q.noalias() += rho * md.C.transpose() * active_state[k].g_val;
                      
                      // r += rho * D^T * g_val
-                     kp.r.noalias() += rho * kp.D.transpose() * kp.g_val;
+                     md.r.noalias() += rho * md.D.transpose() * active_state[k].g_val;
                  }
             }
 
-            if(!linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config)) {
+            auto* workspace = trajectory.get_workspace();
+            
+            if(!linear_solver->solve(trajectory, N, mu, reg, config.inertia_strategy, config)) {
                 break;
             }
             
             double alpha = 1.0;
             for(int k=0; k<=N; ++k) {
                 for(int i=0; i<NC; ++i) {
-                    double s = traj[k].s(i);
-                    double ds = traj[k].ds(i);
-                    double lam = traj[k].lam(i);
-                    double dlam = traj[k].dlam(i);
+                    double s = active_state[k].s(i);
+                    double ds = workspace[k].ds(i);
+                    double lam = active_state[k].lam(i);
+                    double dlam = workspace[k].dlam(i);
                     if (ds < 0) alpha = std::min(alpha, -config.restoration_alpha * s / ds);
                     if (dlam < 0) alpha = std::min(alpha, -config.restoration_alpha * lam / dlam);
                 }
@@ -597,10 +601,10 @@ public:
             }
 
             for(int k=0; k<=N; ++k) {
-                traj[k].x += alpha * traj[k].dx;
-                traj[k].u += alpha * traj[k].du;
-                traj[k].s += alpha * traj[k].ds;
-                traj[k].lam += alpha * traj[k].dlam;
+                active_state[k].x += alpha * workspace[k].dx;
+                active_state[k].u += alpha * workspace[k].du;
+                active_state[k].s += alpha * workspace[k].ds;
+                active_state[k].lam += alpha * workspace[k].dlam;
             }
             // rollout_dynamics(); // Don't force rollout in restoration. Allow defects to be handled by solver.
         }
@@ -610,11 +614,11 @@ public:
         for(int k=0; k<=N; ++k) {
              for(int i=0; i<NC; ++i) {
                   // Ensure s is positive
-                  if(traj[k].s(i) < 1e-9) traj[k].s(i) = 1e-9;
+                  if(active_state[k].s(i) < 1e-9) active_state[k].s(i) = 1e-9;
                   
                   // Preserve dual info from restoration if valuable, but ensure complementarity lower bound
-                  double reset_val = saved_mu / traj[k].s(i);
-                  traj[k].lam(i) = std::max(traj[k].lam(i), reset_val);
+                  double reset_val = saved_mu / active_state[k].s(i);
+                  active_state[k].lam(i) = std::max(active_state[k].lam(i), reset_val);
              }
         }
 
@@ -688,7 +692,6 @@ public:
 
     SolverStatus step() {
         current_iter++;
-        auto& traj = trajectory.active();
         
         timer.start("Derivatives");
         double max_kkt_error = 0.0;
@@ -697,35 +700,40 @@ public:
         double total_gap = 0.0;
         int total_con = 0;
 
+        // NEW: Get pointers to three layers
+        auto* active_state = trajectory.get_active_state();
+        auto* model_data = trajectory.get_model_data();
+        auto* workspace = trajectory.get_workspace();
+        
         for(int k=0; k<=N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
             
-            // Conditionally use GN or Exact compute
+            // NEW: Pass state and model separately
             if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                 Model::compute_cost_gn(traj[k]);
-                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                 Model::compute_constraints(traj[k]);
+                 Model::compute_cost_gn(active_state[k], model_data[k]);
+                 Model::compute_dynamics(active_state[k], model_data[k], config.integrator, current_dt);
+                 Model::compute_constraints(active_state[k], model_data[k]);
             } else {
-                 Model::compute_cost_exact(traj[k]);
-                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                 Model::compute_constraints(traj[k]);
+                 Model::compute_cost_exact(active_state[k], model_data[k]);
+                 Model::compute_dynamics(active_state[k], model_data[k], config.integrator, current_dt);
+                 Model::compute_constraints(active_state[k], model_data[k]);
             }
             
             for(int i=0; i<NC; ++i) {
-                double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu); 
+                double comp = std::abs(active_state[k].s(i) * active_state[k].lam(i) - mu); 
                 if(comp > max_kkt_error) max_kkt_error = comp;
             }
-            total_gap += traj[k].s.dot(traj[k].lam);
+            total_gap += active_state[k].s.dot(active_state[k].lam);
             total_con += NC;
             
             // Approximate Dual Inf from r_bar (Control Gradient Stationarity)
             // Note: q_bar is Cost-to-Go gradient (lambda), which is NOT zero in general.
-            double r_norm = MatOps::norm_inf(traj[k].r_bar);
+            double r_norm = MatOps::norm_inf(workspace[k].r_bar);
             if(r_norm > max_dual_inf) max_dual_inf = r_norm;
         }
         
         // Use helper for Primal Inf
-        max_prim_inf = compute_max_violation(traj);
+        max_prim_inf = compute_max_violation(trajectory);
         
         timer.stop();
         
@@ -733,7 +741,7 @@ public:
         if(check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) return SolverStatus::OPTIMAL;
 
         // Check for Numerical Instability (NaN/Inf)
-        if (has_nans(traj)) {
+        if (has_nans(trajectory)) {
              if (config.print_level >= PrintLevel::INFO) 
                 MLOG_ERROR("Numerical Error: NaNs detected in derivatives or state.");
              return SolverStatus::NUMERICAL_ERROR;
@@ -1164,7 +1172,8 @@ private:
         // [Fix 2 Logic] 强制刷新导数
         // 无论是因为收敛还是因为耗尽步数退出，我们都重新计算一次精确的残差，
         // 以便做出最公正的最终评判。
-        auto& traj = trajectory.active();
+        auto* active_state = trajectory.get_active_state();
+        auto* model_data = trajectory.get_model_data();
         double max_kkt_error = 0.0;
         double max_dual_inf = 0.0;
         auto& riccati_workspace = linear_solver->workspace;
@@ -1173,13 +1182,13 @@ private:
              
              // 1. Recompute Primal/Dual properties
              if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                 Model::compute_cost_gn(traj[k]);
-                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                 Model::compute_constraints(traj[k]);
+                 Model::compute_cost_gn(active_state[k], model_data[k]);
+                 Model::compute_dynamics(active_state[k], model_data[k], config.integrator, current_dt);
+                 Model::compute_constraints(active_state[k], model_data[k]);
              } else {
-                 Model::compute_cost_exact(traj[k]);
-                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                 Model::compute_constraints(traj[k]);
+                 Model::compute_cost_exact(active_state[k], model_data[k]);
+                 Model::compute_dynamics(active_state[k], model_data[k], config.integrator, current_dt);
+                 Model::compute_constraints(active_state[k], model_data[k]);
              }
              
              // 2. Recompute Barrier Gradients (check riccati.h)
