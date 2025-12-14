@@ -236,19 +236,21 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     
     std::vector<std::pair<double, double>> filter;
 
-    std::pair<double, double> compute_metrics(const TrajArray& t, int N, double mu, const SolverConfig& config) {
+    std::pair<double, double> compute_metrics(const TrajectoryType& traj, int N, double mu, const SolverConfig& config) {
         double theta = 0.0; 
         double phi = 0.0;   
         const int NC = Model::NC;
         const int NX = Model::NX;
         
+        auto* state = traj.get_active_state();
+        auto* model = traj.get_model_data();
+        
         for(int k=0; k<=N; ++k) {
-            const auto& kp = t[k];
             
             // Objective (Phi) Calculation
-            phi += kp.cost;
+            phi += state[k].cost;
             for(int i=0; i<NC; ++i) {
-                if(kp.s(i) > config.min_barrier_slack) phi -= mu * std::log(kp.s(i));
+                if(state[k].s(i) > config.min_barrier_slack) phi -= mu * std::log(state[k].s(i));
                 else phi += config.barrier_inf_cost;
                 
                 // L1 Soft Constraint: Dual Barrier
@@ -264,24 +266,24 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 // L1 Soft Constraint
                 if (type == 1 && w > 1e-6) {
                     // Barrier terms
-                    if (kp.soft_s(i) > config.min_barrier_slack)
-                        phi -= mu * std::log(kp.soft_s(i));
+                    if (state[k].soft_s(i) > config.min_barrier_slack)
+                        phi -= mu * std::log(state[k].soft_s(i));
                     else
                         phi += config.barrier_inf_cost;
 
-                    if (w - kp.lam(i) > 1e-9)
-                        phi -= mu * std::log(w - kp.lam(i));
+                    if (w - state[k].lam(i) > 1e-9)
+                        phi -= mu * std::log(w - state[k].lam(i));
                     else 
                         phi += config.barrier_inf_cost;
 
                     // L1 Linear Penalty
-                    phi += w * kp.soft_s(i);
+                    phi += w * state[k].soft_s(i);
                 }
                 
                 // L2 Soft Constraint
                 else if (type == 2 && w > 1e-6) {
                     // L2 Quadratic Penalty: 0.5 * w * (g + s)^2
-                    double viol = kp.g_val(i) + kp.s(i);
+                    double viol = state[k].g_val(i) + state[k].s(i);
                     phi += 0.5 * w * viol * viol;
                 }
             }
@@ -300,7 +302,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 
                 if (type == 1 && w > 1e-6) {
                     // L1: Check extended system residual
-                    theta += std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                    theta += std::abs(state[k].g_val(i) + state[k].s(i) - state[k].soft_s(i));
                 } 
                 else if (type == 2 && w > 1e-6) {
                     // L2: Soft constraint means no hard infeasibility.
@@ -314,13 +316,13 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
                 else {
                     // Hard
-                    theta += std::abs(kp.g_val(i) + kp.s(i));
+                    theta += std::abs(state[k].g_val(i) + state[k].s(i));
                 }
             }
             
             // Dynamic Defect
             if (k < N) {
-                MSVec<double, NX> defect = t[k+1].x - kp.f_resid;
+                MSVec<double, NX> defect = state[k+1].x - model[k].f_resid;
                 for(int j=0; j<NX; ++j) {
                     theta += std::abs(defect(j));
                 }
@@ -423,6 +425,7 @@ public:
                 accepted = true;
             }
             
+#if 0 // DISABLED: SOC
             // SOC Logic
             if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0 && alpha > config.soc_trigger_alpha) {
                 if (config.print_level >= PrintLevel::DEBUG) 
