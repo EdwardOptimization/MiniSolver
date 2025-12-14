@@ -86,72 +86,72 @@ public:
         // TODO: Reimplement with new split architecture
         return true;  // Temporarily disabled
         
-        if (!config.enable_iterative_refinement) return true;
-        
-        // [FIX] Implemented Linear Rollout Refinement (Defect Correction)
-        // This pass enforces strict dynamic feasibility of the linear solution:
-        // dx_{k+1} = A dx_k + B du_k + defect
-        // It propagates the calculation error accumulated during the backward/forward Riccati pass.
-        
-        MSVec<double, Model::NX> delta_x;
-        delta_x.setZero(); // Initial state correction is zero (x0 fixed)
-        
-        MSVec<double, Model::NU> delta_u;
-        
-        // Use workspace (original_system) to access A, B matrices
-        const TrajArray& sys = original_system;
-        
-        double max_defect = 0.0;
-        
-        for(int k=0; k<N; ++k) {
-            // 1. Compute Control Correction via Feedback
-            // du_new = K * (dx + delta_x) + d - du_old
-            // Since du_old = K * dx + d, then:
-            // delta_u = K * delta_x
-            delta_u.noalias() = traj[k].K * delta_x;
-            
-            // 2. Compute Dynamic Defect of the current solution
-            // expected_next = A * dx + B * du + (f_resid - x_next_base)
-            // defect = expected_next - dx_next_actual
-            
-            // Reconstruct the affine term (linearization defect)
-            // In Riccati: defect_term = sys[k].f_resid - sys[k+1].x;
-            MSVec<double, Model::NX> linearization_defect = sys[k].f_resid - sys[k+1].x;
-            
-            MSVec<double, Model::NX> predicted_dx_next;
-            predicted_dx_next.noalias() = sys[k].A * traj[k].dx;
-            predicted_dx_next.noalias() += sys[k].B * traj[k].du;
-            predicted_dx_next += linearization_defect;
-            
-            MSVec<double, Model::NX> error = predicted_dx_next - traj[k+1].dx;
-            // [FIX] Use MatOps::norm_inf
-            double err_norm = MatOps::norm_inf(error);
-            if(err_norm > max_defect) max_defect = err_norm;
-            
-            // 3. Propagate Correction
-            // delta_x_{k+1} = A * delta_x + B * delta_u + error
-            // This ensures (dx + delta_x)_{k+1} matches the dynamics of (dx+delta_x)_k
-            MSVec<double, Model::NX> delta_x_next;
-            delta_x_next.noalias() = sys[k].A * delta_x;
-            delta_x_next.noalias() += sys[k].B * delta_u;
-            delta_x_next += error;
-            
-            // 4. Apply to Trajectory
-            traj[k].dx += delta_x;
-            traj[k].du += delta_u;
-            
-            delta_x = delta_x_next;
-        }
-        
-        // Apply last state correction
-        traj[N].dx += delta_x;
-        
-        if (config.print_level >= PrintLevel::DEBUG) {
-            MLOG_DEBUG("Iterative Refinement: Max dynamic defect corrected = " << max_defect);
-        }
-
-        return true; 
-    }
-};
+// DISABLED_REFINE:         if (!config.enable_iterative_refinement) return true;
+// DISABLED_REFINE:         
+// DISABLED_REFINE:         // [FIX] Implemented Linear Rollout Refinement (Defect Correction)
+// DISABLED_REFINE:         // This pass enforces strict dynamic feasibility of the linear solution:
+// DISABLED_REFINE:         // dx_{k+1} = A dx_k + B du_k + defect
+// DISABLED_REFINE:         // It propagates the calculation error accumulated during the backward/forward Riccati pass.
+// DISABLED_REFINE:         
+// DISABLED_REFINE:         MSVec<double, Model::NX> delta_x;
+// DISABLED_REFINE:         delta_x.setZero(); // Initial state correction is zero (x0 fixed)
+// DISABLED_REFINE:         
+// DISABLED_REFINE:         MSVec<double, Model::NU> delta_u;
+// DISABLED_REFINE:         
+// DISABLED_REFINE:         // Use workspace (original_system) to access A, B matrices
+// DISABLED_REFINE:         const TrajArray& sys = original_system;
+// DISABLED_REFINE:         
+// DISABLED_REFINE:         double max_defect = 0.0;
+// DISABLED_REFINE:         
+// DISABLED_REFINE:         for(int k=0; k<N; ++k) {
+// DISABLED_REFINE:             // 1. Compute Control Correction via Feedback
+// DISABLED_REFINE:             // du_new = K * (dx + delta_x) + d - du_old
+// DISABLED_REFINE:             // Since du_old = K * dx + d, then:
+// DISABLED_REFINE:             // delta_u = K * delta_x
+// DISABLED_REFINE:             delta_u.noalias() = traj[k].K * delta_x;
+// DISABLED_REFINE:             
+// DISABLED_REFINE:             // 2. Compute Dynamic Defect of the current solution
+// DISABLED_REFINE:             // expected_next = A * dx + B * du + (f_resid - x_next_base)
+// DISABLED_REFINE:             // defect = expected_next - dx_next_actual
+// DISABLED_REFINE:             
+// DISABLED_REFINE:             // Reconstruct the affine term (linearization defect)
+// DISABLED_REFINE:             // In Riccati: defect_term = sys[k].f_resid - sys[k+1].x;
+// DISABLED_REFINE:             MSVec<double, Model::NX> linearization_defect = sys[k].f_resid - sys[k+1].x;
+// DISABLED_REFINE:             
+// DISABLED_REFINE:             MSVec<double, Model::NX> predicted_dx_next;
+// DISABLED_REFINE:             predicted_dx_next.noalias() = sys[k].A * traj[k].dx;
+// DISABLED_REFINE:             predicted_dx_next.noalias() += sys[k].B * traj[k].du;
+// DISABLED_REFINE:             predicted_dx_next += linearization_defect;
+// DISABLED_REFINE:             
+// DISABLED_REFINE:             MSVec<double, Model::NX> error = predicted_dx_next - traj[k+1].dx;
+// DISABLED_REFINE:             // [FIX] Use MatOps::norm_inf
+// DISABLED_REFINE:             double err_norm = MatOps::norm_inf(error);
+// DISABLED_REFINE:             if(err_norm > max_defect) max_defect = err_norm;
+// DISABLED_REFINE:             
+// DISABLED_REFINE:             // 3. Propagate Correction
+// DISABLED_REFINE:             // delta_x_{k+1} = A * delta_x + B * delta_u + error
+// DISABLED_REFINE:             // This ensures (dx + delta_x)_{k+1} matches the dynamics of (dx+delta_x)_k
+// DISABLED_REFINE:             MSVec<double, Model::NX> delta_x_next;
+// DISABLED_REFINE:             delta_x_next.noalias() = sys[k].A * delta_x;
+// DISABLED_REFINE:             delta_x_next.noalias() += sys[k].B * delta_u;
+// DISABLED_REFINE:             delta_x_next += error;
+// DISABLED_REFINE:             
+// DISABLED_REFINE:             // 4. Apply to Trajectory
+// DISABLED_REFINE:             traj[k].dx += delta_x;
+// DISABLED_REFINE:             traj[k].du += delta_u;
+// DISABLED_REFINE:             
+// DISABLED_REFINE:             delta_x = delta_x_next;
+// DISABLED_REFINE:         }
+// DISABLED_REFINE:         
+// DISABLED_REFINE:         // Apply last state correction
+// DISABLED_REFINE:         traj[N].dx += delta_x;
+// DISABLED_REFINE:         
+// DISABLED_REFINE:         if (config.print_level >= PrintLevel::DEBUG) {
+// DISABLED_REFINE:             MLOG_DEBUG("Iterative Refinement: Max dynamic defect corrected = " << max_defect);
+// DISABLED_REFINE:         }
+// DISABLED_REFINE: 
+// DISABLED_REFINE:         return true; 
+// DISABLED_REFINE:     }
+// DISABLED_REFINE: };
 
 }

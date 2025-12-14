@@ -771,13 +771,13 @@ public:
         // to the candidate buffer. This allows us to access the original matrices (Q, R, A, B...)
         // during the refinement step, even after the Riccati solver overwrites them in 'active'.
         // bool do_refinement = config.enable_iterative_refinement && (current_iter % config.max_refinement_steps == 0); // Example trigger
-        if (config.enable_iterative_refinement) {
-             trajectory.prepare_candidate();
-             auto& backup = trajectory.candidate();
-             // Copy active to candidate. Since TrajArray is std::array<Knot>, this is a contiguous copy.
-             // But Knot contains Eigen matrices. std::copy should handle it correctly via assignment operators.
-             std::copy(traj.begin(), traj.end(), backup.begin());
-        }
+// DISABLED_REFINE:         if (config.enable_iterative_refinement) {
+// DISABLED_REFINE:              trajectory.prepare_candidate();
+// DISABLED_REFINE:              auto& backup = trajectory.candidate();
+// DISABLED_REFINE:              // Copy active to candidate. Since TrajArray is std::array<Knot>, this is a contiguous copy.
+// DISABLED_REFINE:              // But Knot contains Eigen matrices. std::copy should handle it correctly via assignment operators.
+// DISABLED_REFINE:              std::copy(traj.begin(), traj.end(), backup.begin());
+// DISABLED_REFINE:         }
         
         // Mehrotra Predictor-Corrector Logic - TODO: Re-implement with new architecture
         if (false && config.barrier_strategy == BarrierStrategy::MEHROTRA) {
@@ -1030,7 +1030,7 @@ public:
             double max_dx = 0.0;
             for(int k=0; k<=N; ++k) {
                 // Use MatOps::norm_inf to support both Eigen and MiniMatrix
-                double dx_norm = MatOps::norm_inf(trajectory.active()[k].dx);
+                double dx_norm = MatOps::norm_inf(trajectory.get_workspace()[k].dx);
                 if (dx_norm > max_dx) max_dx = dx_norm;
             }
             // Use unscaled Newton step (max_dx) to check stationarity.
@@ -1179,6 +1179,7 @@ private:
         // 以便做出最公正的最终评判。
         auto* active_state = trajectory.get_active_state();
         auto* model_data = trajectory.get_model_data();
+        auto* workspace = trajectory.get_workspace();
         double max_kkt_error = 0.0;
         double max_dual_inf = 0.0;
         auto& riccati_workspace = linear_solver->workspace;
@@ -1197,7 +1198,7 @@ private:
              }
              
              // 2. Recompute Barrier Gradients (check riccati.h)
-             compute_barrier_derivatives<Knot, Model>(traj[k], mu, config, riccati_workspace, nullptr, nullptr);
+// TODO:              compute_barrier_derivatives<Knot, Model>(traj[k], mu, config, riccati_workspace, nullptr, nullptr);
              // 3. Check NaNs
              for(int i=0; i<NC; ++i) {
                  if (std::isnan(active_state[k].g_val(i)) || std::isnan(active_state[k].s(i))) 
@@ -1211,7 +1212,7 @@ private:
                 if(comp > max_kkt_error) max_kkt_error = comp;
              }
         }
-        double max_viol = compute_max_violation(traj);
+        double max_viol = compute_max_violation(trajectory);
         // [最终评级]
         
         // Level 1: SOLVED (Optimal)

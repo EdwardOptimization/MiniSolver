@@ -41,9 +41,8 @@ public:
     
     int N; // Current valid horizon
 
-    Trajectory(int initial_N) : N(initial_N) {
-        active_state = &state_A[0];
-        candidate_state = &state_B[0];
+    Trajectory(int initial_N) : N(initial_N), active_state(&state_A[0]), candidate_state(&state_B[0]) {
+        // Pointers initialized in member initializer list
         
         // Initialize all memory
         for(int i = 0; i <= MAX_N; ++i) {

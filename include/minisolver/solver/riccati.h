@@ -63,11 +63,11 @@ namespace internal {
     }
 
     // NEW: Split architecture version
-    template<typename State, typename Model, typename Workspace, typename ModelType>
+    template<typename State, typename Model, typename Workspace, typename ModelType, typename RWS>
     void compute_barrier_derivatives_split(
         State& state, Model& model, Workspace& workspace,
         double mu, const minisolver::SolverConfig& config,
-        RiccatiWorkspace<typename ModelType::KnotType>& /*ws*/) {
+        RWS& /*ws*/) {
         
         constexpr int NC = ModelType::NC;
         constexpr int NX = ModelType::NX;
@@ -528,6 +528,7 @@ namespace internal {
             
             // TODO: Recover dual search directions (simplified for now)
             // Just compute simple ds and dlam
+            constexpr int NC = Knot::NC;
             for(int i=0; i<NC; ++i) {
                 workspace[k].ds(i) = -state[k].g_val(i) - workspace[k].dx.dot(model[k].C.row(i)) - workspace[k].du.dot(model[k].D.row(i));
                 workspace[k].dlam(i) = (mu - state[k].s(i) * state[k].lam(i)) / state[k].s(i) - state[k].lam(i) * workspace[k].ds(i) / state[k].s(i);
