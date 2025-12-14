@@ -75,7 +75,7 @@ struct SolverConfig {
     BarrierStrategy barrier_strategy = BarrierStrategy::ADAPTIVE; 
     
     double mu_init = 1e-1;      
-    double mu_min = 1e-6;       // Tighter tolerance for high precision
+    double mu_final = 1e-6;       // Tighter tolerance for high precision
     double mu_linear_decrease_factor = 0.2; 
     double barrier_tolerance_factor = 10.0; 
     double mu_safety_margin = 0.1; 

@@ -72,7 +72,7 @@ TEST(FeaturesTest, CostStagnationTermination) {
     config.tol_grad = 1e-12;
     config.tol_con = 1e-12;
     config.tol_mu = 1e-12;
-    config.mu_min = 1e-9;
+    config.mu_final = 1e-9;
     
     // Set Cost Tolerance larger than actual change
     config.tol_cost = 1e-5; 

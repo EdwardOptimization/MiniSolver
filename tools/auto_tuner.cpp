@@ -94,7 +94,7 @@ SolverConfig to_solver_config(const TunableParams& p) {
     c.default_dt = 0.1;
     
     // Reasonable defaults for others
-    c.mu_min = 1e-6;
+    c.mu_final = 1e-6;
     c.reg_min = 1e-9;
     
     return c;

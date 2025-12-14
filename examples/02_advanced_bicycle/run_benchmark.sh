@@ -17,9 +17,6 @@ g++ -O3 -std=c++17 -march=native -ffast-math \
     "$SCRIPT_DIR/advanced_benchmark.cpp" \
     -o "$SCRIPT_DIR/build/benchmark_fused"
 
-echo ">> Running Fused Riccati Benchmark..."
-"$SCRIPT_DIR/build/benchmark_fused"
-
 echo ""
 echo ">> Regenerating Model with Fused Riccati DISABLED..."
 cd "$SCRIPT_DIR"
@@ -32,8 +29,18 @@ g++ -O3 -std=c++17 -march=native -ffast-math \
     "$SCRIPT_DIR/advanced_benchmark.cpp" \
     -o "$SCRIPT_DIR/build/benchmark_standard"
 
+
+echo ">> Running Fused Riccati Benchmark..."
+"$SCRIPT_DIR/build/benchmark_fused"
+
 echo ">> Running Standard Benchmark..."
 "$SCRIPT_DIR/build/benchmark_standard"
+
+echo ">> Running Standard Benchmark..."
+"$SCRIPT_DIR/build/benchmark_standard"
+
+echo ">> Running Fused Riccati Benchmark..."
+"$SCRIPT_DIR/build/benchmark_fused"
 
 echo ""
 echo ">> Restoring Default Model (Fused Riccati ENABLED)..."

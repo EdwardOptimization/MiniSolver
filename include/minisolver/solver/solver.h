@@ -393,7 +393,7 @@ public:
         // 3. dual gradient is satisfied (Stationary)
         // 4. complementarity is satisfied (Complementarity): s*lam is close to mu
         
-        bool mu_converged = (mu <= config.mu_min);
+        bool mu_converged = (mu <= config.mu_final);
         bool primal_ok = (max_viol <= config.tol_con);
         bool dual_ok = (max_dual <= config.tol_dual);
         
@@ -408,14 +408,14 @@ public:
         switch(config.barrier_strategy) {
             case BarrierStrategy::MONOTONE:
                 if (max_kkt_error < config.barrier_tolerance_factor * mu) {
-                    double next_mu = std::max(config.mu_min, mu * config.mu_linear_decrease_factor);
+                    double next_mu = std::max(config.mu_final, mu * config.mu_linear_decrease_factor);
                     mu = next_mu;
                 }
                 break;
             case BarrierStrategy::ADAPTIVE: {
                 double target = avg_gap * config.mu_safety_margin; 
                 // Removed forced decrease to allow mu to hold steady if needed for convergence
-                mu = std::max(config.mu_min, std::min(mu, target));
+                mu = std::max(config.mu_final, std::min(mu, target));
                 break;
             }
             case BarrierStrategy::MEHROTRA: {
@@ -424,7 +424,7 @@ public:
                 double sigma = std::pow(ratio, 3);
                 if(sigma < 0.05) sigma = 0.05;
                 if(sigma > 0.8) sigma = 0.8;
-                double next_mu = std::max(config.mu_min, mu * sigma);
+                double next_mu = std::max(config.mu_final, mu * sigma);
                 mu = next_mu;
                 break;
             }
@@ -658,7 +658,7 @@ public:
             }
 
             // C. 停滞检查 (Cost Stagnation)
-            if (mu <= config.mu_min) {
+            if (mu <= config.mu_final) {
                 // 计算当前 Cost
                 double current_cost = 0.0;
                 for(int k=0; k<=N; ++k) current_cost += trajectory.active()[k].cost;
@@ -868,7 +868,7 @@ public:
             if (sigma < 1e-4) sigma = 1e-4; // Prevent too small sigma
             
             double mu_target = sigma * mu_curr;
-            if (mu_target < config.mu_min) mu_target = config.mu_min; // Enforce lower bound
+            if (mu_target < config.mu_final) mu_target = config.mu_final; // Enforce lower bound
             
             // 2. Corrector Step
             // Solve with mu_target and affine correction term
@@ -1013,7 +1013,7 @@ public:
         bool is_dual_feasible = (max_dual_inf < config.tol_dual);
         
         // 1. Standard "Small Mu" Convergence
-        if (mu <= config.mu_min && alpha > 1e-5) {
+        if (mu <= config.mu_final && alpha > 1e-5) {
             // Check stationarity via step size
             double max_dx = 0.0;
             for(int k=0; k<=N; ++k) {
