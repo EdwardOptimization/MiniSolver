@@ -71,7 +71,7 @@ public:
     static const int NP = Model::NP;
     static const int MAX_N = _MAX_N;
 
-    using Knot = KnotPoint<double, NX, NU, NC, NP>;
+    using Knot = KnotPointV2<double, NX, NU, NC, NP>;
     using TrajectoryType = Trajectory<Knot, MAX_N>;
     using TrajArray = typename TrajectoryType::TrajArray;
 

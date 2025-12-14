@@ -7,17 +7,15 @@
 
 namespace minisolver {
 
+// =============================================================================
+// TRAJECTORY CLASS: Maintains backward compatibility while supporting new arch
+// =============================================================================
 template<typename Knot, int MAX_N>
 class Trajectory {
 public:
     using TrajArray = std::array<Knot, MAX_N + 1>;
     
-    // Double Buffering
-    // We use unique_ptr to manage memory ownership clearly, 
-    // but raw pointers for swapping to avoid overhead.
-    // Actually, std::array is on stack/inline. MiniSolver has them as members.
-    // To allow Trajectory class to own data, we can store them here.
-    
+    // Double Buffering for KnotPointV2 compatibility
     TrajArray memory_A;
     TrajArray memory_B;
     

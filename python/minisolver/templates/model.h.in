@@ -79,13 +79,13 @@ struct {{MODEL_NAME}} {
 
     // --- 1. Compute Dynamics (f_resid, A, B) ---
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
 {{COMPUTE_DYNAMICS_BODY}}
     }
 
     // --- 2. Compute Constraints (g_val, C, D) ---
     template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
 {{COMPUTE_CONSTRAINTS_BODY}}
     }
 
@@ -94,14 +94,14 @@ struct {{MODEL_NAME}} {
 
     // --- 4. Compute All (Convenience) ---
     template<typename T>
-    static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost(kp); // Default GN
     }
 
     template<typename T>
-    static void compute_exact(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute_exact(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost_exact(kp); // Exact Hessian
@@ -116,7 +116,7 @@ struct {{MODEL_NAME}} {
     static void compute_fused_riccati_step(
         const MSMat<T, NX, NX>& Vxx, 
         const MSVec<T, NX>& Vx,
-        KnotPoint<T,NX,NU,NC,NP>& kp) 
+        KnotPointV2<T,NX,NU,NC,NP>& kp) 
     {
 {{FUSED_RICCATI_STEP_BODY}}
     }

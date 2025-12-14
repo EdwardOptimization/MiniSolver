@@ -6,9 +6,9 @@
 using namespace minisolver;
 
 // Mock LinearSolver that always returns success and a fixed step
-class MockLinearSolver : public LinearSolver<Trajectory<KnotPoint<double, 4, 2, 5, 13>, 10>::TrajArray> {
+class MockLinearSolver : public LinearSolver<Trajectory<KnotPointV2<double, 4, 2, 5, 13>, 10>::TrajArray> {
 public:
-    using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 10>::TrajArray;
+    using TrajArray = Trajectory<KnotPointV2<double, 4, 2, 5, 13>, 10>::TrajArray;
     
     bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/, 
               const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override {
@@ -35,7 +35,7 @@ TEST(LineSearchTest, FilterAcceptance) {
     Strategy ls;
     MockLinearSolver linear_solver;
     
-    Trajectory<KnotPoint<double, 4, 2, 5, 13>, N> trajectory(N);
+    Trajectory<KnotPointV2<double, 4, 2, 5, 13>, N> trajectory(N);
     std::array<double, N> dts;
     dts.fill(0.1);
     

@@ -55,7 +55,7 @@ TEST(AutoDiffTest, CarModelIntegratorEuler) {
 
 TEST(AutoDiffTest, CostDerivatives) {
     // Check if gradients are non-zero where expected
-    KnotPoint<double, 4, 2, 5, 13> kp;
+    KnotPointV2<double, 4, 2, 5, 13> kp;
     kp.set_zero();
     
     kp.x(0) = 5.0; // x

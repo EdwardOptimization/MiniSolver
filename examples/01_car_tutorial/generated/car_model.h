@@ -125,7 +125,7 @@ struct CarModel {
 
     // --- 1. Compute Dynamics (f_resid, A, B) ---
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         T x = kp.x(0);
         T y = kp.x(1);
         T theta = kp.x(2);
@@ -290,7 +290,7 @@ struct CarModel {
 
     // --- 2. Compute Constraints (g_val, C, D) ---
     template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         T x = kp.x(0);
         T y = kp.x(1);
         T acc = kp.u(0);
@@ -352,7 +352,7 @@ struct CarModel {
 
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
     template<typename T, int Mode>
-    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_impl(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         T x = kp.x(0);
         T y = kp.x(1);
         T theta = kp.x(2);
@@ -437,31 +437,31 @@ struct CarModel {
     }
 
 template<typename T>
-    static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         compute_cost_impl<T, 0>(kp);
     }
 
     template<typename T>
-    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         compute_cost_impl<T, 1>(kp);
     }
 
     template<typename T>
-    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         compute_cost_impl<T, 1>(kp);
     }
 
 
     // --- 4. Compute All (Convenience) ---
     template<typename T>
-    static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost(kp); // Default GN
     }
 
     template<typename T>
-    static void compute_exact(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute_exact(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost_exact(kp); // Exact Hessian
@@ -476,7 +476,7 @@ template<typename T>
     static void compute_fused_riccati_step(
         const MSMat<T, NX, NX>& Vxx, 
         const MSVec<T, NX>& Vx,
-        KnotPoint<T,NX,NU,NC,NP>& kp) 
+        KnotPointV2<T,NX,NU,NC,NP>& kp) 
     {
         T P_0_0 = Vxx(0,0);
         T P_0_1 = Vxx(0,1);

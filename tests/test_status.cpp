@@ -33,7 +33,7 @@ struct InfeasibleModel {
     }
 
     template<typename T>
-    static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double /*dt*/) {
+    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double /*dt*/) {
         // Dynamics: x' = x (Static)
         kp.f_resid(0) = kp.x(0);
         kp.A(0,0) = 1.0;
@@ -59,13 +59,13 @@ struct InfeasibleModel {
     
     // Explicit Exact/GN mapping
     template<typename T>
-    static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
+    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
     template<typename T>
-    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
+    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) { compute(kp, type, dt); }
+    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) { compute(kp, type, dt); }
     template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
+    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
 };
 
 TEST(StatusTest, InfeasibilityDetection) {

@@ -33,14 +33,14 @@ struct SoftModel {
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
+    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
         kp.f_resid(0) = kp.x(0) + kp.u(0)*dt;
         kp.A(0,0) = 1.0;
         kp.B(0,0) = dt;
     }
 
     template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         // g(x,u) = u - 1.0 <= 0
         kp.g_val(0) = kp.u(0) - 1.0;
         kp.C.setZero();
@@ -48,7 +48,7 @@ struct SoftModel {
     }
     
     template<typename T>
-    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         // Min u^2
         kp.cost = kp.u(0)*kp.u(0);
         kp.r(0) = 2.0*kp.u(0);
@@ -57,20 +57,20 @@ struct SoftModel {
     
     // GN placeholder
     template<typename T>
-    static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         compute_cost_exact(kp);
     }
     
     // Wrappers expected by Solver
     template<typename T>
-    static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost_exact(kp); // Default to Exact
     }
 
     template<typename T>
-    static void compute_exact(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    static void compute_exact(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost_exact(kp);

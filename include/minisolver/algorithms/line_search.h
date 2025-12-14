@@ -21,7 +21,8 @@ public:
     static const int NC = Model::NC;
     static const int NP = Model::NP;
 
-    using TrajectoryType = Trajectory<KnotPoint<double, NX, NU, NC, NP>, MAX_N>;
+    using Knot = KnotPointV2<double, NX, NU, NC, NP>;
+    using TrajectoryType = Trajectory<Knot, MAX_N>;
     using TrajArray = typename TrajectoryType::TrajArray;
 
     virtual ~LineSearchStrategy() = default;

@@ -7,7 +7,7 @@ using namespace minisolver;
 // Mock Trajectory with N=2
 // We test if Riccati solves a trivial Linear Quadratic problem correctly
 TEST(RiccatiTest, TrivialLQR) {
-    using Knot = KnotPoint<double, 4, 2, 5, 13>;
+    using Knot = KnotPointV2<double, 4, 2, 5, 13>;
     using TrajArray = std::array<Knot, 3>; // N=2 -> 0,1,2
     
     TrajArray traj;

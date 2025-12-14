@@ -29,20 +29,20 @@ struct InterfaceModel {
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
+    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
         kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
         kp.A(0,0) = 1.0; kp.B(0,0) = dt;
     }
 
     template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         // Constraint: x <= 5.0
         kp.g_val(0) = kp.x(0) - 5.0; 
         kp.C(0,0) = 1.0; kp.D(0,0) = 0.0;
     }
 
     template<typename T>
-    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         T diff = kp.x(0) - 10.0; // Target x = 10
         kp.cost = diff*diff + 1e-4 * kp.u(0)*kp.u(0); 
         kp.q(0) = 2 * diff;
@@ -50,9 +50,9 @@ struct InterfaceModel {
         kp.Q(0,0) = 2.0; kp.R(0,0) = 2e-4;
     }
     
-    template<typename T> static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    template<typename T> static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
+    template<typename T> static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
+    template<typename T> static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt); compute_constraints(kp); compute_cost(kp);
     }
 };
@@ -86,14 +86,14 @@ struct ManualL1Model {
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
+    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
         kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
         kp.A(0,0) = 1.0; 
         kp.B(0,0) = dt; kp.B(0,1) = 0.0; 
     }
 
     template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         T x = kp.x(0);
         T slk = kp.u(1);
         
@@ -109,7 +109,7 @@ struct ManualL1Model {
     }
 
     template<typename T>
-    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         T diff = kp.x(0) - 10.0;
         T slk = kp.u(1);
         double w = 1.0; // Fixed L1 Weight
@@ -127,9 +127,9 @@ struct ManualL1Model {
         kp.R(0,1) = 0.0; kp.R(1,0) = 0.0;
     }
     
-    template<typename T> static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    template<typename T> static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
+    template<typename T> static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
+    template<typename T> static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt); compute_constraints(kp); compute_cost(kp);
     }
 };
@@ -158,14 +158,14 @@ struct ManualL2Model {
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
+    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
         kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
         kp.A(0,0) = 1.0; 
         kp.B(0,0) = dt; kp.B(0,1) = 0.0; 
     }
 
     template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         T x = kp.x(0);
         T slk = kp.u(1);
         // x - 5 - slk <= 0
@@ -175,7 +175,7 @@ struct ManualL2Model {
     }
 
     template<typename T>
-    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         T diff = kp.x(0) - 10.0;
         T slk = kp.u(1);
         double w = 1.0; // Fixed L2 Weight
@@ -193,9 +193,9 @@ struct ManualL2Model {
         kp.R(0,1) = 0.0; kp.R(1,0) = 0.0;
     }
     
-    template<typename T> static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    template<typename T> static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
+    template<typename T> static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
+    template<typename T> static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt); compute_constraints(kp); compute_cost(kp);
     }
 };

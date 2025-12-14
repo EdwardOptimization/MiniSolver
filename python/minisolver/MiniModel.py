@@ -751,7 +751,7 @@ class OptimalControlModel:
         # Mode 1: Exact (Q = Q_obj + Q_con)
         
         code_cost_impl = "template<typename T, int Mode>\n"
-        code_cost_impl += "    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code_cost_impl += "    static void compute_cost_impl(KnotPointV2<T,NX,NU,NC,NP>& kp) {\n"
         
         # Determine symbols used in Cost + Constraint Hessians
         # We must use the *derivative* expressions, because parameters used only in linear terms
@@ -847,19 +847,19 @@ class OptimalControlModel:
         
         # Let's provide explicit named functions.
         code_wrappers = "template<typename T>\n"
-        code_wrappers += "    static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code_wrappers += "    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) {\n"
         code_wrappers += "        compute_cost_impl<T, 0>(kp);\n"
         code_wrappers += "    }\n\n"
         
         code_wrappers += "    template<typename T>\n"
-        code_wrappers += "    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code_wrappers += "    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {\n"
         code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
         code_wrappers += "    }\n\n"
         
         # Default alias (Exact for backward compat, or GN?)
         # Let's make it Exact to be safe.
         code_wrappers += "    template<typename T>\n"
-        code_wrappers += "    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code_wrappers += "    static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) {\n"
         code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
         code_wrappers += "    }\n"
         

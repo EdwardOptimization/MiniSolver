@@ -5,9 +5,9 @@
 using namespace minisolver;
 
 // Mock LinearSolver that fails first step but returns success on SOC step
-class SocMockLinearSolver : public LinearSolver<Trajectory<KnotPoint<double, 4, 2, 5, 13>, 5>::TrajArray> {
+class SocMockLinearSolver : public LinearSolver<Trajectory<KnotPointV2<double, 4, 2, 5, 13>, 5>::TrajArray> {
 public:
-    using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 5>::TrajArray;
+    using TrajArray = Trajectory<KnotPointV2<double, 4, 2, 5, 13>, 5>::TrajArray;
     int solve_count = 0;
     
     bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/, 
@@ -58,7 +58,7 @@ TEST(AdvancedFeaturesTest, SOCLogic) {
     SocMockLinearSolver linear_solver;
     FilterLineSearch<Model, N> ls;
     
-    Trajectory<KnotPoint<double, 4, 2, 5, 13>, N> trajectory(N);
+    Trajectory<KnotPointV2<double, 4, 2, 5, 13>, N> trajectory(N);
     std::array<double, N> dts; dts.fill(0.1);
     
     // Setup initial state

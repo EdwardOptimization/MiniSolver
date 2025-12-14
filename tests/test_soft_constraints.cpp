@@ -28,7 +28,7 @@ struct SoftModel {
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
+    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
         T x = kp.x(0); T u = kp.u(0);
         kp.f_resid(0) = x + u * dt;
         kp.A(0,0) = 1.0;
@@ -36,7 +36,7 @@ struct SoftModel {
     }
 
     template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         T x = kp.x(0);
         // x <= 5 -> x - 5 <= 0
         kp.g_val(0) = x - 5.0;
@@ -45,7 +45,7 @@ struct SoftModel {
     }
 
     template<typename T>
-    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_impl(KnotPointV2<T,NX,NU,NC,NP>& kp) {
         T x = kp.x(0); T u = kp.u(0);
         // Cost: (x - 10)^2 + 1e-4 * u^2 (small regularization)
         T diff = x - 10.0;
@@ -59,10 +59,10 @@ struct SoftModel {
         kp.H.setZero();
     }
     
-    template<typename T> static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_impl(kp); }
-    template<typename T> static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_impl(kp); }
-    template<typename T> static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_impl(kp); }
-    template<typename T> static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+    template<typename T> static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_impl(kp); }
+    template<typename T> static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_impl(kp); }
+    template<typename T> static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_impl(kp); }
+    template<typename T> static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost(kp);
