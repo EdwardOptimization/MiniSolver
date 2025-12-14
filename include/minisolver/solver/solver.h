@@ -925,7 +925,7 @@ public:
         // Iterative Refinement
         if (solve_success && config.enable_iterative_refinement) {
              // Pass 'traj' (which contains solution dx, du) and 'candidate' (which contains original system)
-             linear_solver->refine(traj, trajectory.candidate(), N, mu, reg, config);
+             linear_solver->refine(trajectory, trajectory, N, mu, reg, config);
         }
         
         timer.stop();
@@ -978,18 +978,18 @@ public:
                 MLOG_DEBUG("Triggering Slack Reset (Attempt " << slack_reset_consecutive_count + 1 << ").");
                 
                 for(int k=0; k<=N; ++k) {
-                    auto& kp = traj[k];
+                    auto* state = trajectory.get_active_state();
                     for(int i=0; i<NC; ++i) {
-                        double min_s = std::abs(kp.g_val(i)) + std::sqrt(mu);
-                        if (kp.s(i) < min_s) {
-                            kp.s(i) = min_s;
+                        double min_s = std::abs(state[k].g_val(i)) + std::sqrt(mu);
+                        if (state[k].s(i) < min_s) {
+                            state[k].s(i) = min_s;
                             // Maintain consistency of dual variables, prevent aggressive reset
-                            kp.lam(i) = std::max(kp.lam(i), config.mu_init / kp.s(i));
+                            state[k].lam(i) = std::max(state[k].lam(i), config.mu_init / state[k].s(i));
                         }
                     }
                 }
                 // Try one solve to see if a valid direction can be obtained
-                recovered = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
+                recovered = linear_solver->solve(trajectory, N, mu, reg, config.inertia_strategy, config);
                 
                 if (recovered) {
                     // Mark: If this Reset failed to get us out of trouble, disallow it next time

@@ -51,6 +51,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
         const int NX = Model::NX;
         
         auto* state = traj.get_active_state();
+        auto* model = traj.get_model_data();
         
         for(int k=0; k<=N; ++k) {
             total_merit += state[k].cost; 
@@ -160,7 +161,7 @@ public:
         double phi_0 = compute_merit(trajectory, N, mu, config);
         
         // 3. Calc max alpha
-        double alpha = fraction_to_boundary_rule_split(trajectory, N, config.line_search_tau);
+        double alpha = fraction_to_boundary_rule_split<TrajectoryType, Model>(trajectory, N, config.line_search_tau);
 
         trajectory.prepare_candidate();
         auto* candidate_state = trajectory.get_candidate_state();
@@ -203,7 +204,7 @@ public:
                 }
             }
             
-            double phi_alpha = compute_merit(candidate, N, mu, config);
+            double phi_alpha = compute_merit(trajectory, N, mu, config);
             
             // Armijo condition could be added here: phi_alpha < phi_0 - eta * alpha * ...
             // For now, simple decrease.
@@ -372,12 +373,12 @@ public:
 
         auto* active_workspace = trajectory.get_workspace();
         
-        auto m_0 = compute_metrics(active, N, mu, config);
+        auto m_0 = compute_metrics(trajectory, N, mu, config);
         double theta_0 = m_0.first;
         double phi_0 = m_0.second;
         
         // Fraction to Boundary
-        double alpha = fraction_to_boundary_rule_split(trajectory, N, config.line_search_tau);
+        double alpha = fraction_to_boundary_rule_split<TrajectoryType, Model>(trajectory, N, config.line_search_tau);
         
         trajectory.prepare_candidate();
         auto* candidate_state = trajectory.get_candidate_state();
@@ -417,7 +418,7 @@ public:
                 }
             }
             
-            auto m_alpha = compute_metrics(candidate, N, mu, config);
+            auto m_alpha = compute_metrics(trajectory, N, mu, config);
             if (is_acceptable(m_alpha.first, m_alpha.second, theta_0, phi_0, config)) {
                 accepted = true;
             }
