@@ -19,6 +19,7 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
 * **Riccati Recursion**: Utilizes a specialized block-tridiagonal linear solver ($O(N)$ complexity) tailored for optimal control structures.
 * **SQP-RTI Support**: Real-Time Iteration (SQP-RTI) mode allows for **>1 kHz** control loops by performing a single quadratic programming sub-step per control tick.
 * **Analytical Derivatives**: Uses SymPy to generate flattened, algebraically simplified C++ code for Jacobians and Hessians at compile-time, eliminating runtime overhead.
+* **🔥 Fused Riccati Kernels**: Unlike solvers that use generic matrix libraries, MiniSolver uses Python (SymPy) to symbolically fuse the Riccati backward pass (`Q + A'PA`) into a single, flattened C++ function. This eliminates all loop overhead and explicitly bypasses multiplication by zero, achieving **perfect sparsity exploitation** for small-to-medium systems ($N_x < 20$).
 
 ### 🛡️ Embedded Safety & Robustness
 * **Zero-Malloc Guarantee**: All memory is allocated on the stack (or `.bss`) via `std::array` and C++ templates (`MAX_N`). No `new`/`malloc` calls occur during the `solve()` loop.
@@ -36,16 +37,16 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
 
 ## 📊 Performance Benchmarks
 
-Benchmarks performed on an Intel Core i7 (Single Thread) for a **60-step Kinematic Bicycle Model** with obstacle avoidance.
+Benchmarks performed on an Intel Core i7 (Single Thread) for a **Kinematic Bicycle Model with Obstacle Avoidance** ($N_x=6, N_u=2, N=50$).
 
-**Note:** When using Fused Riccati (default), ensure the integrator type used in C++ matches the one used during Python generation. The fused kernel is specialized for a specific integrator's Jacobian structure.
+| Strategy | Integrator | Line Search | Avg Time | Iterations | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **TURBO** | Euler | Filter | **~0.8 ms** | 10-15 | Approx |
+| **ROBUST (Rec)** | RK4 | **Filter** | **~2.4 ms** | 23 | **Optimal** |
+| **STABLE** | RK4 | Merit | ~3.0 ms | 46 | Optimal |
+| **ADAPTIVE** | RK4 | Filter | ~25.0 ms | 300* | Feasible |
 
-| Archetype | Configuration | Avg Time | Use Case |
-| :--- | :--- | :--- | :--- |
-| **TURBO_MPC** | Euler + Adaptive Barrier | **~0.8 ms** | Microcontrollers (MCU), Racing Drones |
-| **BALANCED_RT** | RK2 + Mehrotra | **~1.2 ms** | General UGV Navigation |
-| **QUALITY_PLANNER** | RK4 + Mehrotra + Filter | **~1.8 ms** | Autonomous Driving Trajectory Planner |
-| **SQP-RTI** | Euler + Single Iteration | **~0.2 ms** | High-Frequency Control (>1kHz) |
+*> Adaptive strategy may stagnate on feasible but high-cost solutions in scenarios with bad initial guesses (e.g., straight-line initialization).*
 
 ---
 
@@ -125,6 +126,13 @@ MiniSolver includes a one-click build script that handles dependency checking, c
 ```bash
 ./build.sh
 ```
+
+## 📦 Embedded Deployment
+
+1.  Generate your model headers on a PC: `python3 generate_model.py`
+2.  Copy the `minisolver/` include folder and your generated headers to your MCU project.
+3.  Define `USE_CUSTOM_MATRIX` to remove `Eigen3` dependency.
+4.  Compile with `-O3`. **No external libraries required.**
 
 -----
 

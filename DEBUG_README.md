@@ -33,6 +33,10 @@ This guide documents the architectural decisions (ADRs), internal mechanisms, an
 * **`USE_EIGEN`**: Links against Eigen3 for SIMD optimizations (Desktop/Linux).
 * **`USE_CUSTOM_MATRIX`**: Uses `MiniMatrix.h`, a self-contained, template-based linear algebra class. This enables compilation on bare-metal systems (e.g., STM32) with **zero external dependencies**.
 
+### 5. Sparsity Handling: Fused Kernels
+**Approach**: **Symbolic Code Generation**. Instead of a generic sparse matrix format (CSR/CSC), we generate specific C++ code for every matrix operation in the Riccati recursion.
+* **Result**: Zero storage overhead for sparsity patterns. The "sparsity" is baked into the instruction stream.
+
 ---
 
 ## 🪤 Known "Gotchas" (Post-Mortem Analysis)
@@ -51,6 +55,14 @@ This guide documents the architectural decisions (ADRs), internal mechanisms, an
 * **Symptom**: After `Feasibility Restoration` succeeds, the main IPM loop immediately diverges.
 * **Cause**: The restoration phase solves a *different* optimization problem (min-norm correction). The Lagrange multipliers (Duals) from this phase are not valid for the original OCP constraints.
 * **Fix**: After restoration, we perform a "Dual Reset" using the complementarity condition $\lambda_i = \mu / s_i$ to re-initialize valid duals for the original problem.
+
+### 4. Feasible Stagnation (The "Rollout Trap")
+* **Symptom**: Solver performs `rollout_dynamics()` (making primal constraint violation $0$) but then fails to reduce Cost, taking tiny steps (`Alpha ~ 0`) and hitting max iterations.
+* **Cause**: When the initial guess is feasible but far from optimal (e.g., a straight line vs. a curve), **Adaptive Barrier** strategies may reduce $\mu$ too aggressively or misjudge the search direction. The **Filter** mechanism, having no "infeasibility" to trade off, degrades into a strict descent method, rejecting steps that would slightly violate dynamics to improve cost.
+* **Fix**: For highly nonlinear warm-starts:
+    1.  Use **Mehrotra Predictor-Corrector** (it handles nonlinearity better via higher-order corrections).
+    2.  Use **Monotone Barrier** (more conservative/stable).
+    3.  Increase `mu_init` (e.g., `0.1`) to keep the barrier "soft" initially.
 
 ---
 
@@ -100,9 +112,11 @@ It outputs the `SolverConfig` that achieved the highest success rate and lowest 
 
 ## 🔮 Future Roadmap
 
-1.  **Sparse Riccati**: Currently, blocks are treated as dense. For state dimensions $N_x > 12$, utilizing sparsity in $A, B$ matrices is required.
-2.  **GPU Parallelization**: `src/cuda/gpu_ops.cu` contains prototypes for a Parallel Scan algorithm (Parallel Associative Operator). This will allow $O(\log N)$ solve times on CUDA devices.
-3.  **ALADIN Support**: Augmented Lagrangian Alternating Direction Inexact Newton method for distributed multi-agent control.
+* [x] **Iterative Refinement**: Implemented to recover precision from regularization errors.
+* [x] **Slack Reset & Restoration**: Implemented for robust feasibility handling.
+* [x] **Fused Riccati**: Implemented via SymPy codegen.
+* [ ] **GPU Parallelization**: `gpu_ops.cu` exists as a placeholder. Parallel Scan (MPX/PCR) logic needs to be fully implemented for $N > 100$.
+* [ ] **Implicit Integrators**: Better Newton-based implicit solvers for stiff systems.
 
 -----
 
