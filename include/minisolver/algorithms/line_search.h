@@ -431,6 +431,7 @@ public:
             }
             
             auto m_alpha = compute_metrics(trajectory, N, mu, config, true); // Use candidate state
+            
             if (is_acceptable(m_alpha.first, m_alpha.second, theta_0, phi_0, config)) {
                 accepted = true;
             }
@@ -500,7 +501,7 @@ public:
         
         if (accepted) {
             trajectory.swap();
-            filter.push_back({theta_0, phi_0}); 
+            filter.push_back({theta_0, phi_0});
         } else {
             return 0.0; // Fail
         }

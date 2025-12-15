@@ -944,6 +944,7 @@ public:
              linear_solver->refine(trajectory, trajectory, N, mu, reg, config);
         }
         
+        
         timer.stop();
 
         if (!solve_success) return SolverStatus::NUMERICAL_ERROR;

@@ -633,13 +633,6 @@ namespace internal {
                         workspace[k].dlam(i) = dlam;
                         workspace[k].ds(i) = (-r_y - s_i * dlam) / lam_i;
                         workspace[k].dsoft_s(i) = -(r_z - soft_s_i * dlam) / (w - lam_i);
-                        
-                        static int debug_new = 0;
-                        if (debug_new < 1 && i == 0 && k == 0) {
-                            std::cout << "[NEW-L1] constraint_step=" << constraint_step << " eff_r=" << eff_r 
-                                     << " dlam=" << dlam << " ds=" << workspace[k].ds(i) << " dsoft_s=" << workspace[k].dsoft_s(i) << std::endl;
-                            debug_new++;
-                        }
                     }
                     else if (type == 2 && w > 1e-6) { // L2 Soft
                         double r_prim_L2 = g_i + s_i - lam_i/w;
@@ -677,7 +670,8 @@ namespace internal {
                     w = ModelType::constraint_weights[i];
                 }
                 
-                double constraint_step = -g_i;  // dx is included in g_val already at terminal
+                // For terminal knot, dx from backward pass determines constraint change
+                double constraint_step = model[N].C.row(i).dot(workspace[N].dx);
                 double r_y = s_i * lam_i - mu;
                 
                 if (type == 1 && w > 1e-6) { // L1 Soft
