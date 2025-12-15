@@ -31,11 +31,12 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
         
         // Set some dummy state values manually to verify trajectory save/load
         // (Instead of solving, we just fill data to check exact IO reproduction)
-        solver.trajectory.active()[k].x.fill(k * 1.0); // x = [k, k, k...]
-        solver.trajectory.active()[k].u.fill(k * 0.5); // u = [k/2, ...]
-        solver.trajectory.active()[k].s.fill(0.1);     // slacks
-        solver.trajectory.active()[k].lam.fill(0.2);   // duals
-        solver.trajectory.active()[k].cost = k * 10.0;
+        auto* state = solver.trajectory.get_active_state();
+        state[k].x.fill(k * 1.0); // x = [k, k, k...]
+        state[k].u.fill(k * 0.5); // u = [k/2, ...]
+        state[k].s.fill(0.1);     // slacks
+        state[k].lam.fill(0.2);   // duals
+        state[k].cost = k * 10.0;
     }
     solver.current_iter = 15;
 
@@ -68,15 +69,15 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
     // Note: load_case restores mu/reg from file now (updated behavior)
     
     // Verify Trajectory
-    const auto& traj2 = solver2.trajectory.active();
+    const auto* state2 = solver2.trajectory.get_active_state();
     for(int k=0; k<=N; ++k) {
         // X
         for(int i=0; i<CarModel::NX; ++i) {
-            EXPECT_DOUBLE_EQ(traj2[k].x(i), k * 1.0);
+            EXPECT_DOUBLE_EQ(state2[k].x(i), k * 1.0);
         }
         // U
         for(int i=0; i<CarModel::NU; ++i) {
-            EXPECT_DOUBLE_EQ(traj2[k].u(i), k * 0.5);
+            EXPECT_DOUBLE_EQ(state2[k].u(i), k * 0.5);
         }
         // P
         EXPECT_EQ(solver2.get_parameter(k, solver2.get_param_idx("v_ref")), 5.0);
@@ -84,8 +85,8 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
 
         // Slacks/Duals
         for(int i=0; i<CarModel::NC; ++i) {
-            EXPECT_DOUBLE_EQ(traj2[k].s(i), 0.1);
-            EXPECT_DOUBLE_EQ(traj2[k].lam(i), 0.2);
+            EXPECT_DOUBLE_EQ(state2[k].s(i), 0.1);
+            EXPECT_DOUBLE_EQ(state2[k].lam(i), 0.2);
         }
     }
 
@@ -124,16 +125,16 @@ TEST(SerializerTest, FullRoundTrip) {
     EXPECT_EQ(solverA.mu, solverB.mu);
     EXPECT_EQ(solverA.reg, solverB.reg);
     
-    auto& trajA = solverA.trajectory.active();
-    auto& trajB = solverB.trajectory.active();
+    auto* stateA = solverA.trajectory.get_active_state();
+    auto* stateB = solverB.trajectory.get_active_state();
     
     for(int k=0; k<=N; ++k) {
-        for(int i=0; i<CarModel::NX; ++i) EXPECT_EQ(trajA[k].x(i), trajB[k].x(i));
-        for(int i=0; i<CarModel::NU; ++i) EXPECT_EQ(trajA[k].u(i), trajB[k].u(i));
+        for(int i=0; i<CarModel::NX; ++i) EXPECT_EQ(stateA[k].x(i), stateB[k].x(i));
+        for(int i=0; i<CarModel::NU; ++i) EXPECT_EQ(stateA[k].u(i), stateB[k].u(i));
         for(int i=0; i<CarModel::NC; ++i) {
-            EXPECT_EQ(trajA[k].s(i), trajB[k].s(i));
-            EXPECT_EQ(trajA[k].lam(i), trajB[k].lam(i));
+            EXPECT_EQ(stateA[k].s(i), stateB[k].s(i));
+            EXPECT_EQ(stateA[k].lam(i), stateB[k].lam(i));
         }
-        for(int i=0; i<CarModel::NP; ++i) EXPECT_EQ(trajA[k].p(i), trajB[k].p(i));
+        for(int i=0; i<CarModel::NP; ++i) EXPECT_EQ(stateA[k].p(i), stateB[k].p(i));
     }
 }

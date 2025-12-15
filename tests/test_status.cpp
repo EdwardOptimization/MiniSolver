@@ -32,40 +32,72 @@ struct InfeasibleModel {
         return x; // Static
     }
 
+    // NEW SPLIT ARCHITECTURE: Separate compute functions
     template<typename T>
-    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double /*dt*/) {
+    static void compute_dynamics(
+        const StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType /*type*/,
+        double /*dt*/)
+    {
         // Dynamics: x' = x (Static)
-        kp.f_resid(0) = kp.x(0);
-        kp.A(0,0) = 1.0;
-        kp.B(0,0) = 0.0;
-        
+        model.f_resid(0) = state.x(0);
+        model.A(0,0) = 1.0;
+        model.B(0,0) = 0.0;
+    }
+    
+    template<typename T>
+    static void compute_cost_gn(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
         // Cost: x^2
-        kp.cost = kp.x(0)*kp.x(0);
-        kp.Q(0,0) = 2.0;
-        kp.q(0) = 2.0 * kp.x(0);
-        
+        state.cost = state.x(0)*state.x(0);
+        model.Q(0,0) = 2.0;
+        model.q(0) = 2.0 * state.x(0);
+        model.R.setZero();
+        model.r.setZero();
+        model.H.setZero();
+    }
+    
+    template<typename T>
+    static void compute_cost_exact(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
+        compute_cost_gn(state, model);
+    }
+    
+    template<typename T>
+    static void compute_constraints(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
         // Constraints
         // 1. x >= 2  => 2 - x <= 0  => g0 = 2 - x
         // 2. x <= 1  => x - 1 <= 0  => g1 = x - 1
-        kp.g_val(0) = 2.0 - kp.x(0);
-        kp.g_val(1) = kp.x(0) - 1.0;
+        state.g_val(0) = 2.0 - state.x(0);
+        state.g_val(1) = state.x(0) - 1.0;
         
         // C = dg/dx
-        kp.C(0,0) = -1.0;
-        kp.C(1,0) = 1.0;
+        model.C(0,0) = -1.0;
+        model.C(1,0) = 1.0;
         
-        kp.D.setZero();
+        model.D.setZero();
     }
     
-    // Explicit Exact/GN mapping
+    // Convenience wrapper for backward compatibility
     template<typename T>
-    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
-    template<typename T>
-    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
-    template<typename T>
-    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) { compute(kp, type, dt); }
-    template<typename T>
-    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
+    static void compute(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType type,
+        double dt)
+    {
+        compute_dynamics(state, model, type, dt);
+        compute_cost_exact(state, model);
+        compute_constraints(state, model);
+    }
 };
 
 TEST(StatusTest, InfeasibilityDetection) {

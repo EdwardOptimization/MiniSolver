@@ -39,6 +39,9 @@ public:
     // 3. Workspace: Single-buffered (recomputed as needed)
     std::array<Work, MAX_N + 1> workspace;
     
+    // 4. Affine Workspace: Used temporarily for Mehrotra corrector
+    std::array<Work, MAX_N + 1> affine_workspace;
+    
     int N; // Current valid horizon
 
     Trajectory(int initial_N) : N(initial_N), active_state(&state_A[0]), candidate_state(&state_B[0]) {
@@ -74,6 +77,9 @@ public:
     
     Work* get_workspace() { return &workspace[0]; }
     const Work* get_workspace() const { return &workspace[0]; }
+    
+    Work* get_affine_workspace() { return &affine_workspace[0]; }
+    const Work* get_affine_workspace() const { return &affine_workspace[0]; }
     
     // Legacy accessor for backward compatibility (returns active state)
     State& operator[](int k) { return active_state[k]; }

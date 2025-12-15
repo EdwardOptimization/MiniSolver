@@ -43,34 +43,62 @@ struct SingularModel {
         return x + u * dt;
     }
 
-    // Zero Cost, Zero Derivatives (Singular)
+    // NEW SPLIT ARCHITECTURE: Separate compute functions
     template<typename T>
-    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
+    static void compute_dynamics(
+        const StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType /*type*/,
+        double dt)
+    {
         // Dynamics: x' = u
-        kp.f_resid(0) = kp.x(0) + kp.u(0)*dt;
-        kp.A(0,0) = 1.0;
-        kp.B(0,0) = dt;
-        
-        // Cost: 0
-        kp.cost = 0.0;
-        kp.Q.setZero();
-        kp.R.setZero(); // Strictly Singular
-        kp.q.setZero();
-        kp.r.setZero();
-        
-        // No Constraints
-        // kp.C, kp.D, kp.g_val are zero by default or init
+        model.f_resid(0) = state.x(0) + state.u(0)*dt;
+        model.A(0,0) = 1.0;
+        model.B(0,0) = dt;
     }
     
-    // Explicit Exact/GN mapping
     template<typename T>
-    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
+    static void compute_cost_gn(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
+        // Cost: 0
+        state.cost = 0.0;
+        model.Q.setZero();
+        model.R.setZero(); // Strictly Singular
+        model.q.setZero();
+        model.r.setZero();
+        model.H.setZero();
+    }
+    
     template<typename T>
-    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
+    static void compute_cost_exact(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
+        compute_cost_gn(state, model);
+    }
+    
     template<typename T>
-    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) { compute(kp, type, dt); }
+    static void compute_constraints(
+        StateNode<T,NX,NU,NC,NP>& /*state*/,
+        ModelData<T,NX,NU,NC>& /*model*/)
+    {
+        /* No Constraints */
+    }
+    
+    // Convenience wrapper for backward compatibility
     template<typename T>
-    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& /*kp*/) { /* None */ }
+    static void compute(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType type,
+        double dt)
+    {
+        compute_dynamics(state, model, type, dt);
+        compute_cost_exact(state, model);
+        compute_constraints(state, model);
+    }
 };
 
 TEST(RobustnessTest, SingularHessianRecovery) {

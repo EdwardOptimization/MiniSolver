@@ -669,7 +669,8 @@ public:
             if (mu <= config.mu_final) {
                 // 计算当前 Cost
                 double current_cost = 0.0;
-                for(int k=0; k<=N; ++k) current_cost += trajectory.active()[k].cost;
+                auto* state_for_cost = trajectory.get_active_state();
+                for(int k=0; k<=N; ++k) current_cost += state_for_cost[k].cost;
                 
                 // 只有在满足一定可行性时，Cost 停滞才有意义
                 // 使用上一步计算的 max_prim_inf (last_prim_inf)
@@ -779,21 +780,17 @@ public:
 // DISABLED_REFINE:              std::copy(traj.begin(), traj.end(), backup.begin());
 // DISABLED_REFINE:         }
         
-        // Mehrotra Predictor-Corrector Logic - TODO: Re-implement with new architecture
-#if 0  // DISABLED: Mehrotra temporarily disabled during refactoring
-        if (false && config.barrier_strategy == BarrierStrategy::MEHROTRA) {
+        // Mehrotra Predictor-Corrector Logic (RESTORED for Split Architecture)
+        if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
             // 1. Affine Step (Predictor)
-            // Reuse candidate trajectory storage for affine step results
+            // The candidate trajectory will be used to store affine step results
             trajectory.prepare_candidate();
-            auto& affine_traj = trajectory.candidate();
-            // Copy current state to affine traj to serve as linearization point base
-            for(int k=0; k<=N; ++k) affine_traj[k] = traj[k];
+            // After solve, workspace will contain affine search directions (dx, du, ds, dlam)
             
             bool aff_success = false;
-            // Solve with mu = 0
+            // Solve with mu = 0 (affine step)
             for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
-                // Use new enum for exact/GN
-                aff_success = linear_solver->solve(affine_traj, N, 0.0, reg, config.inertia_strategy, config);
+                aff_success = linear_solver->solve(trajectory, N, 0.0, reg, config.inertia_strategy, config);
                 if (aff_success) break;
                 if (reg < config.reg_min) reg = config.reg_min;
                 reg *= config.reg_scale_up;
@@ -806,22 +803,26 @@ public:
             }
             
             // Calc max step for affine direction
-            // Re-implement fraction-to-boundary locally since it's simple
+            // In new architecture: active_state contains s/lam, workspace contains ds/dlam
+            auto* active_state = trajectory.get_active_state();
+            auto* workspace = trajectory.get_workspace();
             double alpha_aff = 1.0;
             for(int k=0; k<=N; ++k) {
-                for(int i=0; i<NC; ++i) {
-                    double s = affine_traj[k].s(i);
-                    double ds = affine_traj[k].ds(i);
-                    double lam = affine_traj[k].lam(i);
-                    double dlam = affine_traj[k].dlam(i);
-                    
-                    if (ds < 0) {
-                        double a = -s / ds; 
-                        if (a < alpha_aff) alpha_aff = a;
-                    }
-                    if (dlam < 0) {
-                        double a = -lam / dlam;
-                        if (a < alpha_aff) alpha_aff = a;
+                if constexpr (NC > 0) {
+                    for(int i=0; i<NC; ++i) {
+                        double s = active_state[k].s(i);
+                        double ds = workspace[k].ds(i);
+                        double lam = active_state[k].lam(i);
+                        double dlam = workspace[k].dlam(i);
+                        
+                        if (ds < 0) {
+                            double a = -s / ds; 
+                            if (a < alpha_aff) alpha_aff = a;
+                        }
+                        if (dlam < 0) {
+                            double a = -lam / dlam;
+                            if (a < alpha_aff) alpha_aff = a;
+                        }
                     }
                 }
             }
@@ -832,13 +833,15 @@ public:
             int total_dim = 0;
             
             for(int k=0; k<=N; ++k) {
-                for(int i=0; i<NC; ++i) {
-                    double s_new = traj[k].s(i) + alpha_aff * affine_traj[k].ds(i);
-                    double lam_new = traj[k].lam(i) + alpha_aff * affine_traj[k].dlam(i);
-                    if(s_new < 0) s_new = 1e-8; // Should not happen with fraction_to_boundary
-                    if(lam_new < 0) lam_new = 1e-8;
-                    total_comp += s_new * lam_new;
-                    total_dim++;
+                if constexpr (NC > 0) {
+                    for(int i=0; i<NC; ++i) {
+                        double s_new = active_state[k].s(i) + alpha_aff * workspace[k].ds(i);
+                        double lam_new = active_state[k].lam(i) + alpha_aff * workspace[k].dlam(i);
+                        if(s_new < 0) s_new = 1e-8; // Should not happen with fraction_to_boundary
+                        if(lam_new < 0) lam_new = 1e-8;
+                        total_comp += s_new * lam_new;
+                        total_dim++;
+                    }
                 }
             }
             mu_aff = total_comp / std::max(1, total_dim);
@@ -886,18 +889,32 @@ public:
             // 2. Corrector Step
             // Solve with mu_target and affine correction term
             if (config.enable_corrector) {
-                // Pass affine_traj to solve()
+                // CRITICAL FIX: Before corrector solve, save affine directions to affine_workspace
+                // because corrector solve will overwrite workspace!
+                auto* workspace = trajectory.get_workspace();
+                auto* affine_ws = trajectory.get_affine_workspace();
+                
+                // Copy affine directions from workspace to affine_workspace
+                for(int k=0; k<=N; ++k) {
+                    affine_ws[k].dx = workspace[k].dx;
+                    affine_ws[k].du = workspace[k].du;
+                    affine_ws[k].ds = workspace[k].ds;
+                    affine_ws[k].dlam = workspace[k].dlam;
+                    affine_ws[k].dsoft_s = workspace[k].dsoft_s;
+                }
+                
+                // Now pass trajectory with affine directions stored in affine_workspace
                 for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
-                    solve_success = linear_solver->solve(traj, N, mu_target, reg, config.inertia_strategy, config, &affine_traj);
+                    solve_success = linear_solver->solve(trajectory, N, mu_target, reg, config.inertia_strategy, config, &trajectory);
                     if (solve_success) break;
-                    // If failed, regularize and retry (note: reg might have increased in affine step already)
+                    // If failed, regularize and retry
                     reg *= config.reg_scale_up;
                     if (reg > config.reg_max) reg = config.reg_max;
                 }
             } else {
                 // Predictor only (just update mu but don't add correction term)
                 for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
-                    solve_success = linear_solver->solve(traj, N, mu_target, reg, config.inertia_strategy, config);
+                    solve_success = linear_solver->solve(trajectory, N, mu_target, reg, config.inertia_strategy, config);
                     if (solve_success) break;
                     reg *= config.reg_scale_up;
                     if (reg > config.reg_max) reg = config.reg_max;
@@ -909,14 +926,13 @@ public:
         } else {
             // Standard IPM
             for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
-                solve_success = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
+                solve_success = linear_solver->solve(trajectory, N, mu, reg, config.inertia_strategy, config);
                 if (solve_success) break;
                 if (reg < config.reg_min) reg = config.reg_min;
                 reg *= config.reg_scale_up;
                 if (reg > config.reg_max) reg = config.reg_max;
             }
         }
-#endif  // DISABLED: Mehrotra
 
         if (solve_success && reg > config.reg_min) {
              reg = std::max(config.reg_min, reg / config.reg_scale_down);
@@ -1242,6 +1258,7 @@ private:
     double compute_max_violation(const TrajectoryType& traj) const {
         double max_viol = 0.0;
         auto* state = traj.get_active_state();
+        
         for(int k=0; k<=N; ++k) {
             for(int i=0; i<NC; ++i) {
                 double viol = 0.0;
@@ -1266,6 +1283,7 @@ private:
                 if(viol > max_viol) max_viol = viol;
             }
         }
+        
         return max_viol;
     }
 };

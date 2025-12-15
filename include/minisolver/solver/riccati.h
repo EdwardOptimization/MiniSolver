@@ -67,7 +67,8 @@ namespace internal {
     void compute_barrier_derivatives_split(
         State& state, Model& model, Workspace& workspace,
         double mu, const minisolver::SolverConfig& config,
-        RWS& /*ws*/) {
+        RWS& /*ws*/,
+        const Workspace* affine_workspace = nullptr) {
         
         constexpr int NC = ModelType::NC;
         constexpr int NX = ModelType::NX;
@@ -90,11 +91,72 @@ namespace internal {
         for(int i=0; i<NC; ++i) {
             double s_i = state.s(i);
             double lam_i = state.lam(i);
-            double g_i = state.g_val(i);
             
-            // Simplified barrier (no soft constraints for now)
-            sigma(i) = mu / (s_i * s_i) + lam_i / s_i;
-            grad_mod(i) = -mu / s_i + lam_i - sigma(i) * (g_i + s_i);
+            if(s_i < config.min_barrier_slack) s_i = config.min_barrier_slack;
+            
+            // Get constraint type and weight
+            double w = 0.0;
+            int type = 0;
+            if constexpr (NC > 0) {
+                if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
+                    type = ModelType::constraint_types[i];
+                    w = ModelType::constraint_weights[i];
+                }
+            }
+            
+            double sigma_val = lam_i / s_i;
+            
+            // Handle soft constraints
+            if (type == 2 && w > 1e-6) { // L2 Soft (Dual Reg)
+                sigma_val = 1.0 / (s_i/lam_i + 1.0/w);
+            }
+            else if (type == 1 && w > 1e-6) { // L1 Soft (Dual Box)
+                double soft_s_i = state.soft_s(i);
+                if (soft_s_i < config.min_barrier_slack) soft_s_i = config.min_barrier_slack;
+                
+                double term_hard = s_i / lam_i;
+                double term_soft = soft_s_i / (w - lam_i);
+                
+                sigma_val = 1.0 / (term_hard + term_soft);
+            }
+            
+            sigma(i) = sigma_val;
+            
+            // Compute gradient modification
+            double r_y = s_i * lam_i - mu;
+            double g_val_i = state.g_val(i);
+            
+            // Add affine correction if in Mehrotra corrector mode
+            if (affine_workspace) {
+                r_y += affine_workspace->ds(i) * affine_workspace->dlam(i);
+            }
+            
+            if (type == 1 && w > 1e-6) { // L1 Soft
+                double soft_s_i = state.soft_s(i);
+                if (soft_s_i < config.min_barrier_slack) soft_s_i = config.min_barrier_slack;
+                
+                double r_eq = g_val_i + s_i - soft_s_i;
+                double r_z = soft_s_i * (w - lam_i) - mu;
+                
+                // Add affine correction to r_z for L1 soft constraints
+                if (affine_workspace) {
+                    r_z += affine_workspace->dsoft_s(i) * (-affine_workspace->dlam(i));
+                }
+                
+                // grad_mod = lam + sigma * (r_eq - r_y/lam + r_z/(w-lam))
+                double term_correction = r_eq - r_y/lam_i + r_z/(w - lam_i);
+                grad_mod(i) = lam_i + sigma_val * term_correction;
+            }
+            else if (type == 2 && w > 1e-6) { // L2 Soft
+                double r_prim_L2 = g_val_i + s_i - lam_i/w;
+                double term2 = sigma_val * (r_y / lam_i);
+                grad_mod(i) = sigma_val * r_prim_L2 - term2 + lam_i;
+            }
+            else { // Hard constraint
+                double r_eq = g_val_i + s_i;
+                double term2 = r_y / s_i;
+                grad_mod(i) = sigma_val * r_eq - term2 + lam_i;
+            }
         }
         
         MSMat<double, NC, NC> SigmaMat = sigma.asDiagonal();
@@ -349,6 +411,12 @@ namespace internal {
         auto* state = traj.get_active_state();
         auto* model = traj.get_model_data();
         auto* workspace = traj.get_workspace();
+        
+        // Get affine workspace if available (for Mehrotra corrector)
+        const typename TrajectoryType::Work* affine_ws = nullptr;
+        if (affine_traj) {
+            affine_ws = affine_traj->get_affine_workspace();
+        }
 
         // Compute barrier derivatives for all knots
         for(int k=0; k<=N; ++k) {
@@ -356,7 +424,8 @@ namespace internal {
                                              typename TrajectoryType::Model,
                                              typename TrajectoryType::Work,
                                              ModelType>(
-                state[k], model[k], workspace[k], mu, config, ws);
+                state[k], model[k], workspace[k], mu, config, ws, 
+                affine_ws ? &affine_ws[k] : nullptr);
         }
 
         MSVec<double, Knot::NX> Vx = workspace[N].q_bar;
@@ -526,20 +595,122 @@ namespace internal {
             MatOps::mult_add(workspace[k+1].dx, model[k].B, workspace[k].du);
             workspace[k+1].dx += defect;
             
-            // TODO: Recover dual search directions (simplified for now)
-            // Just compute simple ds and dlam
+            // Recover dual search directions (ds, dlam, dsoft_s)
             constexpr int NC = Knot::NC;
-            for(int i=0; i<NC; ++i) {
-                workspace[k].ds(i) = -state[k].g_val(i) - workspace[k].dx.dot(model[k].C.row(i)) - workspace[k].du.dot(model[k].D.row(i));
-                workspace[k].dlam(i) = (mu - state[k].s(i) * state[k].lam(i)) / state[k].s(i) - state[k].lam(i) * workspace[k].ds(i) / state[k].s(i);
+            if constexpr (NC > 0) {
+                for(int i=0; i<NC; ++i) {
+                    double s_i = state[k].s(i);
+                    double lam_i = state[k].lam(i);
+                    double g_i = state[k].g_val(i);
+                    
+                    if (s_i < config.min_barrier_slack) s_i = config.min_barrier_slack;
+                    
+                    // Get constraint type and weight
+                    double w = 0.0;
+                    int type = 0;
+                    if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
+                        type = ModelType::constraint_types[i];
+                        w = ModelType::constraint_weights[i];
+                    }
+                    
+                    // Constraint step from primal variables (linearized constraint change)
+                    double constraint_step = model[k].C.row(i).dot(workspace[k].dx) + model[k].D.row(i).dot(workspace[k].du);
+                    
+                    double r_y = s_i * lam_i - mu;
+                    
+                    if (type == 1 && w > 1e-6) { // L1 Soft
+                        double soft_s_i = state[k].soft_s(i);
+                        if (soft_s_i < config.min_barrier_slack) soft_s_i = config.min_barrier_slack;
+                        
+                        double sigma_val = 1.0 / (s_i/lam_i + soft_s_i/(w - lam_i));
+                        
+                        double r_eq = g_i + s_i - soft_s_i;
+                        double r_z = soft_s_i * (w - lam_i) - mu;
+                        
+                        double eff_r = r_eq - r_y/lam_i + r_z/(w - lam_i);
+                        double dlam = sigma_val * (constraint_step + eff_r);
+                        
+                        workspace[k].dlam(i) = dlam;
+                        workspace[k].ds(i) = (-r_y - s_i * dlam) / lam_i;
+                        workspace[k].dsoft_s(i) = -(r_z - soft_s_i * dlam) / (w - lam_i);
+                        
+                        static int debug_new = 0;
+                        if (debug_new < 1 && i == 0 && k == 0) {
+                            std::cout << "[NEW-L1] constraint_step=" << constraint_step << " eff_r=" << eff_r 
+                                     << " dlam=" << dlam << " ds=" << workspace[k].ds(i) << " dsoft_s=" << workspace[k].dsoft_s(i) << std::endl;
+                            debug_new++;
+                        }
+                    }
+                    else if (type == 2 && w > 1e-6) { // L2 Soft
+                        double r_prim_L2 = g_i + s_i - lam_i/w;
+                        double term_rhs = -r_y + lam_i * (r_prim_L2 + constraint_step);
+                        double factor = 1.0 / (s_i + lam_i/w);
+                        
+                        workspace[k].dlam(i) = factor * term_rhs;
+                        workspace[k].ds(i) = -r_prim_L2 - constraint_step + workspace[k].dlam(i)/w;
+                        workspace[k].dsoft_s(i) = 0.0; // L2 doesn't use soft_s
+                    }
+                    else { // Hard constraint
+                        workspace[k].ds(i) = constraint_step;
+                        workspace[k].dlam(i) = (mu - s_i * lam_i) / s_i - lam_i * workspace[k].ds(i) / s_i;
+                        workspace[k].dsoft_s(i) = 0.0;
+                    }
+                }
             }
         }
         
-        // Terminal knot
+        // Terminal knot - also needs soft constraint handling
         constexpr int NC_term = Knot::NC;
-        for(int i=0; i<NC_term; ++i) {
-            workspace[N].ds(i) = -state[N].g_val(i);
-            workspace[N].dlam(i) = (mu - state[N].s(i) * state[N].lam(i)) / state[N].s(i);
+        if constexpr (NC_term > 0) {
+            for(int i=0; i<NC_term; ++i) {
+                double s_i = state[N].s(i);
+                double lam_i = state[N].lam(i);
+                double g_i = state[N].g_val(i);
+                
+                if (s_i < config.min_barrier_slack) s_i = config.min_barrier_slack;
+                
+                // Get constraint type and weight
+                double w = 0.0;
+                int type = 0;
+                if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
+                    type = ModelType::constraint_types[i];
+                    w = ModelType::constraint_weights[i];
+                }
+                
+                double constraint_step = -g_i;  // dx is included in g_val already at terminal
+                double r_y = s_i * lam_i - mu;
+                
+                if (type == 1 && w > 1e-6) { // L1 Soft
+                    double soft_s_i = state[N].soft_s(i);
+                    if (soft_s_i < config.min_barrier_slack) soft_s_i = config.min_barrier_slack;
+                    
+                    double sigma_val = 1.0 / (s_i/lam_i + soft_s_i/(w - lam_i));
+                    
+                    double r_eq = g_i + s_i - soft_s_i;
+                    double r_z = soft_s_i * (w - lam_i) - mu;
+                    
+                    double eff_r = r_eq - r_y/lam_i + r_z/(w - lam_i);
+                    double dlam = sigma_val * (constraint_step + eff_r);
+                    
+                    workspace[N].dlam(i) = dlam;
+                    workspace[N].ds(i) = (-r_y - s_i * dlam) / lam_i;
+                    workspace[N].dsoft_s(i) = -(r_z - soft_s_i * dlam) / (w - lam_i);
+                }
+                else if (type == 2 && w > 1e-6) { // L2 Soft
+                    double r_prim_L2 = g_i + s_i - lam_i/w;
+                    double term_rhs = -r_y + lam_i * (r_prim_L2 + constraint_step);
+                    double factor = 1.0 / (s_i + lam_i/w);
+                    
+                    workspace[N].dlam(i) = factor * term_rhs;
+                    workspace[N].ds(i) = -r_prim_L2 - constraint_step + workspace[N].dlam(i)/w;
+                    workspace[N].dsoft_s(i) = 0.0;
+                }
+                else { // Hard constraint
+                    workspace[N].ds(i) = constraint_step;
+                    workspace[N].dlam(i) = (mu - s_i * lam_i) / s_i - lam_i * workspace[N].ds(i) / s_i;
+                    workspace[N].dsoft_s(i) = 0.0;
+                }
+            }
         } 
         
         return true;

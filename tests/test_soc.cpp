@@ -5,37 +5,46 @@
 using namespace minisolver;
 
 // Mock LinearSolver that fails first step but returns success on SOC step
-class SocMockLinearSolver : public LinearSolver<Trajectory<KnotPointV2<double, 4, 2, 5, 13>, 5>::TrajArray> {
+class SocMockLinearSolver : public LinearSolver<Trajectory<KnotPointV2<double, 4, 2, 5, 13>, 5>> {
 public:
-    using TrajArray = Trajectory<KnotPointV2<double, 4, 2, 5, 13>, 5>::TrajArray;
+    using TrajType = Trajectory<KnotPointV2<double, 4, 2, 5, 13>, 5>;
     int solve_count = 0;
     
-    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/, 
-              const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override {
+    bool solve(TrajType& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/, 
+              const SolverConfig& /*config*/, const TrajType* /*affine_traj*/ = nullptr) override {
         solve_count++;
         // Standard solve: produce a step that gets rejected (e.g. too aggressive)
         // dx = -10.0 (if x=10, goes to 0)
         // But let's pretend this step causes constraint violation or cost increase
+        auto* workspace = traj.get_workspace();
         for(int k=0; k<=N; ++k) {
-            traj[k].dx.fill(-10.0);
-            traj[k].du.setZero();
-            traj[k].ds.setZero();
-            traj[k].dlam.setZero();
+            workspace[k].dx.fill(-10.0);
+            workspace[k].du.setZero();
+            workspace[k].ds.setZero();
+            workspace[k].dlam.setZero();
+            workspace[k].dsoft_s.setZero();
         }
         return true;
     }
     
-    bool solve_soc(TrajArray& traj, const TrajArray& /*soc_rhs_traj*/, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+    bool solve_soc(TrajType& traj, const TrajType& /*soc_rhs_traj*/, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
                    const SolverConfig& /*config*/) override {
         solve_count++;
         // SOC solve: produce a correction step
         // dx = 1.0 (corrects back slightly)
+        auto* workspace = traj.get_workspace();
         for(int k=0; k<=N; ++k) {
-            traj[k].dx.fill(1.0);
-            traj[k].du.setZero();
-            traj[k].ds.setZero();
-            traj[k].dlam.setZero();
+            workspace[k].dx.fill(1.0);
+            workspace[k].du.setZero();
+            workspace[k].ds.setZero();
+            workspace[k].dlam.setZero();
+            workspace[k].dsoft_s.setZero();
         }
+        return true;
+    }
+    
+    bool refine(TrajType& /*traj*/, const TrajType& /*original_system*/, int /*N*/, double /*mu*/, double /*reg*/, 
+                const SolverConfig& /*config*/) override {
         return true;
     }
 };
@@ -62,16 +71,33 @@ TEST(AdvancedFeaturesTest, SOCLogic) {
     std::array<double, N> dts; dts.fill(0.1);
     
     // Setup initial state
-    auto& active = trajectory.active();
+    auto* state = trajectory.get_active_state();
+    auto* model = trajectory.get_model_data();
+    
     for(int k=0; k<=N; ++k) {
-        active[k].set_zero();
-        active[k].x.fill(10.0);
-        active[k].cost = 0.0;
-        active[k].g_val.fill(-1.0); // Feasible
+        state[k].x.fill(10.0);
+        state[k].u.setZero();
+        state[k].s.setConstant(1e-3);
+        state[k].lam.setConstant(1e-3);
+        state[k].soft_s.setConstant(1e-3);
+        state[k].p.setZero();
+        state[k].g_val.fill(-1.0); // Feasible
+        state[k].cost = 0.0;
+        
+        model[k].Q.setIdentity();
+        model[k].R.setIdentity();
+        model[k].q.setZero();
+        model[k].r.setZero();
+        model[k].H.setZero();
+        model[k].A.setIdentity();
+        model[k].B.setZero();
+        model[k].C.setZero();
+        model[k].D.setZero();
+        model[k].f_resid.setZero();
     }
     
     // First solve (outside LineSearch)
-    linear_solver.solve(active, N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
+    linear_solver.solve(trajectory, N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
     // dx = -10. Candidate x = 0.
     
     // We need to make Candidate (x=0) UNACCEPTABLE.
@@ -92,8 +118,8 @@ TEST(AdvancedFeaturesTest, SOCLogic) {
     // So Phi increases.
     
     for(int k=0; k<=N; ++k) {
-        active[k].p(1) = 10.0; // x_ref
-        active[k].p(8) = 100.0; // w_pos
+        state[k].p(1) = 10.0; // x_ref
+        state[k].p(8) = 100.0; // w_pos
     }
     // Recompute active metrics (cost=0)
     // Actually search computes m_0.

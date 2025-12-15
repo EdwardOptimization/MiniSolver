@@ -246,13 +246,13 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     
     std::vector<std::pair<double, double>> filter;
 
-    std::pair<double, double> compute_metrics(const TrajectoryType& traj, int N, double mu, const SolverConfig& config) {
+    std::pair<double, double> compute_metrics(const TrajectoryType& traj, int N, double mu, const SolverConfig& config, bool use_candidate = false) {
         double theta = 0.0; 
         double phi = 0.0;   
         const int NC = Model::NC;
         const int NX = Model::NX;
         
-        auto* state = traj.get_active_state();
+        auto* state = use_candidate ? traj.get_candidate_state() : traj.get_active_state();
         auto* model = traj.get_model_data();
         
         for(int k=0; k<=N; ++k) {
@@ -430,66 +430,59 @@ public:
                 }
             }
             
-            auto m_alpha = compute_metrics(trajectory, N, mu, config);
+            auto m_alpha = compute_metrics(trajectory, N, mu, config, true); // Use candidate state
             if (is_acceptable(m_alpha.first, m_alpha.second, theta_0, phi_0, config)) {
                 accepted = true;
             }
             
-#if 0 // DISABLED: SOC during refactoring
-            // SOC Logic
+            // SOC Logic (RESTORED for Split Architecture)
             if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0 && alpha > config.soc_trigger_alpha) {
                 if (config.print_level >= PrintLevel::DEBUG) 
                      MLOG_DEBUG("Step rejected. Attempting SOC.");
                 
-                auto soc_data = std::make_unique<TrajArray>();
-                *soc_data = active; // [FIX] Copy system matrices from active trajectory
-                
-                // [NEW] Use solve_soc
-                // Note: solve_soc takes 'soc_rhs_traj'. We want to pass the current trial point 'candidate' as RHS source.
-                // soc_data will store the correction step.
-                // The linear_solver needs to solve J * dx_soc = -g(candidate)
-                
-                bool soc_success = linear_solver.solve_soc(*soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
+                // In new architecture, solve_soc modifies workspace in-place with SOC correction
+                // Pass current candidate trajectory as the RHS (constraint residuals source)
+                bool soc_success = linear_solver.solve_soc(trajectory, trajectory, N, mu, reg, config.inertia_strategy, config);
                 
                 if (soc_success) {
+                    // Apply SOC correction to candidate state
+                    // The workspace now contains dx_soc, du_soc, etc.
+                    auto* soc_workspace = trajectory.get_workspace();
+                    
                     for(int k=0; k<=N; ++k) {
                         // Apply correction: x_new = x_candidate + dx_soc
-                        // But wait, we need to re-evaluate merit for this new point in next iteration?
-                        // Actually, standard SOC applies correction and tries to accept immediately.
-                        // Or we update 'candidate' and let the loop continue with same alpha?
-                        // If we update candidate, we are effectively testing alpha=1.0 step + soc.
-                        
-                        // Let's modify candidate directly and re-check acceptability.
-                        candidate_state[k].x += (*soc_data)[k].dx;
-                        candidate_state[k].u += (*soc_data)[k].du;
-                        candidate_state[k].s += (*soc_data)[k].ds;
-                        candidate_state[k].lam += (*soc_data)[k].dlam;
+                        candidate_state[k].x += soc_workspace[k].dx;
+                        candidate_state[k].u += soc_workspace[k].du;
+                        candidate_state[k].s += soc_workspace[k].ds;
+                        candidate_state[k].lam += soc_workspace[k].dlam;
+                        candidate_state[k].soft_s += soc_workspace[k].dsoft_s;
                         
                         // Re-evaluate dynamics/constraints for SOC candidate
                         double current_dt = (k < N) ? dt_traj[k] : 0.0;
                         if (config.enable_line_search_rollout && k < N) {
-                             if (k==0) candidate_state[0].x = active_state[0].x; // Base doesn't change? Wait, SOC modifies base? No.
-                             // SOC modifies the trial point. 
-                             // x_trial = x_k + alpha*dx + dx_soc.
-                             // Here candidate is already x_k + alpha*dx.
-                             // So we just add dx_soc.
-                             // But rollout needs consistent integration.
-                             if (k==0) {} // x0 fixed
-                             else candidate_state[k].x = Model::integrate(candidate[k-1].x, candidate[k-1].u, candidate[k-1].p, dt_traj[k-1], config.integrator);
+                             // SOC modifies the trial point, so we need to re-integrate
+                             if (k==0) {
+                                 candidate_state[0].x = active_state[0].x; // Base is fixed
+                             } else {
+                                 candidate_state[k].x = Model::integrate(candidate_state[k-1].x, candidate_state[k-1].u, 
+                                                                         candidate_state[k-1].p, dt_traj[k-1], config.integrator);
+                             }
                         }
-                        // Compute Residuals
-                if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                    Model::compute_cost_gn(candidate_state[k], candidate_model[k]);
-                    Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate_state[k], candidate_model[k]);
-                } else {
-                    Model::compute_cost_exact(candidate_state[k], candidate_model[k]);
-                    Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate_state[k], candidate_model[k]);
-                }
+                        
+                        // Recompute residuals for SOC-corrected candidate
+                        if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                            Model::compute_cost_gn(candidate_state[k], candidate_model[k]);
+                            Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
+                            Model::compute_constraints(candidate_state[k], candidate_model[k]);
+                        } else {
+                            Model::compute_cost_exact(candidate_state[k], candidate_model[k]);
+                            Model::compute_dynamics(candidate_state[k], candidate_model[k], config.integrator, current_dt);
+                            Model::compute_constraints(candidate_state[k], candidate_model[k]);
+                        }
                     }
                     
-                    auto m_soc = compute_metrics(candidate, N, mu, config);
+                    // Check if SOC-corrected candidate is acceptable
+                    auto m_soc = compute_metrics(trajectory, N, mu, config, true); // Use candidate state
                     if (is_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config)) {
                         if (config.print_level >= PrintLevel::DEBUG) 
                              MLOG_DEBUG("SOC Accepted.");
@@ -500,8 +493,6 @@ public:
                 soc_attempted = true;
                 if (accepted) break;
             }
-
-#endif // DISABLED: SOC
             if (accepted) break;
             alpha *= config.line_search_backtrack_factor; 
             ls_iter++;

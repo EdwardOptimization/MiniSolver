@@ -33,47 +33,60 @@ struct SoftModel {
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
-        kp.f_resid(0) = kp.x(0) + kp.u(0)*dt;
-        kp.A(0,0) = 1.0;
-        kp.B(0,0) = dt;
+    static void compute_dynamics(
+        const StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType /*type*/,
+        double dt)
+    {
+        model.f_resid(0) = state.x(0) + state.u(0)*dt;
+        model.A(0,0) = 1.0;
+        model.B(0,0) = dt;
     }
 
     template<typename T>
-    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
+    static void compute_constraints(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
         // g(x,u) = u - 1.0 <= 0
-        kp.g_val(0) = kp.u(0) - 1.0;
-        kp.C.setZero();
-        kp.D(0,0) = 1.0;
+        state.g_val(0) = state.u(0) - 1.0;
+        model.C.setZero();
+        model.D(0,0) = 1.0;
     }
     
     template<typename T>
-    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
+    static void compute_cost_exact(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
         // Min u^2
-        kp.cost = kp.u(0)*kp.u(0);
-        kp.r(0) = 2.0*kp.u(0);
-        kp.R(0,0) = 2.0;
+        state.cost = state.u(0)*state.u(0);
+        model.r(0) = 2.0*state.u(0);
+        model.R(0,0) = 2.0;
+        model.Q.setZero();
+        model.q.setZero();
+        model.H.setZero();
     }
     
-    // GN placeholder
     template<typename T>
-    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        compute_cost_exact(kp);
+    static void compute_cost_gn(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
+        compute_cost_exact(state, model);
     }
     
-    // Wrappers expected by Solver
     template<typename T>
-    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
-        compute_cost_exact(kp); // Default to Exact
-    }
-
-    template<typename T>
-    static void compute_exact(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
-        compute_cost_exact(kp);
+    static void compute(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType type,
+        double dt)
+    {
+        compute_dynamics(state, model, type, dt);
+        compute_constraints(state, model);
+        compute_cost_exact(state, model);
     }
 };
 

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "../examples/01_car_tutorial/generated/car_model.h"
+#include "minisolver/core/types.h"
 #include <cmath>
 
 using namespace minisolver;
@@ -58,17 +59,26 @@ TEST(AutoDiffTest, CostDerivatives) {
     KnotPointV2<double, 4, 2, 5, 13> kp;
     kp.set_zero();
     
-    kp.x(0) = 5.0; // x
-    kp.p(1) = 10.0; // x_ref
-    kp.p(8) = 1.0;  // w_pos
+    // Split into state and model
+    StateNode<double, 4, 2, 5, 13> state;
+    ModelData<double, 4, 2, 5> model;
+    
+    // Copy data from kp to state
+    state.x = kp.x;
+    state.u = kp.u;
+    state.p = kp.p;
+    
+    state.x(0) = 5.0; // x
+    state.p(1) = 10.0; // x_ref
+    state.p(8) = 1.0;  // w_pos
     
     // Cost = w_pos * (x - x_ref)^2 = 1.0 * (5 - 10)^2 = 25.0
     // Grad x = 2 * w_pos * (x - x_ref) = 2 * 1 * (-5) = -10
     
-    CarModel::compute_cost_exact(kp); // Computes Cost, q, r, Q, R, H
+    CarModel::compute_cost_exact(state, model); // Computes Cost, q, r, Q, R, H
     
-    EXPECT_DOUBLE_EQ(kp.cost, 25.0);
-    EXPECT_DOUBLE_EQ(kp.q(0), -10.0);
-    EXPECT_DOUBLE_EQ(kp.q(1), 0.0); // y error is 0 (0-0)
+    EXPECT_DOUBLE_EQ(state.cost, 25.0);
+    EXPECT_DOUBLE_EQ(model.q(0), -10.0);
+    EXPECT_DOUBLE_EQ(model.q(1), 0.0); // y error is 0 (0-0)
 }
 

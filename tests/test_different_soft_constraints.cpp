@@ -29,31 +29,30 @@ struct InterfaceModel {
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
-        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
-        kp.A(0,0) = 1.0; kp.B(0,0) = dt;
+    static void compute_dynamics(const StateNode<T,NX,NU,NC,NP>& state, ModelData<T,NX,NU,NC>& model, IntegratorType /*type*/, double dt) {
+        model.f_resid(0) = state.x(0) + state.u(0) * dt;
+        model.A(0,0) = 1.0; model.B(0,0) = dt;
     }
 
     template<typename T>
-    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
+    static void compute_constraints(StateNode<T,NX,NU,NC,NP>& state, ModelData<T,NX,NU,NC>& model) {
         // Constraint: x <= 5.0
-        kp.g_val(0) = kp.x(0) - 5.0; 
-        kp.C(0,0) = 1.0; kp.D(0,0) = 0.0;
+        state.g_val(0) = state.x(0) - 5.0; 
+        model.C(0,0) = 1.0; model.D(0,0) = 0.0;
     }
 
     template<typename T>
-    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        T diff = kp.x(0) - 10.0; // Target x = 10
-        kp.cost = diff*diff + 1e-4 * kp.u(0)*kp.u(0); 
-        kp.q(0) = 2 * diff;
-        kp.r(0) = 2e-4 * kp.u(0);
-        kp.Q(0,0) = 2.0; kp.R(0,0) = 2e-4;
+    static void compute_cost_exact(StateNode<T,NX,NU,NC,NP>& state, ModelData<T,NX,NU,NC>& model) {
+        T diff = state.x(0) - 10.0; // Target x = 10
+        state.cost = diff*diff + 1e-4 * state.u(0)*state.u(0); 
+        model.q(0) = 2 * diff;
+        model.r(0) = 2e-4 * state.u(0);
+        model.Q(0,0) = 2.0; model.R(0,0) = 2e-4; model.H.setZero();
     }
     
-    template<typename T> static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt); compute_constraints(kp); compute_cost(kp);
+    template<typename T> static void compute_cost_gn(StateNode<T,NX,NU,NC,NP>& s, ModelData<T,NX,NU,NC>& m) { compute_cost_exact(s, m); }
+    template<typename T> static void compute(StateNode<T,NX,NU,NC,NP>& s, ModelData<T,NX,NU,NC>& m, IntegratorType t, double dt) {
+        compute_dynamics(s, m, t, dt); compute_constraints(s, m); compute_cost_exact(s, m);
     }
 };
 
@@ -86,51 +85,51 @@ struct ManualL1Model {
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
-        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
-        kp.A(0,0) = 1.0; 
-        kp.B(0,0) = dt; kp.B(0,1) = 0.0; 
+    static void compute_dynamics(const StateNode<T,NX,NU,NC,NP>& state, ModelData<T,NX,NU,NC>& model, IntegratorType /*type*/, double dt) {
+        model.f_resid(0) = state.x(0) + state.u(0) * dt;
+        model.A(0,0) = 1.0; 
+        model.B(0,0) = dt; model.B(0,1) = 0.0; 
     }
 
     template<typename T>
-    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        T x = kp.x(0);
-        T slk = kp.u(1);
+    static void compute_constraints(StateNode<T,NX,NU,NC,NP>& state, ModelData<T,NX,NU,NC>& model) {
+        T x = state.x(0);
+        T slk = state.u(1);
         
         // 1. x - 5 - slk <= 0
-        kp.g_val(0) = x - 5.0 - slk;
-        kp.C(0,0) = 1.0; 
-        kp.D(0,0) = 0.0; kp.D(0,1) = -1.0; 
+        state.g_val(0) = x - 5.0 - slk;
+        model.C(0,0) = 1.0; 
+        model.D(0,0) = 0.0; model.D(0,1) = -1.0; 
         
         // 2. -slk <= 0 (Non-negative slack)
-        kp.g_val(1) = -slk;
-        kp.C(1,0) = 0.0;
-        kp.D(1,0) = 0.0; kp.D(1,1) = -1.0;
+        state.g_val(1) = -slk;
+        model.C(1,0) = 0.0;
+        model.D(1,0) = 0.0; model.D(1,1) = -1.0;
     }
 
     template<typename T>
-    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        T diff = kp.x(0) - 10.0;
-        T slk = kp.u(1);
+    static void compute_cost_exact(StateNode<T,NX,NU,NC,NP>& state, ModelData<T,NX,NU,NC>& model) {
+        T diff = state.x(0) - 10.0;
+        T slk = state.u(1);
         double w = 1.0; // Fixed L1 Weight
         
         // Cost: (x-10)^2 + w*slk
-        kp.cost = diff*diff + 1e-4*kp.u(0)*kp.u(0) + w * slk;
+        state.cost = diff*diff + 1e-4*state.u(0)*state.u(0) + w * slk;
         
-        kp.q(0) = 2 * diff;
-        kp.r(0) = 2e-4 * kp.u(0);
-        kp.r(1) = w; // Gradient w.r.t slk is constant w
+        model.q(0) = 2 * diff;
+        model.r(0) = 2e-4 * state.u(0);
+        model.r(1) = w; // Gradient w.r.t slk is constant w
         
-        kp.Q(0,0) = 2.0;
-        kp.R(0,0) = 2e-4; 
-        kp.R(1,1) = 0.0; // Linear cost -> 0 Hessian
-        kp.R(0,1) = 0.0; kp.R(1,0) = 0.0;
+        model.Q(0,0) = 2.0;
+        model.R(0,0) = 2e-4; 
+        model.R(1,1) = 0.0; // Linear cost -> 0 Hessian
+        model.R(0,1) = 0.0; model.R(1,0) = 0.0;
+        model.H.setZero();
     }
     
-    template<typename T> static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt); compute_constraints(kp); compute_cost(kp);
+    template<typename T> static void compute_cost_gn(StateNode<T,NX,NU,NC,NP>& s, ModelData<T,NX,NU,NC>& m) { compute_cost_exact(s, m); }
+    template<typename T> static void compute(StateNode<T,NX,NU,NC,NP>& s, ModelData<T,NX,NU,NC>& m, IntegratorType t, double dt) {
+        compute_dynamics(s, m, t, dt); compute_constraints(s, m); compute_cost_exact(s, m);
     }
 };
 
@@ -158,45 +157,45 @@ struct ManualL2Model {
     }
 
     template<typename T>
-    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
-        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
-        kp.A(0,0) = 1.0; 
-        kp.B(0,0) = dt; kp.B(0,1) = 0.0; 
+    static void compute_dynamics(const StateNode<T,NX,NU,NC,NP>& state, ModelData<T,NX,NU,NC>& model, IntegratorType /*type*/, double dt) {
+        model.f_resid(0) = state.x(0) + state.u(0) * dt;
+        model.A(0,0) = 1.0; 
+        model.B(0,0) = dt; model.B(0,1) = 0.0; 
     }
 
     template<typename T>
-    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        T x = kp.x(0);
-        T slk = kp.u(1);
+    static void compute_constraints(StateNode<T,NX,NU,NC,NP>& state, ModelData<T,NX,NU,NC>& model) {
+        T x = state.x(0);
+        T slk = state.u(1);
         // x - 5 - slk <= 0
-        kp.g_val(0) = x - 5.0 - slk;
-        kp.C(0,0) = 1.0; 
-        kp.D(0,0) = 0.0; kp.D(0,1) = -1.0; 
+        state.g_val(0) = x - 5.0 - slk;
+        model.C(0,0) = 1.0; 
+        model.D(0,0) = 0.0; model.D(0,1) = -1.0; 
     }
 
     template<typename T>
-    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) {
-        T diff = kp.x(0) - 10.0;
-        T slk = kp.u(1);
+    static void compute_cost_exact(StateNode<T,NX,NU,NC,NP>& state, ModelData<T,NX,NU,NC>& model) {
+        T diff = state.x(0) - 10.0;
+        T slk = state.u(1);
         double w = 1.0; // Fixed L2 Weight
         
         // Cost: 0.5 * w * slk^2 (Matches MiniSolver Interface L2 formulation)
-        kp.cost = diff*diff + 1e-4*kp.u(0)*kp.u(0) + 0.5 * w * slk * slk;
+        state.cost = diff*diff + 1e-4*state.u(0)*state.u(0) + 0.5 * w * slk * slk;
         
-        kp.q(0) = 2 * diff;
-        kp.r(0) = 2e-4 * kp.u(0);
-        kp.r(1) = w * slk; 
+        model.q(0) = 2 * diff;
+        model.r(0) = 2e-4 * state.u(0);
+        model.r(1) = w * slk; 
         
-        kp.Q(0,0) = 2.0;
-        kp.R(0,0) = 2e-4; 
-        kp.R(1,1) = w; 
-        kp.R(0,1) = 0.0; kp.R(1,0) = 0.0;
+        model.Q(0,0) = 2.0;
+        model.R(0,0) = 2e-4; 
+        model.R(1,1) = w; 
+        model.R(0,1) = 0.0; model.R(1,0) = 0.0;
+        model.H.setZero();
     }
     
-    template<typename T> static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute_cost(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt); compute_constraints(kp); compute_cost(kp);
+    template<typename T> static void compute_cost_gn(StateNode<T,NX,NU,NC,NP>& s, ModelData<T,NX,NU,NC>& m) { compute_cost_exact(s, m); }
+    template<typename T> static void compute(StateNode<T,NX,NU,NC,NP>& s, ModelData<T,NX,NU,NC>& m, IntegratorType t, double dt) {
+        compute_dynamics(s, m, t, dt); compute_constraints(s, m); compute_cost_exact(s, m);
     }
 };
 
@@ -247,12 +246,12 @@ TEST(ComparisonTest, L1_SoftConstraint) {
     
     // [Init Dual Variables]
     // For L1: Stationarity implies Lambda = Weight = 1.0
-    auto& traj = solver_man.trajectory.active();
-    traj[1].s(0) = 0.01;  // Small slack for active constraint
-    traj[1].lam(0) = 1.0; // L1 Dual = Weight
+    auto* state = solver_man.trajectory.get_active_state();
+    state[1].s(0) = 0.01;  // Small slack for active constraint
+    state[1].lam(0) = 1.0; // L1 Dual = Weight
     
-    traj[1].s(1) = slk_init; // Inactive non-negative constraint
-    traj[1].lam(1) = 0.01;
+    state[1].s(1) = slk_init; // Inactive non-negative constraint
+    state[1].lam(1) = 0.01;
     
     solver_man.is_warm_started = true;
     
@@ -304,9 +303,9 @@ TEST(ComparisonTest, L2_SoftConstraint) {
     // [Init Dual Variables]
     // For L2: Stationarity implies Lambda = Weight * Slack
     // Lam = 1.0 * 5.0 = 5.0
-    auto& traj = solver_man.trajectory.active();
-    traj[1].s(0) = 0.01;
-    traj[1].lam(0) = 5.0; 
+    auto* state2 = solver_man.trajectory.get_active_state();
+    state2[1].s(0) = 0.01;
+    state2[1].lam(0) = 5.0; 
     
     solver_man.is_warm_started = true;
     

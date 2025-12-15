@@ -36,31 +36,62 @@ struct FlatCostModel {
     }
 
     template<typename T>
-    static void compute(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double /*dt*/) {
-        kp.f_resid(0) = kp.x(0);
-        kp.A(0,0) = 1.0;
-        kp.B(0,0) = 0.0;
-        
-        // Very small cost
-        double w = 1e-7;
-        kp.cost = w * kp.x(0) * kp.x(0);
-        kp.Q(0,0) = 2*w;
-        kp.q(0) = 2*w * kp.x(0);
-        kp.R.setIdentity(); // Regularize u
-        
-        // Feasible Constraint x >= -10
-        kp.g_val(0) = -10.0 - kp.x(0); // -10 - x <= 0 -> x >= -10
-        kp.C(0,0) = -1.0;
+    static void compute_dynamics(
+        const StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType /*type*/,
+        double /*dt*/)
+    {
+        model.f_resid(0) = state.x(0);
+        model.A(0,0) = 1.0;
+        model.B(0,0) = 0.0;
     }
     
     template<typename T>
-    static void compute_cost_gn(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
+    static void compute_cost_gn(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
+        // Very small cost
+        double w = 1e-7;
+        state.cost = w * state.x(0) * state.x(0);
+        model.Q(0,0) = 2*w;
+        model.q(0) = 2*w * state.x(0);
+        model.R.setIdentity(); // Regularize u
+        model.r.setZero();
+        model.H.setZero();
+    }
+    
     template<typename T>
-    static void compute_cost_exact(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
+    static void compute_cost_exact(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
+        compute_cost_gn(state, model);
+    }
+    
     template<typename T>
-    static void compute_dynamics(KnotPointV2<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) { compute(kp, type, dt); }
+    static void compute_constraints(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model)
+    {
+        // Feasible Constraint x >= -10
+        state.g_val(0) = -10.0 - state.x(0); // -10 - x <= 0 -> x >= -10
+        model.C(0,0) = -1.0;
+        model.D.setZero();
+    }
+    
     template<typename T>
-    static void compute_constraints(KnotPointV2<T,NX,NU,NC,NP>& kp) { compute(kp, IntegratorType::EULER_EXPLICIT, 0.1); }
+    static void compute(
+        StateNode<T,NX,NU,NC,NP>& state,
+        ModelData<T,NX,NU,NC>& model,
+        IntegratorType type,
+        double dt)
+    {
+        compute_dynamics(state, model, type, dt);
+        compute_cost_exact(state, model);
+        compute_constraints(state, model);
+    }
 };
 
 TEST(FeaturesTest, CostStagnationTermination) {
