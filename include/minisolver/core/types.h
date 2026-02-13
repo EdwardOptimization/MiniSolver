@@ -28,9 +28,111 @@ inline const char* status_to_string(SolverStatus status) {
     }
 }
 
+// =============================================================================
+// Sub-structure 1: KnotState
+// 
+// Contains all vectors and scalars that participate in double-buffering.
+// These are the fields copied during prepare_candidate() and needed after
+// trajectory swap (primal/dual state, evaluation results, search directions,
+// cost/barrier gradients, feedback feedforward term).
+//
+// Skipped from this group are all large matrices, which are recomputed each
+// iteration by Model::compute_* and the Riccati solver.
+// =============================================================================
 template<typename T, int _NX, int _NU, int _NC, int _NP>
-struct KnotPoint {
-    // --- Eigen Memory Alignment (Only needed if backend is Eigen) ---
+struct KnotState {
+    #ifdef USE_EIGEN
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    #endif
+
+    // --- Primal Variables ---
+    MSVec<T, _NX> x;
+    MSVec<T, _NU> u;
+    MSVec<T, _NP> p; // Parameters
+
+    // --- Dual Variables & Slacks ---
+    MSVec<T, _NC> s;         // Slack variables
+    MSVec<T, _NC> lam;       // Dual variables (Lambda)
+    MSVec<T, _NC> soft_s;    // Soft constraint slack (L1)
+    // Note: The L1 soft constraint dual is (w - lam), computed implicitly.
+    // No separate soft_dual variable is needed.
+
+    // --- Evaluation Results ---
+    T cost;                   // Scalar cost value
+    MSVec<T, _NC> g_val;     // Constraint residuals g(x, u)
+    MSVec<T, _NX> f_resid;   // Predicted next state f(x, u)
+
+    // --- Cost Gradients ---
+    MSVec<T, _NX> q;
+    MSVec<T, _NU> r;
+
+    // --- Barrier Gradients (used in iteration logging) ---
+    MSVec<T, _NX> q_bar;
+    MSVec<T, _NU> r_bar;
+
+    // --- Search Directions ---
+    MSVec<T, _NX> dx;
+    MSVec<T, _NU> du;
+    MSVec<T, _NC> ds;
+    MSVec<T, _NC> dlam;
+    MSVec<T, _NC> dsoft_s;
+
+    // --- Feedback Feedforward Term ---
+    MSVec<T, _NU> d;
+};
+
+// =============================================================================
+// Sub-structure 2: KnotMatrices
+// 
+// Contains all large matrices that do NOT participate in double-buffering.
+// These are recomputed each iteration:
+//   - A, B, C, D, Q, R, H: by Model::compute_dynamics/constraints/cost
+//   - Q_bar, R_bar, H_bar: by compute_barrier_derivatives (Riccati)
+//   - K: by Riccati backward pass
+// =============================================================================
+template<typename T, int _NX, int _NU, int _NC>
+struct KnotMatrices {
+    #ifdef USE_EIGEN
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    #endif
+
+    // --- Dynamics Jacobians ---
+    MSMat<T, _NX, _NX> A;    // State transition: dx_{k+1}/dx_k
+    MSMat<T, _NX, _NU> B;    // Control influence: dx_{k+1}/du_k
+
+    // --- Constraint Jacobians ---
+    MSMat<T, _NC, _NX> C;    // dg/dx
+    MSMat<T, _NC, _NU> D;    // dg/du
+
+    // --- Cost Hessians ---
+    MSMat<T, _NX, _NX> Q;    // d²L/dx²
+    MSMat<T, _NU, _NU> R;    // d²L/du²
+    MSMat<T, _NU, _NX> H;    // d²L/dudx (cross term)
+
+    // --- Barrier-Modified Hessians (Riccati Input) ---
+    MSMat<T, _NX, _NX> Q_bar;
+    MSMat<T, _NU, _NU> R_bar;
+    MSMat<T, _NU, _NX> H_bar;
+
+    // --- Feedback Gain Matrix ---
+    MSMat<T, _NU, _NX> K;
+};
+
+// =============================================================================
+// KnotPoint: Composite type via multiple inheritance
+//
+// Inherits from KnotState (vectors/scalars) and KnotMatrices (large matrices).
+// All existing access patterns (kp.x, kp.A, kp.dx, etc.) work unchanged
+// through inheritance — zero external API change.
+//
+// This enables:
+//   - Selective copy via base class assignment (copy_state_from)
+//   - Type-level distinction between buffered and non-buffered data
+//   - Foundation for future storage separation in Trajectory
+// =============================================================================
+template<typename T, int _NX, int _NU, int _NC, int _NP>
+struct KnotPoint : KnotState<T, _NX, _NU, _NC, _NP>,
+                   KnotMatrices<T, _NX, _NU, _NC> {
     #ifdef USE_EIGEN
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     #endif
@@ -38,68 +140,12 @@ struct KnotPoint {
     // === EXPOSE TEMPLATE ARGUMENTS AS CONSTANTS ===
     static const int NX = _NX;
     static const int NU = _NU;
-    static const int NC = _NC; // Number of Constraints
+    static const int NC = _NC;
     static const int NP = _NP;
 
-    // --- PRIMAL VARIABLES ---
-    MSVec<T, NX> x;
-    MSVec<T, NU> u;
-    MSVec<T, NP> p; // Parameters
-
-    // --- DUAL VARIABLES & SLACKS ---
-    // Inequality Constraints: g(x,u) + s = 0, s >= 0
-    // Standard IPM slacks/duals
-    MSVec<T, NC> s;   // Slack variables (s_hard in L1 formulation)
-    MSVec<T, NC> lam; // Dual variables (Lambda)
-    
-    // [NEW] Soft Constraint Variables
-    // soft_s: The slack variable 's_soft' in g(x) - s_soft + s_hard = 0
-    // soft_dual: The dual variable 'nu' for the constraint s_soft >= 0
-    MSVec<T, NC> soft_s; 
-    MSVec<T, NC> soft_dual; 
-
-    // --- MODEL DATA (Derivatives) ---
-    // Dynamics: x_{k+1} = A x_k + B u_k + f_resid
-    // Here f_resid stores the predicted next state f(x,u)
-    MSMat<T, NX, NX> A;
-    MSMat<T, NX, NU> B;
-    MSVec<T, NX> f_resid;
-
-    // Constraints: C x + D u + g_val + s = 0
-    MSMat<T, NC, NX> C;
-    MSMat<T, NC, NU> D;
-    MSVec<T, NC>  g_val; // Value of g(x,u)
-
-    // Cost: 0.5 x'Qx + x'Qu + ...
-    T cost; // Scalar Cost Value
-    MSVec<T, NX> q;
-    MSVec<T, NU> r;
-    MSMat<T, NX, NX> Q;
-    MSMat<T, NU, NU> R;
-    MSMat<T, NU, NX> H; // Cross term u'H x
-
-    // --- SOLVER DATA (Barrier Modified) ---
-    // These are the "effective" Q, R, q, r used in the Riccati pass
-    // They include the barrier terms from the Interior Point Method
-    MSMat<T, NX, NX> Q_bar;
-    MSMat<T, NU, NU> R_bar;
-    MSMat<T, NU, NX> H_bar;
-    MSVec<T, NX>  q_bar;
-    MSVec<T, NU>  r_bar;
-
-    // --- SEARCH DIRECTIONS ---
-    MSVec<T, NX> dx;
-    MSVec<T, NU> du;
-    MSVec<T, NC> ds;
-    MSVec<T, NC> dlam;
-    
-    // [NEW] Soft Slack Steps
-    MSVec<T, NC> dsoft_s;
-    MSVec<T, NC> dsoft_dual;
-
-    // Feedback Gains
-    MSMat<T, NU, NX> K;
-    MSVec<T, NU>  d;
+    // === TYPE ALIASES for sub-structures ===
+    using StateType = KnotState<T, _NX, _NU, _NC, _NP>;
+    using MatricesType = KnotMatrices<T, _NX, _NU, _NC>;
 
     KnotPoint() {
         set_zero();
@@ -107,27 +153,42 @@ struct KnotPoint {
     }
 
     void set_zero() {
-        MatOps::setZero(x); MatOps::setZero(u); MatOps::setZero(p);
-        s.setOnes(); lam.setOnes(); 
-        soft_s.setOnes(); soft_dual.setOnes(); // Initialize to valid interior point
+        // --- KnotState fields (vectors & scalars) ---
+        MatOps::setZero(this->x); MatOps::setZero(this->u); MatOps::setZero(this->p);
+        this->s.setOnes(); this->lam.setOnes(); 
+        this->soft_s.setOnes();
 
-        MatOps::setIdentity(A); MatOps::setZero(B); MatOps::setZero(f_resid);
-        MatOps::setZero(C); MatOps::setZero(D); MatOps::setZero(g_val);
+        this->cost = 0;
+        MatOps::setZero(this->g_val);
+        MatOps::setZero(this->f_resid);
+        MatOps::setZero(this->q); MatOps::setZero(this->r);
+        MatOps::setZero(this->q_bar); MatOps::setZero(this->r_bar);
+        MatOps::setZero(this->dx); MatOps::setZero(this->du);
+        MatOps::setZero(this->ds); MatOps::setZero(this->dlam); 
+        MatOps::setZero(this->dsoft_s);
+        MatOps::setZero(this->d);
 
-        cost = 0; 
-        MatOps::setIdentity(Q); MatOps::setIdentity(R); MatOps::setZero(H); MatOps::setZero(q); MatOps::setZero(r);
-        
-        MatOps::setZero(dx); MatOps::setZero(du); MatOps::setZero(ds); MatOps::setZero(dlam); 
-        MatOps::setZero(dsoft_s); MatOps::setZero(dsoft_dual);
-        MatOps::setZero(K); MatOps::setZero(d);
+        // --- KnotMatrices fields (large matrices) ---
+        MatOps::setIdentity(this->A); MatOps::setZero(this->B);
+        MatOps::setZero(this->C); MatOps::setZero(this->D);
+        MatOps::setIdentity(this->Q); MatOps::setIdentity(this->R); MatOps::setZero(this->H);
+        MatOps::setZero(this->Q_bar); MatOps::setZero(this->R_bar); MatOps::setZero(this->H_bar);
+        MatOps::setZero(this->K);
     }
 
     void initialize_defaults() {
-        // Default slacks/duals to small positive numbers to avoid NaN in first iteration
-        s.fill(1.0);
-        lam.fill(1.0);
-        soft_s.fill(1.0);
-        soft_dual.fill(1.0);
+        this->s.fill(1.0);
+        this->lam.fill(1.0);
+        this->soft_s.fill(1.0);
+    }
+
+    // =========================================================================
+    // Lightweight copy for double-buffering (Line Search candidate preparation).
+    // Copies only the KnotState base (vectors/scalars), skipping KnotMatrices
+    // (all large matrices) which are recomputed each iteration.
+    // =========================================================================
+    void copy_state_from(const KnotPoint& other) {
+        static_cast<StateType&>(*this) = static_cast<const StateType&>(other);
     }
 };
 }

@@ -360,7 +360,8 @@ public:
     }
     
     // Shifts trajectory for MPC warm start
-    // Only shift values (x, u, s, lam), keep parameters (p) unchanged
+    // Moves primal/dual variables and parameters one step forward.
+    // User should update parameters externally if they are time-dependent.
     void shift_trajectory() {
         trajectory.shift();
     }
@@ -374,6 +375,18 @@ public:
             current_traj[k].s = init_traj[k].s.cwiseMax(eps);
             current_traj[k].lam = init_traj[k].lam.cwiseMax(eps);
             for(int i=0; i<NC; ++i) {
+                // For L1 soft constraints, ensure lam < w to prevent
+                // division by zero in compute_barrier_derivatives (w - lam term)
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        int type = Model::constraint_types[i];
+                        double w = Model::constraint_weights[i];
+                        if (type == 1 && w > 1e-6) {
+                            current_traj[k].lam(i) = std::min(current_traj[k].lam(i), w - eps);
+                        }
+                    }
+                }
+                
                 if (current_traj[k].s(i) * current_traj[k].lam(i) < config.mu_init) {
                     double shift = std::sqrt(config.mu_init);
                     current_traj[k].s(i) = std::max(current_traj[k].s(i), shift);
@@ -602,7 +615,7 @@ public:
                 traj[k].s += alpha * traj[k].ds;
                 traj[k].lam += alpha * traj[k].dlam;
             }
-            // rollout_dynamics(); // Don't force rollout in restoration. Allow defects to be handled by solver.
+            success = true; // At least one restoration step was applied
         }
         
         // Reset Lagrange Multipliers for the original problem to avoid dual contamination
@@ -730,7 +743,10 @@ public:
         timer.stop();
         
         // Initial convergence check (Primal + Dual + Mu)
-        if(check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) return SolverStatus::OPTIMAL;
+        // Skip on first iteration: r_bar (used for dual inf) has not yet been computed
+        // by compute_barrier_derivatives. It will be computed in the Riccati solve below.
+        // The final convergence verdict is always made in postsolve() with fresh data.
+        if(current_iter > 1 && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) return SolverStatus::OPTIMAL;
 
         // Check for Numerical Instability (NaN/Inf)
         if (has_nans(traj)) {
@@ -754,27 +770,24 @@ public:
         timer.start("Linear Solve");
         bool solve_success = false;
         
-        // [NEW] Zero-Malloc Iterative Refinement Preparation
-        // If IR is enabled, we backup the current active trajectory (linearized system)
-        // to the candidate buffer. This allows us to access the original matrices (Q, R, A, B...)
-        // during the refinement step, even after the Riccati solver overwrites them in 'active'.
-        // bool do_refinement = config.enable_iterative_refinement && (current_iter % config.max_refinement_steps == 0); // Example trigger
-        if (config.enable_iterative_refinement) {
-             trajectory.prepare_candidate();
-             auto& backup = trajectory.candidate();
-             // Copy active to candidate. Since TrajArray is std::array<Knot>, this is a contiguous copy.
-             // But Knot contains Eigen matrices. std::copy should handle it correctly via assignment operators.
-             std::copy(traj.begin(), traj.end(), backup.begin());
+        // Candidate buffer preparation (shared by Mehrotra predictor and IR backup).
+        // Both features need a full copy of the current linearized system (A, B, Q, R).
+        // - Mehrotra: uses it as the affine solve workspace
+        // - IR: uses it to access original A, B matrices after Riccati overwrites active
+        // Note: The Mehrotra affine solve only modifies solver workspace (Q_bar, R_bar, K, dx...)
+        //        but NOT model derivatives (A, B, C, D, Q, R, f_resid, x), so the IR backup
+        //        remains valid even after the affine solve.
+        bool need_candidate_backup = (config.barrier_strategy == BarrierStrategy::MEHROTRA) 
+                                     || config.enable_iterative_refinement;
+        if (need_candidate_backup) {
+            trajectory.prepare_candidate_full();
         }
         
         // Mehrotra Predictor-Corrector Logic
         if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
             // 1. Affine Step (Predictor)
-            // Reuse candidate trajectory storage for affine step results
-            trajectory.prepare_candidate();
+            // Candidate already prepared above with full copy
             auto& affine_traj = trajectory.candidate();
-            // Copy current state to affine traj to serve as linearization point base
-            for(int k=0; k<=N; ++k) affine_traj[k] = traj[k];
             
             bool aff_success = false;
             // Solve with mu = 0
@@ -1100,19 +1113,12 @@ private:
                          
                          double lam_val;
                          if (std::abs(a) < 1e-9) {
-                             // Linear case (g approx 0): -(-2mu)lam - mu*w = 0 -> 2mu*lam = mu*w -> lam = w/2
+                             // Linear case (g ≈ 0): 2*mu*lam = mu*w → lam = w/2
                              lam_val = w / 2.0;
                          } else {
-                            double delta = b*b - 4*a*c;
-                            if (delta < 0) delta = 0;
-                            if (std::abs(a) < 1e-9) {
-                                lam_val = w / 2.0;
-                            } else {
-                                double delta = b*b - 4*a*c;
-                                if (delta < 0) delta = 0;
-                                // Use plus sign formula
-                                lam_val = (-b + std::sqrt(delta)) / (2*a);
-                            }
+                             double delta = b*b - 4*a*c;
+                             if (delta < 0) delta = 0;
+                             lam_val = (-b + std::sqrt(delta)) / (2*a);
                          }
                          
                          // Clamp for safety
@@ -1222,14 +1228,16 @@ private:
 
 private:
     // helper function: calculate the maximum constraint violation of the current trajectory
+    // Includes both inequality constraint residuals AND dynamics defects (multiple shooting).
     double compute_max_violation(const TrajArray& traj) const {
         double max_viol = 0.0;
         for(int k=0; k<=N; ++k) {
             const auto& kp = traj[k];
+            
+            // 1. Inequality constraint violation
             for(int i=0; i<NC; ++i) {
                 double viol = 0.0;
                 
-                // get the constraint weight and type
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
@@ -1238,7 +1246,6 @@ private:
                         w = Model::constraint_weights[i];
                      }
                 }
-                // unified violation calculation logic
                 if (type == 1 && w > 1e-6) { // L1
                      viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
                 } else if (type == 2 && w > 1e-6) { // L2
@@ -1247,6 +1254,14 @@ private:
                      viol = std::abs(kp.g_val(i) + kp.s(i));
                 }
                 if(viol > max_viol) max_viol = viol;
+            }
+            
+            // 2. Dynamics defect (multiple shooting): x_{k+1} - f(x_k, u_k)
+            if (k < N) {
+                for(int j=0; j<NX; ++j) {
+                    double defect = std::abs(traj[k+1].x(j) - kp.f_resid(j));
+                    if(defect > max_viol) max_viol = defect;
+                }
             }
         }
         return max_viol;

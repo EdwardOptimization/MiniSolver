@@ -1,4 +1,4 @@
-#include "minisolver/solver/backend_interface.h"
+#include "minisolver/backend/backend_interface.h"
 #error "GPU Backend implementation is incomplete. Do not use Backend::GPU_*"
 #include <thrust/scan.h>
 #include <thrust/device_vector.h>
