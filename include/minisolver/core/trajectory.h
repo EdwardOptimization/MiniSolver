@@ -11,6 +11,8 @@ template<typename Knot, int MAX_N>
 class Trajectory {
 public:
     using TrajArray = std::array<Knot, MAX_N + 1>;
+    using StateType = typename Knot::StateType;
+    using MatricesType = typename Knot::MatricesType;
     
     // Double Buffering
     // We use unique_ptr to manage memory ownership clearly, 
@@ -52,15 +54,26 @@ public:
         std::swap(active_ptr, candidate_ptr);
     }
     
-    // Helper to copy active to candidate (for trial steps)
+    // Lightweight copy: only vectors and scalars (KnotState base).
+    // Skips large matrices (KnotMatrices) which are recomputed each iteration.
+    // Use this for Line Search candidate preparation.
     void prepare_candidate() {
-        // Deep copy needed for base state?
-        // In Line Search, we update candidate based on active.
-        // x_cand = x_act + alpha * dx_act.
-        // So we don't necessarily need full copy if we write all fields.
-        // But for safety (params, etc.), copy is good.
-        // Optimization: Only copy params once?
-        *candidate_ptr = *active_ptr; 
+        auto& src = *active_ptr;
+        auto& dst = *candidate_ptr;
+        for (int k = 0; k <= N; ++k) {
+            dst[k].copy_state_from(src[k]);
+        }
+    }
+    
+    // Full copy: copies the entire KnotPoint (state + matrices).
+    // Use this when the candidate needs complete data (e.g., Mehrotra predictor,
+    // Iterative Refinement backup) where the linear solver requires derivatives.
+    void prepare_candidate_full() {
+        auto& src = *active_ptr;
+        auto& dst = *candidate_ptr;
+        for (int k = 0; k <= N; ++k) {
+            dst[k] = src[k];
+        }
     }
     // Shifts the trajectory for Warm Start (MPC)
     // Moves x[k] <- x[k+1], u[k] <- u[k+1]

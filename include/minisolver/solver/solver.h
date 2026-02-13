@@ -754,27 +754,19 @@ public:
         timer.start("Linear Solve");
         bool solve_success = false;
         
-        // [NEW] Zero-Malloc Iterative Refinement Preparation
-        // If IR is enabled, we backup the current active trajectory (linearized system)
-        // to the candidate buffer. This allows us to access the original matrices (Q, R, A, B...)
-        // during the refinement step, even after the Riccati solver overwrites them in 'active'.
-        // bool do_refinement = config.enable_iterative_refinement && (current_iter % config.max_refinement_steps == 0); // Example trigger
+        // Iterative Refinement Preparation: backup the current linearized system
+        // (A, B, Q, R matrices) to the candidate buffer before the Riccati solver
+        // overwrites them. Uses full copy since the refine step needs derivatives.
         if (config.enable_iterative_refinement) {
-             trajectory.prepare_candidate();
-             auto& backup = trajectory.candidate();
-             // Copy active to candidate. Since TrajArray is std::array<Knot>, this is a contiguous copy.
-             // But Knot contains Eigen matrices. std::copy should handle it correctly via assignment operators.
-             std::copy(traj.begin(), traj.end(), backup.begin());
+             trajectory.prepare_candidate_full();
         }
         
         // Mehrotra Predictor-Corrector Logic
         if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
             // 1. Affine Step (Predictor)
-            // Reuse candidate trajectory storage for affine step results
-            trajectory.prepare_candidate();
+            // Full copy to candidate: the affine solve needs derivatives (A, B, C, D, Q, R, H)
+            trajectory.prepare_candidate_full();
             auto& affine_traj = trajectory.candidate();
-            // Copy current state to affine traj to serve as linearization point base
-            for(int k=0; k<=N; ++k) affine_traj[k] = traj[k];
             
             bool aff_success = false;
             // Solve with mu = 0
