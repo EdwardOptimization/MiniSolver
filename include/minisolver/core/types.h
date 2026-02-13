@@ -53,8 +53,9 @@ struct KnotState {
     // --- Dual Variables & Slacks ---
     MSVec<T, _NC> s;         // Slack variables
     MSVec<T, _NC> lam;       // Dual variables (Lambda)
-    MSVec<T, _NC> soft_s;    // Soft constraint slack
-    MSVec<T, _NC> soft_dual; // Soft constraint dual
+    MSVec<T, _NC> soft_s;    // Soft constraint slack (L1)
+    // Note: The L1 soft constraint dual is (w - lam), computed implicitly.
+    // No separate soft_dual variable is needed.
 
     // --- Evaluation Results ---
     T cost;                   // Scalar cost value
@@ -75,7 +76,6 @@ struct KnotState {
     MSVec<T, _NC> ds;
     MSVec<T, _NC> dlam;
     MSVec<T, _NC> dsoft_s;
-    MSVec<T, _NC> dsoft_dual;
 
     // --- Feedback Feedforward Term ---
     MSVec<T, _NU> d;
@@ -156,7 +156,7 @@ struct KnotPoint : KnotState<T, _NX, _NU, _NC, _NP>,
         // --- KnotState fields (vectors & scalars) ---
         MatOps::setZero(this->x); MatOps::setZero(this->u); MatOps::setZero(this->p);
         this->s.setOnes(); this->lam.setOnes(); 
-        this->soft_s.setOnes(); this->soft_dual.setOnes();
+        this->soft_s.setOnes();
 
         this->cost = 0;
         MatOps::setZero(this->g_val);
@@ -165,7 +165,7 @@ struct KnotPoint : KnotState<T, _NX, _NU, _NC, _NP>,
         MatOps::setZero(this->q_bar); MatOps::setZero(this->r_bar);
         MatOps::setZero(this->dx); MatOps::setZero(this->du);
         MatOps::setZero(this->ds); MatOps::setZero(this->dlam); 
-        MatOps::setZero(this->dsoft_s); MatOps::setZero(this->dsoft_dual);
+        MatOps::setZero(this->dsoft_s);
         MatOps::setZero(this->d);
 
         // --- KnotMatrices fields (large matrices) ---
@@ -180,7 +180,6 @@ struct KnotPoint : KnotState<T, _NX, _NU, _NC, _NP>,
         this->s.fill(1.0);
         this->lam.fill(1.0);
         this->soft_s.fill(1.0);
-        this->soft_dual.fill(1.0);
     }
 
     // =========================================================================

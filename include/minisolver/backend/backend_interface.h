@@ -1,5 +1,6 @@
 #pragma once
 #include "minisolver/core/gpu_types.h"
+#include "minisolver/core/solver_options.h" // Backend enum
 #include <vector>
 
 namespace minisolver {

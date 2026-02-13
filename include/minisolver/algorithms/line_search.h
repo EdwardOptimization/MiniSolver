@@ -435,11 +435,12 @@ public:
                         // Or we update 'candidate' and let the loop continue with same alpha?
                         // If we update candidate, we are effectively testing alpha=1.0 step + soc.
                         
-                        // Let's modify candidate directly and re-check acceptability.
+                        // Apply SOC correction to candidate
                         candidate[k].x += (*soc_data)[k].dx;
                         candidate[k].u += (*soc_data)[k].du;
                         candidate[k].s += (*soc_data)[k].ds;
                         candidate[k].lam += (*soc_data)[k].dlam;
+                        candidate[k].soft_s += (*soc_data)[k].dsoft_s;
                         
                         // Re-evaluate dynamics/constraints for SOC candidate
                         double current_dt = (k < N) ? dt_traj[k] : 0.0;

@@ -14,7 +14,6 @@ double fraction_to_boundary_rule(const TrajVector& traj, int N, double tau = 0.9
     double alpha_s = 1.0;
     double alpha_lam = 1.0;
     double alpha_soft_s = 1.0;
-    double alpha_soft_dual = 1.0;
     
     const int NC = Knot::NC;
 
@@ -66,7 +65,7 @@ double fraction_to_boundary_rule(const TrajVector& traj, int N, double tau = 0.9
             }
         }
     }
-    return std::min({alpha_s, alpha_lam, alpha_soft_s, alpha_soft_dual});
+    return std::min({alpha_s, alpha_lam, alpha_soft_s});
 }
 
 }

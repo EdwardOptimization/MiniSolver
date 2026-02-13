@@ -87,7 +87,6 @@ public:
             traj[k].s = traj[k+1].s;
             traj[k].lam = traj[k+1].lam;
             traj[k].soft_s = traj[k+1].soft_s;
-            traj[k].soft_dual = traj[k+1].soft_dual;
             traj[k].p = traj[k+1].p;
         }
         // Duplicate last step (safe approximation; ideally integrate dynamics)
@@ -96,7 +95,6 @@ public:
         traj[N].s = traj[N-1].s;
         traj[N].lam = traj[N-1].lam;
         traj[N].soft_s = traj[N-1].soft_s;
-        traj[N].soft_dual = traj[N-1].soft_dual;
         // Do not duplicate last parameter — let user set new value
     }
     
