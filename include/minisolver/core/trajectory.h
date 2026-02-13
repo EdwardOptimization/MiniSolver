@@ -76,8 +76,9 @@ public:
         }
     }
     // Shifts the trajectory for Warm Start (MPC)
-    // Moves x[k] <- x[k+1], u[k] <- u[k+1]
-    // Duplicates the last step
+    // Moves primal/dual variables: x[k] <- x[k+1], u[k] <- u[k+1], etc.
+    // Parameters (p) are also shifted; user should update them externally if time-dependent.
+    // Duplicates the last step for the terminal node.
     void shift() {
         auto& traj = *active_ptr;
         for(int k=0; k < N; ++k) {
@@ -85,19 +86,18 @@ public:
             traj[k].u = traj[k+1].u;
             traj[k].s = traj[k+1].s;
             traj[k].lam = traj[k+1].lam;
-            traj[k].p = traj[k+1].p; // [FIX] Shift parameters
-            // Parameters (p) should usually NOT be shifted if they are time-dependent (like reference),
-            // but for autonomous systems, we might shift. 
-            // Standard MPC: Shift guess (x,u), but keep parameters aligned with absolute time or update them externally.
-            // Here we only shift primal/dual variables.
+            traj[k].soft_s = traj[k+1].soft_s;
+            traj[k].soft_dual = traj[k+1].soft_dual;
+            traj[k].p = traj[k+1].p;
         }
-        // Duplicate last step
-        traj[N].x = traj[N-1].x; // Should integrate dynamics, but copy is safe approx
+        // Duplicate last step (safe approximation; ideally integrate dynamics)
+        traj[N].x = traj[N-1].x;
         traj[N].u = traj[N-1].u;
         traj[N].s = traj[N-1].s;
         traj[N].lam = traj[N-1].lam;
-        // Do not duplicate last parameter!!! Let user set new value!!!
-        // traj[N].p = traj[N-1].p;
+        traj[N].soft_s = traj[N-1].soft_s;
+        traj[N].soft_dual = traj[N-1].soft_dual;
+        // Do not duplicate last parameter — let user set new value
     }
     
     // Reset trajectory data to initial construction state (Zero x/u/p, Default s/lam)

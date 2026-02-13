@@ -754,18 +754,23 @@ public:
         timer.start("Linear Solve");
         bool solve_success = false;
         
-        // Iterative Refinement Preparation: backup the current linearized system
-        // (A, B, Q, R matrices) to the candidate buffer before the Riccati solver
-        // overwrites them. Uses full copy since the refine step needs derivatives.
-        if (config.enable_iterative_refinement) {
-             trajectory.prepare_candidate_full();
+        // Candidate buffer preparation (shared by Mehrotra predictor and IR backup).
+        // Both features need a full copy of the current linearized system (A, B, Q, R).
+        // - Mehrotra: uses it as the affine solve workspace
+        // - IR: uses it to access original A, B matrices after Riccati overwrites active
+        // Note: The Mehrotra affine solve only modifies solver workspace (Q_bar, R_bar, K, dx...)
+        //        but NOT model derivatives (A, B, C, D, Q, R, f_resid, x), so the IR backup
+        //        remains valid even after the affine solve.
+        bool need_candidate_backup = (config.barrier_strategy == BarrierStrategy::MEHROTRA) 
+                                     || config.enable_iterative_refinement;
+        if (need_candidate_backup) {
+            trajectory.prepare_candidate_full();
         }
         
         // Mehrotra Predictor-Corrector Logic
         if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
             // 1. Affine Step (Predictor)
-            // Full copy to candidate: the affine solve needs derivatives (A, B, C, D, Q, R, H)
-            trajectory.prepare_candidate_full();
+            // Candidate already prepared above with full copy
             auto& affine_traj = trajectory.candidate();
             
             bool aff_success = false;
