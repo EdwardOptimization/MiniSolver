@@ -181,6 +181,7 @@ function(add_minisolver_test test_name source_file)
 endfunction()
 
 # Register Tests
+# --- Core ---
 add_minisolver_test(test_matrix tests/test_matrix.cpp)
 add_minisolver_test(test_mini_matrix tests/test_mini_matrix.cpp)
 add_minisolver_test(test_memory tests/test_memory.cpp)
@@ -188,20 +189,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(test_memory PRIVATE -Wno-mismatched-new-delete)
 endif()
 add_minisolver_test(test_integrator tests/test_integrator.cpp)
-add_minisolver_test(test_robustness tests/test_robustness.cpp)
-add_minisolver_test(test_logic tests/test_logic.cpp)
-add_minisolver_test(test_status tests/test_status.cpp)
-add_minisolver_test(test_linesearch_merit tests/test_linesearch_merit.cpp)
-add_minisolver_test(test_features tests/test_features.cpp)
-add_minisolver_test(test_backend tests/test_backend.cpp)
-add_minisolver_test(test_autodiff tests/test_autodiff.cpp)
+
+# --- Solver Components ---
 add_minisolver_test(test_riccati tests/test_riccati.cpp)
-add_minisolver_test(test_linesearch tests/test_line_search.cpp)
+add_minisolver_test(test_line_search tests/test_line_search.cpp)
+add_minisolver_test(test_autodiff tests/test_autodiff.cpp)
+add_minisolver_test(test_status tests/test_status.cpp)
+add_minisolver_test(test_robustness tests/test_robustness.cpp)
+
+# --- Solver Integration ---
 add_minisolver_test(test_solver tests/test_solver.cpp)
+add_minisolver_test(test_features tests/test_features.cpp)
 add_minisolver_test(test_advanced tests/test_advanced.cpp)
 add_minisolver_test(test_soft_constraints tests/test_soft_constraints.cpp)
-add_minisolver_test(test_soc tests/test_soc.cpp)
-add_minisolver_test(test_ir tests/test_ir.cpp)
-add_minisolver_test(test_different_soft_constraints tests/test_different_soft_constraints.cpp)
 add_minisolver_test(test_serializer tests/test_serializer.cpp)
+
+# --- Quality & Regression ---
 add_minisolver_test(test_bugfixes tests/test_bugfixes.cpp)
+add_minisolver_test(test_solver_quality tests/test_solver_quality.cpp)
