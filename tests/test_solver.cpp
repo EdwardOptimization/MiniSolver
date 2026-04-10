@@ -87,3 +87,18 @@ TEST(SolverTest, InfeasibleStartRecovery) {
     EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
 }
 
+TEST(SolverTest, ResizeHorizonReinitializesNewStages) {
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    MiniSolver<CarModel, 50> solver(5, Backend::CPU_SERIAL, config);
+    solver.set_state_guess(4, "x", 123.0);
+
+    solver.resize_horizon(2);
+    solver.resize_horizon(5);
+
+    int ix = solver.get_state_idx("x");
+    ASSERT_GE(ix, 0);
+    // Tail stages should not resurrect stale values after shrink -> grow.
+    EXPECT_DOUBLE_EQ(solver.get_state(4, ix), 0.0);
+}

@@ -39,11 +39,13 @@ int main(int argc, char** argv) {
     
     // 3. Solve
     std::cout << ">> Config Loaded:\n";
-    std::cout << "   N: " << solver.N << "\n";
-    std::cout << "   Integrator: " << (int)solver.config.integrator << "\n";
-    std::cout << "   Barrier: " << (int)solver.config.barrier_strategy << "\n";
+    std::cout << "   N: " << solver.get_horizon() << "\n";
+    std::cout << "   Integrator: " << (int)solver.get_config().integrator << "\n";
+    std::cout << "   Barrier: " << (int)solver.get_config().barrier_strategy << "\n";
     
-    solver.config.print_level = PrintLevel::ITER; // Force verbose for replay
+    SolverConfig replay_cfg = solver.get_config();
+    replay_cfg.print_level = PrintLevel::ITER; // Force verbose for replay
+    solver.set_config(replay_cfg);
     
     std::cout << ">> Starting Solve...\n";
     SolverStatus status = solver.solve();
@@ -52,4 +54,3 @@ int main(int argc, char** argv) {
     
     return 0;
 }
-

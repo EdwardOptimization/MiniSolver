@@ -30,7 +30,8 @@ void save_trajectory_csv(const std::string& filename,
     // Iterate only up to valid horizon N
     // Use get_state and get_constraint_val instead of get_traj
     
-    for(int k=0; k <= solver.N; ++k) {
+    int horizon = solver.get_horizon();
+    for(int k=0; k <= horizon; ++k) {
         std::vector<double> x = solver.get_state(k);
         std::vector<double> u = solver.get_control(k); // might be empty at N
         double g_obs = solver.get_constraint_val(k, 4); // Obstacle constraint
@@ -38,8 +39,8 @@ void save_trajectory_csv(const std::string& filename,
         if(k > 0 && k-1 < static_cast<int>(dts.size())) current_t += dts[k-1];
 
         // Safe access
-        double u0 = (k < solver.N) ? u[0] : 0.0;
-        double u1 = (k < solver.N) ? u[1] : 0.0;
+        double u0 = (k < horizon) ? u[0] : 0.0;
+        double u1 = (k < horizon) ? u[1] : 0.0;
 
         file << current_t << ","
              << x[0] << "," << x[1] << "," << x[2] << "," << x[3] << ","

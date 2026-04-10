@@ -2,6 +2,9 @@
 #include "minisolver/core/serializer.h"
 #include "../examples/01_car_tutorial/generated/car_model.h"
 #include <cstdio> // for remove()
+#include <fstream>
+#include <iterator>
+#include <vector>
 
 using namespace minisolver;
 
@@ -31,25 +34,29 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
         
         // Set some dummy state values manually to verify trajectory save/load
         // (Instead of solving, we just fill data to check exact IO reproduction)
-        solver.trajectory.active()[k].x.fill(k * 1.0); // x = [k, k, k...]
-        solver.trajectory.active()[k].u.fill(k * 0.5); // u = [k/2, ...]
-        solver.trajectory.active()[k].s.fill(0.1);     // slacks
-        solver.trajectory.active()[k].lam.fill(0.2);   // duals
-        solver.trajectory.active()[k].cost = k * 10.0;
+        for (int i = 0; i < CarModel::NX; ++i) solver.set_state_guess(k, i, k * 1.0);
+        if (k < N) {
+            for (int i = 0; i < CarModel::NU; ++i) solver.set_control_guess(k, i, k * 0.5);
+        }
+        for (int i = 0; i < CarModel::NC; ++i) {
+            solver.set_slack_guess(k, i, 0.1);
+            solver.set_dual_guess(k, i, 0.2);
+        }
     }
-    solver.current_iter = 15;
 
     // 1. Capture State (Test New Interface)
     auto snapshot = Serializer::capture_state(solver, SolverStatus::FEASIBLE);
+    snapshot.iterations = 7;
+    snapshot.mu = 0.3;
+    snapshot.reg = 1.2;
     
     EXPECT_EQ(snapshot.N, N);
     EXPECT_EQ(snapshot.config.mu_init, 0.5);
     EXPECT_EQ(snapshot.status, SolverStatus::FEASIBLE);
-    EXPECT_EQ(snapshot.iterations, 15);
-    // Total cost verification
-    double expected_cost = 0;
-    for(int k=0; k<=N; ++k) expected_cost += k * 10.0;
-    EXPECT_DOUBLE_EQ(snapshot.total_cost, expected_cost);
+    EXPECT_EQ(snapshot.iterations, 7);
+    EXPECT_DOUBLE_EQ(snapshot.mu, 0.3);
+    EXPECT_DOUBLE_EQ(snapshot.reg, 1.2);
+    EXPECT_DOUBLE_EQ(snapshot.total_cost, 0.0);
 
     // 2. Save to Disk
     std::string filename = "test_snapshot.dat";
@@ -62,21 +69,25 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
     EXPECT_TRUE(load_ok);
 
     // 4. Verify Loaded Data
-    EXPECT_EQ(solver2.N, N);
-    EXPECT_EQ(solver2.config.mu_init, 0.5);
-    EXPECT_EQ(solver2.config.barrier_strategy, BarrierStrategy::MEHROTRA);
-    // Note: load_case restores mu/reg from file now (updated behavior)
+    EXPECT_EQ(solver2.get_horizon(), N);
+    EXPECT_EQ(solver2.get_config().mu_init, 0.5);
+    EXPECT_EQ(solver2.get_config().barrier_strategy, BarrierStrategy::MEHROTRA);
+    auto loaded_snapshot = Serializer::capture_state(solver2);
+    EXPECT_EQ(loaded_snapshot.iterations, 7);
+    EXPECT_DOUBLE_EQ(loaded_snapshot.mu, 0.3);
+    EXPECT_DOUBLE_EQ(loaded_snapshot.reg, 1.2);
     
     // Verify Trajectory
-    const auto& traj2 = solver2.trajectory.active();
     for(int k=0; k<=N; ++k) {
         // X
         for(int i=0; i<CarModel::NX; ++i) {
-            EXPECT_DOUBLE_EQ(traj2[k].x(i), k * 1.0);
+            EXPECT_DOUBLE_EQ(solver2.get_state(k, i), k * 1.0);
         }
         // U
-        for(int i=0; i<CarModel::NU; ++i) {
-            EXPECT_DOUBLE_EQ(traj2[k].u(i), k * 0.5);
+        if (k < N) {
+            for(int i=0; i<CarModel::NU; ++i) {
+                EXPECT_DOUBLE_EQ(solver2.get_control(k, i), k * 0.5);
+            }
         }
         // P
         EXPECT_EQ(solver2.get_parameter(k, solver2.get_param_idx("v_ref")), 5.0);
@@ -84,8 +95,8 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
 
         // Slacks/Duals
         for(int i=0; i<CarModel::NC; ++i) {
-            EXPECT_DOUBLE_EQ(traj2[k].s(i), 0.1);
-            EXPECT_DOUBLE_EQ(traj2[k].lam(i), 0.2);
+            EXPECT_DOUBLE_EQ(solver2.get_slack(k, i), 0.1);
+            EXPECT_DOUBLE_EQ(solver2.get_dual(k, i), 0.2);
         }
     }
 
@@ -104,7 +115,9 @@ TEST(SerializerTest, FullRoundTrip) {
     solverA.set_parameter(0, "v_ref", 5.0);
     
     // Run 1 step to populate internal state (s, lam, etc.)
-    solverA.config.max_iters = 1;
+    SolverConfig cfgA = solverA.get_config();
+    cfgA.max_iters = 1;
+    solverA.set_config(cfgA);
     solverA.solve();
     
     // 2. Serialize to File
@@ -120,20 +133,79 @@ TEST(SerializerTest, FullRoundTrip) {
     std::remove(filename.c_str());
     
     // 5. Compare State (Bit-Exact)
-    EXPECT_EQ(solverA.N, solverB.N);
-    EXPECT_EQ(solverA.mu, solverB.mu);
-    EXPECT_EQ(solverA.reg, solverB.reg);
-    
-    auto& trajA = solverA.trajectory.active();
-    auto& trajB = solverB.trajectory.active();
+    EXPECT_EQ(solverA.get_horizon(), solverB.get_horizon());
+    EXPECT_EQ(solverA.get_iteration_count(), solverB.get_iteration_count());
+
+    auto stateA = minisolver::SolverSerializer<CarModel, 10>::capture_state(solverA);
+    auto stateB = minisolver::SolverSerializer<CarModel, 10>::capture_state(solverB);
+    EXPECT_DOUBLE_EQ(stateA.mu, stateB.mu);
+    EXPECT_DOUBLE_EQ(stateA.reg, stateB.reg);
+    EXPECT_DOUBLE_EQ(stateA.total_cost, stateB.total_cost);
     
     for(int k=0; k<=N; ++k) {
-        for(int i=0; i<CarModel::NX; ++i) EXPECT_EQ(trajA[k].x(i), trajB[k].x(i));
-        for(int i=0; i<CarModel::NU; ++i) EXPECT_EQ(trajA[k].u(i), trajB[k].u(i));
-        for(int i=0; i<CarModel::NC; ++i) {
-            EXPECT_EQ(trajA[k].s(i), trajB[k].s(i));
-            EXPECT_EQ(trajA[k].lam(i), trajB[k].lam(i));
+        for(int i=0; i<CarModel::NX; ++i) EXPECT_EQ(solverA.get_state(k, i), solverB.get_state(k, i));
+        if (k < N) {
+            for(int i=0; i<CarModel::NU; ++i) EXPECT_EQ(solverA.get_control(k, i), solverB.get_control(k, i));
         }
-        for(int i=0; i<CarModel::NP; ++i) EXPECT_EQ(trajA[k].p(i), trajB[k].p(i));
+        for(int i=0; i<CarModel::NC; ++i) {
+            EXPECT_EQ(solverA.get_slack(k, i), solverB.get_slack(k, i));
+            EXPECT_EQ(solverA.get_dual(k, i), solverB.get_dual(k, i));
+        }
+        for(int i=0; i<CarModel::NP; ++i) EXPECT_EQ(solverA.get_parameter(k, i), solverB.get_parameter(k, i));
     }
+}
+
+TEST(SerializerTest, TruncatedFileRejected) {
+    int N = 3;
+    MiniSolver<CarModel, 10> solver(N, Backend::CPU_SERIAL);
+    solver.set_dt(0.1);
+    solver.set_initial_state("x", 1.0);
+    solver.set_parameter(0, "v_ref", 5.0);
+    solver.solve();
+
+    std::string filename = "test_truncated.bin";
+    ASSERT_TRUE((minisolver::SolverSerializer<CarModel, 10>::save_case(filename, solver)));
+
+    std::ifstream in(filename, std::ios::binary);
+    ASSERT_TRUE(in.good());
+    std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    ASSERT_GT(bytes.size(), 8u);
+    bytes.resize(bytes.size() - 8);
+
+    std::ofstream out(filename, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(out.good());
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    out.close();
+
+    SolverConfig cfg2;
+    cfg2.mu_init = 0.123;
+    cfg2.barrier_strategy = BarrierStrategy::MONOTONE;
+    MiniSolver<CarModel, 10> solver2(1, Backend::CPU_SERIAL, cfg2);
+    EXPECT_EQ(solver2.get_horizon(), 1);
+    EXPECT_DOUBLE_EQ(solver2.get_config().mu_init, 0.123);
+
+    EXPECT_FALSE((minisolver::SolverSerializer<CarModel, 10>::load_case(filename, solver2)));
+
+    // Load should be atomic: on failure, the solver state should remain unchanged.
+    EXPECT_EQ(solver2.get_horizon(), 1);
+    EXPECT_DOUBLE_EQ(solver2.get_config().mu_init, 0.123);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SerializerTest, OversizeHorizonRejected) {
+    // Save with MAX_N=50 and N=20, then attempt to load with MAX_N=10.
+    // The loader should refuse to truncate.
+    int N = 20;
+    MiniSolver<CarModel, 50> solver_big(N, Backend::CPU_SERIAL);
+    solver_big.set_dt(0.1);
+
+    std::string filename = "test_oversize.bin";
+    ASSERT_TRUE((minisolver::SolverSerializer<CarModel, 50>::save_case(filename, solver_big)));
+
+    MiniSolver<CarModel, 10> solver_small(5, Backend::CPU_SERIAL);
+    EXPECT_FALSE((minisolver::SolverSerializer<CarModel, 10>::load_case(filename, solver_small)));
+
+    std::remove(filename.c_str());
 }

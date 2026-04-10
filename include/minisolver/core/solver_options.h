@@ -53,7 +53,8 @@ enum class Backend {
 enum class ResetOption {
     // Resets only algorithmic state (mu, reg, iter, filter, timers).
     // Keeps the current trajectory data (x, u, p, s, lam).
-    // Use this if you want to Cold Start a solve on the current (or manually modified) data.
+    // Note: whether the next solve reuses stored slack/dual values still follows
+    // SolverConfig::initialization.
     ALG_STATE, 
     
     // Resets algorithmic state AND wipes trajectory data to defaults.
@@ -62,8 +63,22 @@ enum class ResetOption {
     FULL
 };
 
+enum class InitializationMode {
+    // Reinitialize barrier/slack/dual state for a fresh solve on the current problem data.
+    COLD_START,
+
+    // Reuse the current primal guess (x/u) but rebuild slack/dual/barrier state.
+    // This is the typical mode for neighboring problems in MPC.
+    REUSE_PRIMAL,
+
+    // Reuse the current primal-dual iterate (x/u/s/lam). If the stored slack/dual state
+    // is invalid, the solver will fall back to REUSE_PRIMAL.
+    REUSE_PRIMAL_DUAL
+};
+
 struct SolverConfig {
     Backend backend = Backend::CPU_SERIAL;
+    InitializationMode initialization = InitializationMode::COLD_START;
 
     // --- Integration ---
     // RK4 is a good balance for general nonlinear problems
@@ -148,7 +163,7 @@ struct SolverConfig {
     
     // SQP-RTI Mode
     bool enable_rti = false; // If true, solve() performs only 1 SQP iteration (or config.max_iters)
-    // and reuses linearization if possible (requires more state storage, currently partial support via warm_start) 
+    // and reuses linearization if possible (requires more state storage) 
     
     // Line Search Logic
     // PURE IPM: Disable rollout by default. Trust the linearization.

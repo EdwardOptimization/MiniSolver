@@ -195,7 +195,7 @@ TEST(AdvancedFeaturesTest, SQP_RTI) {
     
     // Should return SOLVED immediately (RTI treats one step as done)
     EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
-    EXPECT_EQ(solver.current_iter, 1);
+    EXPECT_EQ(solver.get_iteration_count(), 1);
 }
 
 
@@ -318,4 +318,3 @@ TEST(AdvancedFeaturesTest, SOCLogic) {
     
     EXPECT_GE(linear_solver.solve_count, 2);
 }
-

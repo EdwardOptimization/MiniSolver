@@ -106,12 +106,6 @@ TEST(RobustnessTest, SingularHessianRecovery) {
     // However, since R=0, eigenvalues are all 0 (or small noise).
     // The Riccati solver should bump reg if it encounters small pivots.
     
-    // In this case, it converged in 2 iters.
-    // Iter 1: Regularization likely used.
-    // Let's print reg to see.
-    std::cout << "Final Reg: " << solver.reg << std::endl;
-    
     // Just verify it succeeded. The fact it solved a Singular problem is the key.
     EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
 }
-

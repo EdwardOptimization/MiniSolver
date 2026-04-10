@@ -42,7 +42,8 @@ void print_traj_summary(const MiniSolver<BicycleExtModel, MAX_N>& solver) {
               << std::setw(10) << "jerk"
               << "\n";
               
-    for(int k=0; k<=solver.N; k+=5) { // Print every 5th step
+    int horizon = solver.get_horizon();
+    for(int k=0; k<=horizon; k+=5) { // Print every 5th step
         auto x = solver.get_state(k);
         auto u = solver.get_control(k);
         
@@ -53,8 +54,8 @@ void print_traj_summary(const MiniSolver<BicycleExtModel, MAX_N>& solver) {
                   << std::setw(10) << x[4]
                   << std::setw(10) << x[5]
                   << std::setw(10) << x[3]
-                  << std::setw(10) << (k<solver.N ? u[0] : 0.0)
-                  << std::setw(10) << (k<solver.N ? u[1] : 0.0)
+                  << std::setw(10) << (k<horizon ? u[0] : 0.0)
+                  << std::setw(10) << (k<horizon ? u[1] : 0.0)
                   << "\n";
     }
 }
@@ -173,18 +174,31 @@ int main() {
     
     print_traj_summary(solver);
 
-    std::cout << "\n>> Testing Warm Start (Shift & Solve again)...\n";
-    // 1. Shift
-    solver.shift_trajectory();
-    
-    solver.is_warm_started = true;
-    
-    // 2. Update Initial State (Simulate vehicle moving forward)
-    // We take the state from k=1 of the previous solution as the new x0
-    auto x1 = solver.get_state(0); // Since we shifted, index 0 now holds the old index 1
+    std::cout << "\n>> Testing Shifted Initial Guess (Shift & Solve again)...\n";
+
+    auto x1 = solver.get_state(1);
+    for (int k = 0; k < N; ++k) {
+        auto next_x = solver.get_state(k + 1);
+        for (size_t i = 0; i < next_x.size(); ++i) {
+            solver.set_state_guess(k, static_cast<int>(i), next_x[i]);
+        }
+        if (k + 1 < N) {
+            auto next_u = solver.get_control(k + 1);
+            for (size_t i = 0; i < next_u.size(); ++i) {
+                solver.set_control_guess(k, static_cast<int>(i), next_u[i]);
+            }
+        } else {
+            auto last_u = solver.get_control(k);
+            for (size_t i = 0; i < last_u.size(); ++i) {
+                solver.set_control_guess(k, static_cast<int>(i), last_u[i]);
+            }
+        }
+    }
+
+    // Update Initial State (simulate vehicle moving forward)
     solver.set_initial_state(x1);
-    
-    // 3. Update Reference (Shift time window)
+
+    // Update Reference (shift time window)
     for(int k=0; k<=N; ++k) {
          // In a real MPC, we would sample the reference at t + k*dt
          // Here we just keep the reference consistent with the previous run's relative time?
@@ -193,15 +207,18 @@ int main() {
          double t_new = current_t + 0.05 + (k * 0.05);
          solver.set_parameter(k, "x_ref", t_new * ExtConfig::TARGET_V);
     }
-    
-    // 4. Solve again
-    // Reduce max iters because warm start should be fast
-    solver.config.max_iters = 20; 
+
+    solver.reset(ResetOption::ALG_STATE);
+
+    // Solve again
+    // Reduce max iters because the shifted primal guess should be close
+    SolverConfig cfg = solver.get_config();
+    cfg.max_iters = 20;
+    solver.set_config(cfg);
     
     SolverStatus status2 = solver.solve();
-    std::cout << ">> Warm Start Status: " << status_to_string(status2) << "\n";
+    std::cout << ">> Shifted Guess Status: " << status_to_string(status2) << "\n";
     print_traj_summary(solver);
 
     return 0;
 }
-

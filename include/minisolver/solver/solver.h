@@ -23,6 +23,9 @@
 
 namespace minisolver {
 
+template<typename Model, int MAX_N>
+class SolverSerializer;
+
 class SolverTimer {
 public:
     using Clock = std::chrono::steady_clock;
@@ -69,60 +72,28 @@ public:
     static const int NU = Model::NU;
     static const int NC = Model::NC;
     static const int NP = Model::NP;
-    static const int MAX_N = _MAX_N;
+    static constexpr int MAX_N = _MAX_N;
 
     using Knot = KnotPoint<double, NX, NU, NC, NP>;
     using TrajectoryType = Trajectory<Knot, MAX_N>;
     using TrajArray = typename TrajectoryType::TrajArray;
 
-    TrajectoryType trajectory;
-
-    // Components
-    // Pass Model type to RiccatiSolver for static constraint info access
-    std::unique_ptr<RiccatiSolver<TrajArray, Model>> linear_solver;
-    std::unique_ptr<LineSearchStrategy<Model, MAX_N>> line_search;
-
-    int N; 
-    std::array<double, MAX_N> dt_traj;
-    
-    Backend backend;
-    SolverConfig config;
-    SolverTimer timer; 
-    
-    double mu; 
-    double reg;
-    int current_iter = 0;
-    double last_prim_inf = 0.0;
-    double last_dual_inf = 0.0;
-
-    // Continuous Slack Reset count, prevent infinite loop
-    int slack_reset_consecutive_count = 0;
-
-    bool is_warm_started = false;
-    
-    // Lookup Maps
-    std::unordered_map<std::string, int> state_map;
-    std::unordered_map<std::string, int> control_map;
-    std::unordered_map<std::string, int> param_map;
+    friend class SolverSerializer<Model, MAX_N>;
 
     MiniSolver(int initial_N, Backend b, SolverConfig conf = SolverConfig()) 
-        : trajectory(initial_N), N(initial_N), backend(b), config(conf), mu(conf.mu_init), reg(conf.reg_init) {
+        : trajectory(std::max(0, std::min(initial_N, MAX_N))),
+          N(std::max(0, std::min(initial_N, MAX_N))),
+          backend(b),
+          config(conf),
+          mu(conf.mu_init),
+          reg(conf.reg_init) {
         
-        if (N > MAX_N) {
-            std::cerr << "Error: N (" << N << ") > MAX_N (" << MAX_N << "). Clamping.\n";
-            N = MAX_N;
+        if (initial_N < 0 || initial_N > MAX_N) {
+            std::cerr << "Error: N (" << initial_N << ") outside [0, " << MAX_N << "]. Clamping.\n";
         }
 
         dt_traj.fill(conf.default_dt);
-        
-        // Initialize Components with Model type
-        linear_solver = std::make_unique<RiccatiSolver<TrajArray, Model>>();
-        
-        if (config.line_search_type == LineSearchType::MERIT) {
-            line_search = std::make_unique<MeritLineSearch<Model, MAX_N>>();
-        } else {
-            line_search = std::make_unique<FilterLineSearch<Model, MAX_N>>();
-        }
+        rebuild_solver_components();
         
         // Initialize Maps
         for (int i = 0; i < NX; ++i) state_map[Model::state_names[i]] = i;
@@ -139,8 +110,6 @@ public:
         last_prim_inf = 0.0;
         last_dual_inf = 0.0;
         slack_reset_consecutive_count = 0;
-        is_warm_started = false; // Force Cold Start next time
-        
         // 2. Reset Components
         if (line_search) line_search->reset();
         timer.reset();
@@ -175,13 +144,46 @@ public:
         return -1;
     }
 
-    void resize_horizon(int new_n) {
-        if (new_n > MAX_N) {
-            std::cerr << "Error: new_n > MAX_N\n";
-            return;
+	    void resize_horizon(int new_n) {
+	        if (new_n < 0 || new_n > MAX_N) {
+	            std::cerr << "Error: new_n outside valid range [0, MAX_N]\n";
+	            return;
+	        }
+	        int old_n = N;
+	        N = new_n;
+	        trajectory.resize(N);
+	        if (new_n > old_n) {
+	            // Initialize new time steps for newly added intervals.
+	            for (int k = old_n; k < new_n; ++k) {
+	                dt_traj[k] = config.default_dt;
+	            }
+	        }
+	    }
+
+    int get_horizon() const {
+        return N;
+    }
+
+    void set_config(const SolverConfig& conf) {
+        bool line_search_changed = conf.line_search_type != config.line_search_type;
+        config = conf;
+        backend = conf.backend;
+        if (line_search_changed) {
+            components_dirty = true;
         }
-        N = new_n;
-        trajectory.resize(N);
+    }
+
+    const SolverConfig& get_config() const {
+        return config;
+    }
+
+    int get_iteration_count() const {
+        return current_iter;
+    }
+
+    double get_profile_time_ms(const std::string& name) const {
+        auto it = timer.times.find(name);
+        return it != timer.times.end() ? it->second : 0.0;
     }
 
     // --- High-Level API ---
@@ -328,7 +330,44 @@ public:
         return trajectory[stage].u(idx);
     }
 
-    // 5. Cost Access
+    // 5. Slack / Dual Access
+    void set_slack_guess(int stage, int idx, double value) {
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) return;
+        trajectory[stage].s(idx) = value;
+    }
+
+    void set_dual_guess(int stage, int idx, double value) {
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) return;
+        trajectory[stage].lam(idx) = value;
+    }
+
+    std::vector<double> get_slack(int stage) const {
+        if (stage > N || stage < 0) return {};
+        const auto& kp = trajectory[stage];
+        std::vector<double> res(NC);
+        for(int i=0; i<NC; ++i) res[i] = kp.s(i);
+        return res;
+    }
+
+    std::vector<double> get_dual(int stage) const {
+        if (stage > N || stage < 0) return {};
+        const auto& kp = trajectory[stage];
+        std::vector<double> res(NC);
+        for(int i=0; i<NC; ++i) res[i] = kp.lam(i);
+        return res;
+    }
+
+    double get_slack(int stage, int idx) const {
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) return 0.0;
+        return trajectory[stage].s(idx);
+    }
+
+    double get_dual(int stage, int idx) const {
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) return 0.0;
+        return trajectory[stage].lam(idx);
+    }
+
+    // 6. Cost Access
     double get_stage_cost(int stage) const {
         if (stage > N || stage < 0) return 0.0;
         return trajectory[stage].cost;
@@ -336,13 +375,10 @@ public:
     
     // Helper to get constraint value
     double get_constraint_val(int stage, int idx) const {
-        if (stage > N || idx >= NC) return 0.0;
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) return 0.0;
         return trajectory[stage].g_val(idx);
     }
     
-    // Direct access (discouraged but available)
-    typename TrajectoryType::TrajArray& get_raw_traj() { return *trajectory.active_ptr; }
-
     void set_dt(const std::vector<double>& dts) {
         if(dts.size() > MAX_N) {
             std::cerr << "Warning: DT vector too large.\n";
@@ -358,47 +394,16 @@ public:
     void set_dt(double dt) {
         dt_traj.fill(dt);
     }
-    
-    // Shifts trajectory for MPC warm start
-    // Moves primal/dual variables and parameters one step forward.
-    // User should update parameters externally if they are time-dependent.
-    void shift_trajectory() {
-        trajectory.shift();
-    }
 
-    void warm_start(const typename TrajectoryType::TrajArray& init_traj) {
-        auto& current_traj = trajectory.active();
-        for(int k=0; k <= N; ++k) {
-            current_traj[k].x = init_traj[k].x;
-            current_traj[k].u = init_traj[k].u;
-            double eps = 1e-2;
-            current_traj[k].s = init_traj[k].s.cwiseMax(eps);
-            current_traj[k].lam = init_traj[k].lam.cwiseMax(eps);
-            for(int i=0; i<NC; ++i) {
-                // For L1 soft constraints, ensure lam < w to prevent
-                // division by zero in compute_barrier_derivatives (w - lam term)
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        int type = Model::constraint_types[i];
-                        double w = Model::constraint_weights[i];
-                        if (type == 1 && w > 1e-6) {
-                            current_traj[k].lam(i) = std::min(current_traj[k].lam(i), w - eps);
-                        }
-                    }
-                }
-                
-                if (current_traj[k].s(i) * current_traj[k].lam(i) < config.mu_init) {
-                    double shift = std::sqrt(config.mu_init);
-                    current_traj[k].s(i) = std::max(current_traj[k].s(i), shift);
-                    current_traj[k].lam(i) = std::max(current_traj[k].lam(i), shift);
-                }
-            }
+    void rollout_dynamics() {
+        auto& traj = trajectory.active();
+        for(int k=0; k<N; ++k) {
+            double current_dt = dt_traj[k];
+            traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator);
         }
-        mu = config.mu_init;
-        line_search->reset();
-        is_warm_started = true;
     }
 
+private:
     bool check_convergence(double max_viol, double max_dual, double max_kkt_error) {
         // must satisfy all of the following conditions:
         // 1. barrier parameter mu is small enough (target precision)
@@ -514,7 +519,7 @@ public:
         MLOG_INFO(ss.str());
     }
 
-    bool has_nans(const typename TrajectoryType::TrajArray& t) {
+    bool has_nans(const typename TrajectoryType::TrajArray& t) const {
         // Checking all variables is expensive (O(N * (NX+NU+NC))).
         // Instead, we only check the updates (dx, du, ds, dlam) and cost/constraints 
         // which are the sources of NaNs.
@@ -530,6 +535,33 @@ public:
             if(!std::isfinite(kp.cost)) return true;
         }
         return false;
+    }
+
+    bool has_valid_primal_dual_guess(const typename TrajectoryType::TrajArray& t) const {
+        for(int k=0; k<=N; ++k) {
+            const auto& kp = t[k];
+            if (!kp.x.allFinite() || !kp.u.allFinite() || !kp.p.allFinite()) return false;
+            if (!kp.s.allFinite() || !kp.lam.allFinite()) return false;
+
+            for(int i=0; i<NC; ++i) {
+                if (kp.s(i) <= 0.0 || kp.lam(i) <= 0.0) return false;
+
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+
+                if (type == 1 && w > 1e-6) {
+                    if (!std::isfinite(kp.soft_s(i)) || kp.soft_s(i) <= 0.0) return false;
+                    if (w - kp.lam(i) <= config.min_barrier_slack) return false;
+                }
+            }
+        }
+        return !has_nans(t);
     }
     
     bool feasibility_restoration() {
@@ -637,7 +669,9 @@ public:
         return success;
     }
 
+public:
     SolverStatus solve() {
+        ensure_solver_components_ready();
         // 1. Presolve: 数据准备、冷热启动处理、内存复位
         presolve();
         
@@ -661,6 +695,11 @@ public:
                 loop_exit_status = SolverStatus::OPTIMAL;
                 if (config.print_level >= PrintLevel::INFO) 
                     MLOG_INFO("Converged in " << iter+1 << " iterations.");
+                break;
+            }
+
+            if (step_stat == SolverStatus::FEASIBLE || step_stat == SolverStatus::INFEASIBLE) {
+                loop_exit_status = step_stat;
                 break;
             }
             
@@ -699,6 +738,7 @@ public:
         return postsolve(loop_exit_status);
     }
 
+private:
     SolverStatus step() {
         current_iter++;
         auto& traj = trajectory.active();
@@ -1047,43 +1087,29 @@ public:
         return SolverStatus::UNSOLVED;
     }
 
-    void rollout_dynamics() {
-        auto& traj = trajectory.active();
-        for(int k=0; k<N; ++k) {
-            double current_dt = dt_traj[k];
-            traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator);
-        }
-    }
-
-private:
     // ============================================================
     // [Phase 1] Presolve: Preparation
     // ============================================================
     void presolve() {
         // [Enable/Disable Profiling]
         timer.enabled = config.enable_profiling;
+        if (line_search) line_search->reset();
         
         current_iter = 0;
         slack_reset_consecutive_count = 0; 
         reg = config.reg_init;
-        // 1. Reset Logic
-        if (!is_warm_started) {
-            mu = config.mu_init;
+        mu = config.mu_init;
+
+        bool reuse_primal_dual = config.initialization == InitializationMode::REUSE_PRIMAL_DUAL;
+        bool need_init = config.initialization != InitializationMode::REUSE_PRIMAL_DUAL;
+
+        if (reuse_primal_dual) {
+            auto& traj = trajectory.active();
+            if (!has_valid_primal_dual_guess(traj)) {
+                need_init = true;
+            }
         }
-        // 2. Initialization of Slacks/Duals
-        bool need_init = !is_warm_started;
-        
-        // 安全检查：如果 Warm Start 数据损坏，强制重置
-        if (is_warm_started) {
-             auto& traj = trajectory.active();
-             for(int k=0; k<=N; ++k) {
-                 if (traj[k].s.minCoeff() <= 0 || traj[k].lam.minCoeff() <= 0 || has_nans(traj)) {
-                     need_init = true;
-                     break;
-                 }
-             }
-        }
-        is_warm_started = false;
+
         if (need_init) {
             auto& traj = trajectory.active();
             for(int k=0; k<=N; ++k) {
@@ -1266,5 +1292,51 @@ private:
         }
         return max_viol;
     }
+
+    void rebuild_solver_components() {
+        linear_solver = std::make_unique<RiccatiSolver<TrajArray, Model>>();
+
+        if (config.line_search_type == LineSearchType::MERIT) {
+            line_search = std::make_unique<MeritLineSearch<Model, MAX_N>>();
+        } else {
+            line_search = std::make_unique<FilterLineSearch<Model, MAX_N>>();
+        }
+    }
+
+    void ensure_solver_components_ready() {
+        if (!components_dirty) return;
+        rebuild_solver_components();
+        components_dirty = false;
+    }
+
+    // Lookup Maps
+    std::unordered_map<std::string, int> state_map;
+    std::unordered_map<std::string, int> control_map;
+    std::unordered_map<std::string, int> param_map;
+
+    // Components
+    // Pass Model type to RiccatiSolver for static constraint info access
+    std::unique_ptr<RiccatiSolver<TrajArray, Model>> linear_solver;
+    std::unique_ptr<LineSearchStrategy<Model, MAX_N>> line_search;
+
+    TrajectoryType trajectory;
+
+    int N;
+    std::array<double, MAX_N> dt_traj;
+    
+    SolverTimer timer;
+    
+    Backend backend;
+    SolverConfig config;
+    bool components_dirty = false;
+    
+    double mu;
+    double reg;
+    int current_iter = 0;
+    double last_prim_inf = 0.0;
+    double last_dual_inf = 0.0;
+
+    // Continuous Slack Reset count, prevent infinite loop
+    int slack_reset_consecutive_count = 0;
 };
 }

@@ -36,7 +36,7 @@ struct Result {
 // --- Scenario Setup ---
 // Defines a standard obstacle avoidance and lane change scenario
 void setup_scenario(MiniSolver<CarModel, 60>& solver) {
-    int N = solver.N;
+    int N = solver.get_horizon();
     double target_v = 5.0;
     
     // Initial State (Stopped at origin)
@@ -47,7 +47,7 @@ void setup_scenario(MiniSolver<CarModel, 60>& solver) {
 
     // Horizon Parameters
     for(int k=0; k<=N; ++k) {
-        double t = k * solver.config.default_dt;
+        double t = k * solver.get_config().default_dt;
         
         // Target: Move along X-axis at 5 m/s
         solver.set_parameter(k, "v_ref", target_v);
@@ -111,23 +111,22 @@ Result run_case(const BenchmarkCase& test_case) {
         
         if (i >= WARMUP) {
             times.push_back(std::chrono::duration<double, std::milli>(end - start).count());
-            sum_deriv += solver.timer.times["Derivatives"];
-            sum_solve += solver.timer.times["Linear Solve"];
-            sum_ls    += solver.timer.times["Line Search"];
+            sum_deriv += solver.get_profile_time_ms("Derivatives");
+            sum_solve += solver.get_profile_time_ms("Linear Solve");
+            sum_ls    += solver.get_profile_time_ms("Line Search");
 
             // Capture stats from the final run
             if (i == WARMUP + NUM_RUNS - 1) {
                 res.success = (status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
-                res.iters = solver.current_iter;
+                res.iters = solver.get_iteration_count();
                 
                 // Compute Metrics
                 double max_viol = 0.0;
                 double total_cost = 0.0;
-                auto& traj = solver.trajectory.active();
                 for(int k=0; k<=N; ++k) {
-                    total_cost += traj[k].cost;
+                    total_cost += solver.get_stage_cost(k);
                     for(int j=0; j<CarModel::NC; ++j) {
-                        double v = traj[k].g_val(j); // Violations are g(x) > 0
+                        double v = solver.get_constraint_val(k, j); // Violations are g(x) > 0
                         if (v > max_viol) max_viol = v;
                     }
                 }

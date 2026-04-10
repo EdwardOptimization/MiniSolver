@@ -134,12 +134,12 @@ public:
         merit_nu = 1000.0;
     }
 
-    double search(TrajectoryType& trajectory, 
-                  LinearSolver<TrajArray>& /*linear_solver*/,
-                  const std::array<double, MAX_N>& dt_traj,
-                  double mu, double /*reg*/,
-                  const SolverConfig& config) override 
-    {
+	    double search(TrajectoryType& trajectory, 
+	                  LinearSolver<TrajArray>& /*linear_solver*/,
+	                  const std::array<double, MAX_N>& dt_traj,
+	                  double mu, double /*reg*/,
+	                  const SolverConfig& config) override 
+	    {
         int N = trajectory.N;
         auto& active = trajectory.active();
         
@@ -164,40 +164,64 @@ public:
         bool accepted = false;
         int ls_iter = 0;
         
-        while (ls_iter < config.line_search_max_iters) {
-            // Update
-            for(int k=0; k<=N; ++k) {
-                candidate[k].x = active[k].x + alpha * active[k].dx;
-                candidate[k].u = active[k].u + alpha * active[k].du;
-                candidate[k].s = active[k].s + alpha * active[k].ds;
-                candidate[k].lam = active[k].lam + alpha * active[k].dlam;
-                
-                // Update soft vars
-                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
-                
-                candidate[k].p = active[k].p; 
-                
-                double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                
-                // Optional Rollout (Single Shooting)
-                if (config.enable_line_search_rollout && k < N) {
-                    if (k==0) candidate[0].x = active[0].x; 
-                    candidate[k+1].x = Model::integrate(candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
-                }
+	        while (ls_iter < config.line_search_max_iters) {
+	            if (!config.enable_line_search_rollout) {
+	                // Multiple-shooting style trial point: x/u moved by linear step.
+	                for(int k=0; k<=N; ++k) {
+	                    candidate[k].x = active[k].x + alpha * active[k].dx;
+	                    candidate[k].u = active[k].u + alpha * active[k].du;
+	                    candidate[k].s = active[k].s + alpha * active[k].ds;
+	                    candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+	                    
+	                    // Update soft vars
+	                    candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+	                    
+	                    candidate[k].p = active[k].p; 
+	                    
+	                    double current_dt = (k < N) ? dt_traj[k] : 0.0;
+	
+	                    // Compute Residuals
+	                    if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+	                        Model::compute_cost_gn(candidate[k]);
+	                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+	                        Model::compute_constraints(candidate[k]);
+	                    } else {
+	                        Model::compute_cost_exact(candidate[k]);
+	                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+	                        Model::compute_constraints(candidate[k]);
+	                    }
+	                }
+	            } else {
+	                // Single-shooting rollout trial point:
+	                // - keep x0 fixed
+	                // - apply the step to u/s/lam/soft_s
+	                // - propagate x forward via the integrator to maintain dynamic consistency
+	                candidate[0].x = active[0].x;
+	                for(int k=0; k<=N; ++k) {
+	                    candidate[k].u = active[k].u + alpha * active[k].du;
+	                    candidate[k].s = active[k].s + alpha * active[k].ds;
+	                    candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+	                    candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+	                    candidate[k].p = active[k].p;
 
-                // Compute Residuals
-                if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                    Model::compute_cost_gn(candidate[k]);
-                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate[k]);
-                } else {
-                    Model::compute_cost_exact(candidate[k]);
-                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate[k]);
-                }
-            }
-            
-            double phi_alpha = compute_merit(candidate, N, mu, config);
+	                    double current_dt = (k < N) ? dt_traj[k] : 0.0;
+	                    if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+	                        Model::compute_cost_gn(candidate[k]);
+	                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+	                        Model::compute_constraints(candidate[k]);
+	                    } else {
+	                        Model::compute_cost_exact(candidate[k]);
+	                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+	                        Model::compute_constraints(candidate[k]);
+	                    }
+
+	                    if (k < N) {
+	                        candidate[k+1].x = Model::integrate(candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
+	                    }
+	                }
+	            }
+	            
+	            double phi_alpha = compute_merit(candidate, N, mu, config);
             
             // Armijo condition could be added here: phi_alpha < phi_0 - eta * alpha * ...
             // For now, simple decrease.
@@ -355,12 +379,12 @@ public:
         filter.clear();
     }
     
-    double search(TrajectoryType& trajectory, 
-                  LinearSolver<TrajArray>& linear_solver,
-                  const std::array<double, MAX_N>& dt_traj,
-                  double mu, double reg,
-                  const SolverConfig& config) override 
-    {
+	    double search(TrajectoryType& trajectory, 
+	                  LinearSolver<TrajArray>& linear_solver,
+	                  const std::array<double, MAX_N>& dt_traj,
+	                  double mu, double reg,
+	                  const SolverConfig& config) override 
+	    {
         int N = trajectory.N;
         auto& active = trajectory.active();
         
@@ -378,36 +402,58 @@ public:
         int ls_iter = 0;
         bool soc_attempted = false;
         
-        while (ls_iter < config.line_search_max_iters) {
-            for(int k=0; k<=N; ++k) {
-                candidate[k].x = active[k].x + alpha * active[k].dx;
-                candidate[k].u = active[k].u + alpha * active[k].du;
-                candidate[k].s = active[k].s + alpha * active[k].ds;
-                candidate[k].lam = active[k].lam + alpha * active[k].dlam;
-                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
-                candidate[k].p = active[k].p; 
-                
-                double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                
-                // Optional Rollout
-                if (config.enable_line_search_rollout && k < N) {
-                    if (k==0) candidate[0].x = active[0].x;
-                    candidate[k+1].x = Model::integrate(candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
-                }
-                
-                // Compute Residuals
-                if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                    Model::compute_cost_gn(candidate[k]);
-                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate[k]);
-                } else {
-                    Model::compute_cost_exact(candidate[k]);
-                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate[k]);
-                }
-            }
-            
-            auto m_alpha = compute_metrics(candidate, N, mu, config);
+	        while (ls_iter < config.line_search_max_iters) {
+	            if (!config.enable_line_search_rollout) {
+	                for(int k=0; k<=N; ++k) {
+	                    candidate[k].x = active[k].x + alpha * active[k].dx;
+	                    candidate[k].u = active[k].u + alpha * active[k].du;
+	                    candidate[k].s = active[k].s + alpha * active[k].ds;
+	                    candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+	                    candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+	                    candidate[k].p = active[k].p; 
+	                    
+	                    double current_dt = (k < N) ? dt_traj[k] : 0.0;
+	                    
+	                    // Compute Residuals
+	                    if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+	                        Model::compute_cost_gn(candidate[k]);
+	                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+	                        Model::compute_constraints(candidate[k]);
+	                    } else {
+	                        Model::compute_cost_exact(candidate[k]);
+	                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+	                        Model::compute_constraints(candidate[k]);
+	                    }
+	                }
+	            } else {
+	                candidate[0].x = active[0].x;
+	                for(int k=0; k<=N; ++k) {
+	                    candidate[k].u = active[k].u + alpha * active[k].du;
+	                    candidate[k].s = active[k].s + alpha * active[k].ds;
+	                    candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+	                    candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+	                    candidate[k].p = active[k].p; 
+	                    
+	                    double current_dt = (k < N) ? dt_traj[k] : 0.0;
+	                    
+	                    // Compute Residuals
+	                    if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+	                        Model::compute_cost_gn(candidate[k]);
+	                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+	                        Model::compute_constraints(candidate[k]);
+	                    } else {
+	                        Model::compute_cost_exact(candidate[k]);
+	                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+	                        Model::compute_constraints(candidate[k]);
+	                    }
+
+	                    if (k < N) {
+	                        candidate[k+1].x = Model::integrate(candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
+	                    }
+	                }
+	            }
+	            
+	            auto m_alpha = compute_metrics(candidate, N, mu, config);
             if (is_acceptable(m_alpha.first, m_alpha.second, theta_0, phi_0, config)) {
                 accepted = true;
             }
@@ -425,40 +471,38 @@ public:
                 // soc_data will store the correction step.
                 // The linear_solver needs to solve J * dx_soc = -g(candidate)
                 
-                bool soc_success = linear_solver.solve_soc(*soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
-                
-                if (soc_success) {
-                    for(int k=0; k<=N; ++k) {
+	                bool soc_success = linear_solver.solve_soc(*soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
+	                
+	                if (soc_success) {
+	                    for(int k=0; k<=N; ++k) {
                         // Apply correction: x_new = x_candidate + dx_soc
                         // But wait, we need to re-evaluate merit for this new point in next iteration?
                         // Actually, standard SOC applies correction and tries to accept immediately.
                         // Or we update 'candidate' and let the loop continue with same alpha?
                         // If we update candidate, we are effectively testing alpha=1.0 step + soc.
                         
-                        // Apply SOC correction to candidate
-                        candidate[k].x += (*soc_data)[k].dx;
-                        candidate[k].u += (*soc_data)[k].du;
-                        candidate[k].s += (*soc_data)[k].ds;
-                        candidate[k].lam += (*soc_data)[k].dlam;
-                        candidate[k].soft_s += (*soc_data)[k].dsoft_s;
-                        
-                        // Re-evaluate dynamics/constraints for SOC candidate
-                        double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                        if (config.enable_line_search_rollout && k < N) {
-                             if (k==0) candidate[0].x = active[0].x; // Base doesn't change? Wait, SOC modifies base? No.
-                             // SOC modifies the trial point. 
-                             // x_trial = x_k + alpha*dx + dx_soc.
-                             // Here candidate is already x_k + alpha*dx.
-                             // So we just add dx_soc.
-                             // But rollout needs consistent integration.
-                             if (k==0) {} // x0 fixed
-                             else candidate[k].x = Model::integrate(candidate[k-1].x, candidate[k-1].u, candidate[k-1].p, dt_traj[k-1], config.integrator);
-                        }
-                        // Compute Residuals
-                if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                    Model::compute_cost_gn(candidate[k]);
-                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-                    Model::compute_constraints(candidate[k]);
+	                        // Apply SOC correction to candidate
+	                        if (!config.enable_line_search_rollout) {
+	                            candidate[k].x += (*soc_data)[k].dx;
+	                        }
+	                        candidate[k].u += (*soc_data)[k].du;
+	                        candidate[k].s += (*soc_data)[k].ds;
+	                        candidate[k].lam += (*soc_data)[k].dlam;
+	                        candidate[k].soft_s += (*soc_data)[k].dsoft_s;
+
+	                        // Re-evaluate dynamics/constraints for SOC candidate
+	                        double current_dt = (k < N) ? dt_traj[k] : 0.0;
+	                        if (config.enable_line_search_rollout && k < N) {
+	                             // Keep x0 fixed and re-propagate after applying SOC correction to u/s/lam/soft_s.
+	                             if (k == 0) candidate[0].x = active[0].x;
+	                             candidate[k+1].x = Model::integrate(candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
+	                        }
+
+	                        // Compute Residuals
+	                if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+	                    Model::compute_cost_gn(candidate[k]);
+	                    Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+	                    Model::compute_constraints(candidate[k]);
                 } else {
                     Model::compute_cost_exact(candidate[k]);
                     Model::compute_dynamics(candidate[k], config.integrator, current_dt);

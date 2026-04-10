@@ -1,12 +1,13 @@
 #pragma once
-#include <fstream>
-#include <vector>
-#include <iostream>
-#include <string>
-#include <array>
-#include <memory>
-#include "minisolver/solver/solver.h"
-#include "minisolver/core/types.h"
+	#include <fstream>
+	#include <vector>
+	#include <iostream>
+	#include <string>
+	#include <array>
+	#include <algorithm>
+	#include <memory>
+	#include "minisolver/solver/solver.h"
+	#include "minisolver/core/types.h"
 
 namespace minisolver {
 
@@ -18,6 +19,8 @@ template<typename Model, int MAX_N>
 class SolverSerializer {
 public:
     using SolverType = MiniSolver<Model, MAX_N>;
+    static constexpr const char* kCurrentFormatMagic = "MINISOLV_2";
+    static constexpr const char* kLegacyFormatMagic = "MINISOLV_1";
 
     // =============================================================
     // [New] Memory Snapshot Structure
@@ -95,17 +98,30 @@ public:
      * @brief [New] Core Interface 2: Save memory snapshot to disk
      * Can be called after solving or in a low-priority thread.
      */
-    static bool save_state(const std::string& filename, const SolverState& state) {
-        std::ofstream out(filename, std::ios::binary);
-        if (!out) {
-            std::cerr << "[Serializer] Failed to open " << filename << " for writing.\n";
-            return false;
-        }
+	    static bool save_state(const std::string& filename, const SolverState& state) {
+	        std::ofstream out(filename, std::ios::binary);
+	        if (!out) {
+	            std::cerr << "[Serializer] Failed to open " << filename << " for writing.\n";
+	            return false;
+	        }
+	        if (state.N < 0) {
+	            std::cerr << "[Serializer] Invalid negative horizon in snapshot.\n";
+	            return false;
+	        }
+	        if (static_cast<int>(state.dt_traj.size()) != state.N) {
+	            std::cerr << "[Serializer] Invalid dt_traj size in snapshot (expected " << state.N
+	                      << ", got " << state.dt_traj.size() << ").\n";
+	            return false;
+	        }
+	        if (static_cast<int>(state.trajectory.size()) != state.N + 1) {
+	            std::cerr << "[Serializer] Invalid trajectory size in snapshot (expected " << (state.N + 1)
+	                      << ", got " << state.trajectory.size() << ").\n";
+	            return false;
+	        }
 
-        // 1. Header & Version
-        // Since this is the first release version, we use a single magic identifier.
-        const char* magic = "MINISOLV_1"; 
-        out.write(magic, 10);
+	        // 1. Header & Version
+	        // Since this is the first release version, we use a single magic identifier.
+	        out.write(kCurrentFormatMagic, 10);
         
         // 2. Dimensions & Horizon
         int NX = Model::NX;
@@ -164,80 +180,156 @@ public:
     /**
      * @brief Load a case into the solver.
      */
-    static bool load_case(const std::string& filename, SolverType& solver) {
-        std::ifstream in(filename, std::ios::binary);
-        if (!in) {
-            std::cerr << "[Serializer] Failed to open " << filename << " for reading.\n";
+	    static bool load_case(const std::string& filename, SolverType& solver) {
+	        std::ifstream in(filename, std::ios::binary);
+	        if (!in) {
+	            std::cerr << "[Serializer] Failed to open " << filename << " for reading.\n";
+	            return false;
+	        }
+
+        auto read_exact = [&in](char* data, std::streamsize size) {
+            in.read(data, size);
+            return in.good();
+        };
+
+        char magic[11] = {0};
+        if (!read_exact(magic, 10)) {
+            std::cerr << "[Serializer] Failed to read file header.\n";
+            return false;
+        }
+        std::string version(magic);
+        
+        if (version == kLegacyFormatMagic) {
+            std::cerr << "[Serializer] Unsupported legacy format MINISOLV_1. "
+                      << "SolverConfig layout changed; regenerate the snapshot with a newer build.\n";
             return false;
         }
 
-        char magic[11] = {0};
-        in.read(magic, 10);
-        std::string version(magic);
-        
         // Only accept the current version
-        if (version != "MINISOLV_1") {
+        if (version != kCurrentFormatMagic) {
             std::cerr << "[Serializer] Invalid file format or version: " << version << "\n";
             return false;
         }
         
-        int N, NX, NU, NP, NC;
-        in.read((char*)&N, sizeof(N));
-        in.read((char*)&NX, sizeof(NX));
-        in.read((char*)&NU, sizeof(NU));
-        in.read((char*)&NP, sizeof(NP));
-        in.read((char*)&NC, sizeof(NC));
+	        int N, NX, NU, NP, NC;
+	        if (!read_exact((char*)&N, sizeof(N)) ||
+	            !read_exact((char*)&NX, sizeof(NX)) ||
+	            !read_exact((char*)&NU, sizeof(NU)) ||
+	            !read_exact((char*)&NP, sizeof(NP)) ||
+	            !read_exact((char*)&NC, sizeof(NC))) {
+	            std::cerr << "[Serializer] Failed to read model dimensions.\n";
+	            return false;
+	        }
 
         if (NX != Model::NX || NU != Model::NU || NP != Model::NP || NC != Model::NC) {
             std::cerr << "[Serializer] Model dimension mismatch!\n";
             return false;
         }
 
-        if (N > MAX_N) N = MAX_N;
-        solver.resize_horizon(N);
+	        if (N < 0) {
+	            std::cerr << "[Serializer] Invalid negative horizon in snapshot.\n";
+	            return false;
+	        }
 
-        SolverConfig cfg;
-        in.read((char*)&cfg, sizeof(SolverConfig));
-        solver.config = cfg;
-        
-        // Read Stats
-        int status_i;
-        int iter;
-        double cost;
-        in.read((char*)&status_i, sizeof(status_i));
-        in.read((char*)&iter, sizeof(iter));
-        in.read((char*)&cost, sizeof(cost));
-        double mu_val, reg_val;
-        in.read((char*)&mu_val, sizeof(mu_val));
-        in.read((char*)&reg_val, sizeof(reg_val));
-        
-        std::cout << "[Serializer] Info - Saved Status: " << status_to_string((SolverStatus)status_i)
-                  << ", Iters: " << iter << ", Cost: " << cost << "\n";
+	        if (N > MAX_N) {
+	            std::cerr << "[Serializer] Snapshot horizon N=" << N << " exceeds MAX_N=" << MAX_N
+	                      << ". Refuse to truncate; rebuild the replay binary with larger MAX_N.\n";
+	            return false;
+	        }
 
-        solver.mu = mu_val;
-        solver.reg = reg_val;
-        
-        // Update components based on config
-        if (cfg.line_search_type == LineSearchType::MERIT) {
-            solver.line_search = std::make_unique<MeritLineSearch<Model, MAX_N>>();
-        } else {
-            solver.line_search = std::make_unique<FilterLineSearch<Model, MAX_N>>();
-        }
+	        SolverConfig cfg;
+	        if (!read_exact((char*)&cfg, sizeof(SolverConfig))) {
+	            std::cerr << "[Serializer] Failed to read solver configuration.\n";
+	            return false;
+	        }
+	        
+	        // Read Stats
+	        int status_i;
+	        int iter;
+	        double cost;
+	        double mu_val, reg_val;
+	        if (!read_exact((char*)&status_i, sizeof(status_i)) ||
+	            !read_exact((char*)&iter, sizeof(iter)) ||
+	            !read_exact((char*)&cost, sizeof(cost)) ||
+	            !read_exact((char*)&mu_val, sizeof(mu_val)) ||
+	            !read_exact((char*)&reg_val, sizeof(reg_val))) {
+	            std::cerr << "[Serializer] Failed to read solver metadata.\n";
+	            return false;
+	        }
+	        
+	        std::cout << "[Serializer] Info - Saved Status: " << status_to_string((SolverStatus)status_i)
+	                  << ", Iters: " << iter << ", Cost: " << cost << "\n";
 
-        in.read((char*)solver.dt_traj.data(), sizeof(double) * N);
+	        // Read remaining data into local temporaries first to keep load atomic.
+	        std::vector<double> dt_local(static_cast<size_t>(N));
+	        if (N > 0 && !read_exact(reinterpret_cast<char*>(dt_local.data()), sizeof(double) * N)) {
+	            std::cerr << "[Serializer] Failed to read time-step vector.\n";
+	            return false;
+	        }
 
-        auto& traj = solver.trajectory.active();
-        for(int k=0; k<=N; ++k) {
-            in.read((char*)traj[k].x.data(), sizeof(double) * NX);
-            in.read((char*)traj[k].u.data(), sizeof(double) * NU);
-            in.read((char*)traj[k].p.data(), sizeof(double) * NP);
-            in.read((char*)traj[k].s.data(), sizeof(double) * NC);
-            in.read((char*)traj[k].lam.data(), sizeof(double) * NC);
-        }
-        
-        std::cout << "[Serializer] Case loaded successfully.\n";
-        return true;
-    }
-};
+	        std::vector<typename SolverState::KnotData> knots(static_cast<size_t>(N + 1));
+	        for(int k=0; k<=N; ++k) {
+	            auto& knot = knots[static_cast<size_t>(k)];
+	            if (!read_exact(reinterpret_cast<char*>(knot.x.data()), sizeof(double) * NX) ||
+	                !read_exact(reinterpret_cast<char*>(knot.u.data()), sizeof(double) * NU) ||
+	                !read_exact(reinterpret_cast<char*>(knot.p.data()), sizeof(double) * NP) ||
+	                !read_exact(reinterpret_cast<char*>(knot.s.data()), sizeof(double) * NC) ||
+	                !read_exact(reinterpret_cast<char*>(knot.lam.data()), sizeof(double) * NC)) {
+	                std::cerr << "[Serializer] Failed to read trajectory data.\n";
+	                return false;
+	            }
+	        }
+
+	        bool has_trailing = (in.peek() != std::ifstream::traits_type::eof());
+
+	        // Commit to solver only after the full read succeeds.
+	        solver.resize_horizon(N);
+	        solver.config = cfg;
+	        solver.backend = cfg.backend;
+	        solver.current_iter = iter;
+	        solver.mu = mu_val;
+	        solver.reg = reg_val;
+
+	        solver.rebuild_solver_components();
+	        solver.components_dirty = false;
+
+	        for(int k=0; k<N; ++k) {
+	            solver.dt_traj[k] = dt_local[static_cast<size_t>(k)];
+	        }
+
+	        auto& traj = solver.trajectory.active();
+	        for(int k=0; k<=N; ++k) {
+	            const auto& src = knots[static_cast<size_t>(k)];
+	            std::copy_n(src.x.data(), NX, traj[k].x.data());
+	            std::copy_n(src.u.data(), NU, traj[k].u.data());
+	            std::copy_n(src.p.data(), NP, traj[k].p.data());
+	            std::copy_n(src.s.data(), NC, traj[k].s.data());
+	            std::copy_n(src.lam.data(), NC, traj[k].lam.data());
+	        }
+
+	        // Keep candidate buffer consistent with the loaded active buffer.
+	        solver.trajectory.prepare_candidate();
+
+	        for(int k=0; k<=N; ++k) {
+	            double current_dt = (k < N) ? solver.dt_traj[k] : 0.0;
+	            if (solver.config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+	                Model::compute_cost_gn(traj[k]);
+	                Model::compute_dynamics(traj[k], solver.config.integrator, current_dt);
+	                Model::compute_constraints(traj[k]);
+	            } else {
+	                Model::compute_cost_exact(traj[k]);
+	                Model::compute_dynamics(traj[k], solver.config.integrator, current_dt);
+	                Model::compute_constraints(traj[k]);
+	            }
+	        }
+
+	        if (has_trailing) {
+	            std::cerr << "[Serializer] Warning: trailing bytes detected in snapshot.\n";
+	        }
+
+	        std::cout << "[Serializer] Case loaded successfully.\n";
+	        return true;
+	    }
+	};
 
 }

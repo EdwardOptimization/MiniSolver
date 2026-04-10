@@ -5,3 +5,4 @@ build/
 **__pycache__/
 trajectory.csv
 trajectory_plot.png
+.memsearch/

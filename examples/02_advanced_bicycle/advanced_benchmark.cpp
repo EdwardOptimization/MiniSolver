@@ -134,24 +134,25 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config) {
             double ms = std::chrono::duration<double, std::milli>(end - start).count();
             total_times.push_back(ms);
             
-            sum_deriv += solver.timer.times["Derivatives"];
-            sum_solve += solver.timer.times["Linear Solve"];
-            sum_ls    += solver.timer.times["Line Search"];
+            sum_deriv += solver.get_profile_time_ms("Derivatives");
+            sum_solve += solver.get_profile_time_ms("Linear Solve");
+            sum_ls    += solver.get_profile_time_ms("Line Search");
             
             if (run == WARMUP_RUNS + NUM_RUNS - 1) {
-                last_iter_count = solver.current_iter;
+                last_iter_count = solver.get_iteration_count();
                 
                 double max_viol = 0.0;
-                for(int k=0; k<=solver.N; ++k) {
+                int horizon = solver.get_horizon();
+                for(int k=0; k<=horizon; ++k) {
                     for(int i=0; i<BicycleExtModel::NC; ++i) {
-                        double val = std::abs(solver.get_constraint_val(k, i) + solver.trajectory[k].s(i));
+                        double val = std::abs(solver.get_constraint_val(k, i) + solver.get_slack(k, i));
                         if(val > max_viol) max_viol = val;
                     }
                 }
                 last_converged = (status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
                 
                 double cost = 0.0;
-                for(int k=0; k<=solver.N; ++k) cost += solver.get_stage_cost(k);
+                for(int k=0; k<=horizon; ++k) cost += solver.get_stage_cost(k);
                 last_cost = cost;
                 last_viol = max_viol;
             }
@@ -259,4 +260,3 @@ int main() {
     
     return 0;
 }
-

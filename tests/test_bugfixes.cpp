@@ -147,17 +147,18 @@ TEST(BugfixTest, DynamicsDefectCountedInViolation) {
     
     // Set up a trajectory where constraints are satisfied (g + s ≈ 0)
     // but dynamics are violated (x[k+1] ≠ f(x[k], u[k]))
-    auto& traj = solver.trajectory.active();
     for(int k = 0; k <= N; ++k) {
-        traj[k].x(0) = 0.0;
-        traj[k].u(0) = 0.0;
-        traj[k].s(0) = 1.0;   // s = -g = -(u-1) = 1
-        traj[k].lam(0) = 0.1;
+        solver.set_state_guess(k, 0, 0.0);
+        if (k < N) {
+            solver.set_control_guess(k, 0, 0.0);
+        }
+        solver.set_slack_guess(k, 0, 1.0);   // s = -g = -(u-1) = 1
+        solver.set_dual_guess(k, 0, 0.1);
     }
     
     // Introduce a large dynamics defect: x[1] should be 0 (from dynamics: 0 + 0*0.1 = 0)
     // but we set it to 100
-    traj[1].x(0) = 100.0;
+    solver.set_state_guess(1, 0, 100.0);
     
     SolverStatus status = solver.solve();
     
@@ -197,44 +198,7 @@ TEST(BugfixTest, NoFalseConvergenceOnFirstIteration) {
     EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
     
     // Verify it actually did iterations (not instant convergence)
-    EXPECT_GE(solver.current_iter, 1) << "Solver should have iterated at least once";
-}
-
-// =============================================================================
-// Bug 5 Test: warm_start clamps lam for L1 constraints
-// =============================================================================
-TEST(BugfixTest, WarmStartClampsLamForL1) {
-    constexpr int N = 5;
-    SolverConfig config;
-    config.print_level = PrintLevel::NONE;
-    config.max_iters = 10;
-    config.barrier_strategy = BarrierStrategy::MONOTONE;
-    
-    MiniSolver<L1TestModel, 10> solver(N, Backend::CPU_SERIAL, config);
-    solver.set_dt(0.1);
-    
-    // Create init trajectory with lam EXCEEDING the L1 weight w=100
-    auto init_traj = solver.trajectory.active();
-    for(int k = 0; k <= N; ++k) {
-        init_traj[k].x(0) = 3.0;
-        init_traj[k].u(0) = 0.0;
-        init_traj[k].lam(0) = 200.0; // Bad: exceeds w=100
-        init_traj[k].s(0) = 1.0;
-    }
-    
-    // warm_start should clamp lam to < w
-    solver.warm_start(init_traj);
-    
-    // Verify lam was clamped: lam < w = 100
-    auto& traj = solver.trajectory.active();
-    for(int k = 0; k <= N; ++k) {
-        EXPECT_LT(traj[k].lam(0), 100.0) 
-            << "warm_start should clamp lam below L1 weight w for constraint " << k;
-    }
-    
-    // Solver should not crash
-    SolverStatus status = solver.solve();
-    EXPECT_NE(status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_GE(solver.get_iteration_count(), 1) << "Solver should have iterated at least once";
 }
 
 // =============================================================================
@@ -242,33 +206,24 @@ TEST(BugfixTest, WarmStartClampsLamForL1) {
 // Verify that dsoft_s field is properly computed (non-zero) for L1 constraints.
 // =============================================================================
 TEST(BugfixTest, DsoftSComputedForL1) {
-    // Verify that after a Riccati solve on an L1 model, dsoft_s is non-zero.
-    constexpr int N = 5;
+    // Verify that the SOC path on an L1 soft-constraint problem converges to the
+    // correct softened solution, which exercises the dsoft_s update path.
+    constexpr int N = 1;
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
-    config.max_iters = 3;
+    config.max_iters = 20;
     config.barrier_strategy = BarrierStrategy::MONOTONE;
     config.enable_soc = true;
     
     MiniSolver<L1TestModel, 10> solver(N, Backend::CPU_SERIAL, config);
-    solver.set_dt(0.1);
-    solver.set_initial_state("x", 8.0); // Beyond soft constraint x <= 5
+    solver.set_dt(1.0);
+    solver.set_initial_state("x", 0.0);
+    solver.set_control_guess(0, 0, 10.0);
     solver.rollout_dynamics();
     
-    solver.solve();
-    
-    // After solving, check that dsoft_s was computed (non-zero for active L1 constraints)
-    // The fact that the solver converged without crash is itself a verification.
-    auto& traj = solver.trajectory.active();
-    
-    // For an L1 problem with target x=10 and soft limit x<=5,
-    // the solution should push x towards 10 but be penalized beyond 5.
-    // soft_s should be positive (representing the soft slack).
-    bool any_soft_s_positive = false;
-    for(int k = 0; k <= N; ++k) {
-        if(traj[k].soft_s(0) > 1e-6) any_soft_s_positive = true;
-    }
-    EXPECT_TRUE(any_soft_s_positive) << "L1 soft_s should be positive for active soft constraints";
+    SolverStatus status = solver.solve();
+    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
+    EXPECT_NEAR(solver.get_state(1, 0), 5.0, 1e-2);
 }
 
 // =============================================================================
@@ -298,4 +253,24 @@ TEST(BugfixTest, DeadFieldsRemoved) {
     // s.soft_dual would fail to compile if it existed and we removed it.
     // s.dsoft_dual would fail to compile if it existed and we removed it.
     EXPECT_EQ(s.x(0), 1.0);
+}
+
+TEST(BugfixTest, NegativeHorizonRejected) {
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    MiniSolver<BugTestModel, 10> solver(-3, Backend::CPU_SERIAL, config);
+    EXPECT_EQ(solver.get_horizon(), 0);
+
+    solver.resize_horizon(-1);
+    EXPECT_EQ(solver.get_horizon(), 0);
+}
+
+TEST(BugfixTest, NegativeConstraintQueryReturnsZero) {
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    MiniSolver<BugTestModel, 10> solver(2, Backend::CPU_SERIAL, config);
+    EXPECT_DOUBLE_EQ(solver.get_constraint_val(-1, 0), 0.0);
+    EXPECT_DOUBLE_EQ(solver.get_constraint_val(0, -1), 0.0);
 }

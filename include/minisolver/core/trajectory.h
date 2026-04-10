@@ -28,7 +28,7 @@ public:
     
     int N; // Current valid horizon
 
-    Trajectory(int initial_N) : N(initial_N) {
+    Trajectory(int initial_N) : N(std::max(0, std::min(initial_N, MAX_N))) {
         active_ptr = &memory_A;
         candidate_ptr = &memory_B;
         
@@ -37,10 +37,20 @@ public:
         for(auto& kp : *candidate_ptr) kp.initialize_defaults();
     }
     
-    void resize(int new_n) {
-        if (new_n > MAX_N) return; // Error handling needed
-        N = new_n;
-    }
+	    void resize(int new_n) {
+	        if (new_n < 0 || new_n > MAX_N) return; // Error handling needed
+	        if (new_n > N) {
+	            // Initialize newly exposed tail knots in both buffers to avoid stale state
+	            // resurfacing after shrink -> grow.
+	            for (int k = N + 1; k <= new_n; ++k) {
+	                (*active_ptr)[k].set_zero();
+	                (*active_ptr)[k].initialize_defaults();
+	                (*candidate_ptr)[k].set_zero();
+	                (*candidate_ptr)[k].initialize_defaults();
+	            }
+	        }
+	        N = new_n;
+	    }
     
     // Accessors
     Knot& operator[](int k) { return (*active_ptr)[k]; }
@@ -75,29 +85,6 @@ public:
             dst[k] = src[k];
         }
     }
-    // Shifts the trajectory for Warm Start (MPC)
-    // Moves primal/dual variables: x[k] <- x[k+1], u[k] <- u[k+1], etc.
-    // Parameters (p) are also shifted; user should update them externally if time-dependent.
-    // Duplicates the last step for the terminal node.
-    void shift() {
-        auto& traj = *active_ptr;
-        for(int k=0; k < N; ++k) {
-            traj[k].x = traj[k+1].x;
-            traj[k].u = traj[k+1].u;
-            traj[k].s = traj[k+1].s;
-            traj[k].lam = traj[k+1].lam;
-            traj[k].soft_s = traj[k+1].soft_s;
-            traj[k].p = traj[k+1].p;
-        }
-        // Duplicate last step (safe approximation; ideally integrate dynamics)
-        traj[N].x = traj[N-1].x;
-        traj[N].u = traj[N-1].u;
-        traj[N].s = traj[N-1].s;
-        traj[N].lam = traj[N-1].lam;
-        traj[N].soft_s = traj[N-1].soft_s;
-        // Do not duplicate last parameter — let user set new value
-    }
-    
     // Reset trajectory data to initial construction state (Zero x/u/p, Default s/lam)
     void reset() {
         for(auto& kp : *active_ptr) { 
@@ -114,4 +101,3 @@ public:
 };
 
 }
-

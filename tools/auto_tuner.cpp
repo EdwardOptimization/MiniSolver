@@ -174,7 +174,8 @@ EvalResult evaluate_config(const TunableParams& params) {
     
     // 1. Standard Benchmark
     scenarios.push_back({"Standard", [&](MiniSolver<CarModel, 100>& s){
-        for(int k=0; k<=s.N; ++k) {
+        int horizon = s.get_horizon();
+        for(int k=0; k<=horizon; ++k) {
              double t = k * 0.1; // Approx
              s.set_parameter(k, "v_ref", 5.0);
              s.set_parameter(k, "x_ref", t*5.0);
@@ -198,7 +199,8 @@ EvalResult evaluate_config(const TunableParams& params) {
 
     // 2. Hard Obstacle (Larger, closer)
     scenarios.push_back({"HardObs", [&](MiniSolver<CarModel, 100>& s){
-        for(int k=0; k<=s.N; ++k) {
+        int horizon = s.get_horizon();
+        for(int k=0; k<=horizon; ++k) {
              double t = k * 0.1;
              s.set_parameter(k, "v_ref", 5.0);
              s.set_parameter(k, "x_ref", t*5.0);
@@ -224,7 +226,8 @@ EvalResult evaluate_config(const TunableParams& params) {
     // 3. Bad Initial Guess (Cold start with zero inputs is already "bad", but let's try non-zero bad inputs)
     // Actually, solver.rollout_dynamics() overwrites state guesses, so we only control control guesses.
     scenarios.push_back({"BadGuess", [&](MiniSolver<CarModel, 100>& s){
-        for(int k=0; k<=s.N; ++k) {
+        int horizon = s.get_horizon();
+        for(int k=0; k<=horizon; ++k) {
              s.set_parameter(k, "v_ref", 5.0);
              s.set_parameter(k, "x_ref", k*0.1*5.0);
              s.set_parameter(k, "y_ref", 0.0);
@@ -239,7 +242,7 @@ EvalResult evaluate_config(const TunableParams& params) {
              s.set_parameter(k, "w_acc", 0.1);
              s.set_parameter(k, "w_steer", 1.0);
              
-             if(k < s.N) {
+             if(k < horizon) {
                  // Initialize with "Turn Left" guess which is wrong for obstacle at (12,0)
                  s.set_control_guess(k, "steer", 0.3); // Reduced from 0.5
                  s.set_control_guess(k, "acc", 1.0);
@@ -318,4 +321,3 @@ int main(int argc, char** argv) {
     
     return 0;
 }
-

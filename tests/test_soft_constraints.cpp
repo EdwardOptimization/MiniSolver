@@ -114,6 +114,33 @@ TEST(SoftConstraintTest, L1_Convergence) {
     EXPECT_NEAR(x_final, 9.5, 1.0e-3); 
 }
 
+TEST(SoftConstraintTest, L1InvalidDualWarmStartFallsBackSafely) {
+    SoftModel::constraint_types[0] = 1;
+    SoftModel::constraint_weights[0] = 1.0;
+
+    SolverConfig config;
+    config.tol_con = 1e-4;
+    config.tol_dual = 1e-4;
+    config.max_iters = 50;
+    config.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+
+    MiniSolver<SoftModel, 5> solver(1, Backend::CPU_SERIAL, config);
+    solver.set_dt(1.0);
+    solver.set_initial_state("x", 0.0);
+    solver.set_control_guess(0, "u", 10.0);
+    solver.rollout_dynamics();
+
+    solver.set_slack_guess(0, 0, 0.1);
+    solver.set_dual_guess(0, 0, SoftModel::constraint_weights[0]);
+    solver.set_slack_guess(1, 0, 0.1);
+    solver.set_dual_guess(1, 0, SoftModel::constraint_weights[0]);
+
+    SolverStatus status = solver.solve();
+    EXPECT_NE(status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
+    EXPECT_NEAR(solver.get_state(1, 0), 9.5, 1.0e-3);
+}
+
 TEST(SoftConstraintTest, L2_Convergence) {
     // Setup L2
     SoftModel::constraint_types[0] = 2; // L2
@@ -386,15 +413,15 @@ TEST(ComparisonTest, L1_SoftConstraint) {
     
     // [Init Dual Variables]
     // For L1: Stationarity implies Lambda = Weight = 1.0
-    auto& traj = solver_man.trajectory.active();
-    traj[1].s(0) = 0.01;  // Small slack for active constraint
-    traj[1].lam(0) = 1.0; // L1 Dual = Weight
+    solver_man.set_slack_guess(1, 0, 0.01);  // Small slack for active constraint
+    solver_man.set_dual_guess(1, 0, 1.0);    // L1 Dual = Weight
     
-    traj[1].s(1) = slk_init; // Inactive non-negative constraint
-    traj[1].lam(1) = 0.01;
+    solver_man.set_slack_guess(1, 1, slk_init); // Inactive non-negative constraint
+    solver_man.set_dual_guess(1, 1, 0.01);
     
-    solver_man.is_warm_started = true;
-    
+    SolverConfig cfg_l1 = solver_man.get_config();
+    cfg_l1.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    solver_man.set_config(cfg_l1);
     solver_man.solve();
     double x_man = solver_man.get_state(1, 0);
     
@@ -443,12 +470,12 @@ TEST(ComparisonTest, L2_SoftConstraint) {
     // [Init Dual Variables]
     // For L2: Stationarity implies Lambda = Weight * Slack
     // Lam = 1.0 * 5.0 = 5.0
-    auto& traj = solver_man.trajectory.active();
-    traj[1].s(0) = 0.01;
-    traj[1].lam(0) = 5.0; 
+    solver_man.set_slack_guess(1, 0, 0.01);
+    solver_man.set_dual_guess(1, 0, 5.0);
     
-    solver_man.is_warm_started = true;
-    
+    SolverConfig cfg_l2 = solver_man.get_config();
+    cfg_l2.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    solver_man.set_config(cfg_l2);
     solver_man.solve();
     double x_man = solver_man.get_state(1, 0);
     

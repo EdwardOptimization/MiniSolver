@@ -73,7 +73,7 @@ TEST(FeaturesTest, CostStagnationTermination) {
     SolverStatus status = solver.solve();
     
     EXPECT_EQ(status, SolverStatus::OPTIMAL);
-    EXPECT_LT(solver.current_iter, config.max_iters);
+    EXPECT_LT(solver.get_iteration_count(), config.max_iters);
 }
 
 // =============================================================================
@@ -91,13 +91,11 @@ TEST(FeaturesTest, ParameterPersistenceCheck) {
     solver.set_parameter(2, "x_ref", magic_val);
     
     EXPECT_DOUBLE_EQ(solver.get_parameter(2, "x_ref"), magic_val);
-    EXPECT_DOUBLE_EQ(solver.trajectory.active()[2].p(1), magic_val);
     
     solver.solve();
     
     double val_after = solver.get_parameter(2, "x_ref");
     EXPECT_DOUBLE_EQ(val_after, magic_val) << "Parameter lost after solve() iteration (Ghost Cost Bug)";
-    EXPECT_DOUBLE_EQ(solver.trajectory.candidate()[2].p(1), magic_val) << "Candidate buffer parameter out of sync";
 }
 
 // =============================================================================
