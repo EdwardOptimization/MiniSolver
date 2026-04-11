@@ -583,6 +583,7 @@ private:
                 
                 traj[k].Q.setIdentity(); 
                 traj[k].q.setZero();
+                traj[k].H.setZero();
                 
                 if (k < N) {
                     traj[k].R.setIdentity(); 
@@ -634,6 +635,32 @@ private:
                     double dlam = traj[k].dlam(i);
                     if (ds < 0) alpha = std::min(alpha, -config.restoration_alpha * s / ds);
                     if (dlam < 0) alpha = std::min(alpha, -config.restoration_alpha * lam / dlam);
+
+                    // For L1 soft constraints, maintain:
+                    // - soft_s > 0
+                    // - w - lam > 0  (implicit soft-dual)
+                    double w = 0.0;
+                    int type = 0;
+                    if constexpr (NC > 0) {
+                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                            type = Model::constraint_types[i];
+                            w = Model::constraint_weights[i];
+                        }
+                    }
+                    if (type == 1 && w > 1e-6) {
+                        const double soft_s = traj[k].soft_s(i);
+                        const double dsoft_s = traj[k].dsoft_s(i);
+                        if (dsoft_s < 0) alpha = std::min(alpha, -config.restoration_alpha * soft_s / dsoft_s);
+
+                        if (dlam > 0) {
+                            const double gap = (w - lam) - config.min_barrier_slack;
+                            if (gap <= 0.0) {
+                                alpha = 0.0;
+                            } else {
+                                alpha = std::min(alpha, config.restoration_alpha * gap / dlam);
+                            }
+                        }
+                    }
                 }
             }
             
@@ -646,6 +673,7 @@ private:
                 traj[k].u += alpha * traj[k].du;
                 traj[k].s += alpha * traj[k].ds;
                 traj[k].lam += alpha * traj[k].dlam;
+                traj[k].soft_s += alpha * traj[k].dsoft_s;
             }
             success = true; // At least one restoration step was applied
         }
@@ -653,14 +681,35 @@ private:
         // Reset Lagrange Multipliers for the original problem to avoid dual contamination
         // form the restoration phase (which solves a different problem).
         for(int k=0; k<=N; ++k) {
-             for(int i=0; i<NC; ++i) {
-                  // Ensure s is positive
-                  if(traj[k].s(i) < 1e-9) traj[k].s(i) = 1e-9;
-                  
-                  // Preserve dual info from restoration if valuable, but ensure complementarity lower bound
-                  double reset_val = saved_mu / traj[k].s(i);
-                  traj[k].lam(i) = std::max(traj[k].lam(i), reset_val);
-             }
+            for(int i=0; i<NC; ++i) {
+                // Ensure s is positive
+                if(traj[k].s(i) < 1e-9) traj[k].s(i) = 1e-9;
+
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+
+                // Preserve dual info from restoration if valuable, but ensure complementarity lower bound.
+                double lam_min = saved_mu / traj[k].s(i);
+
+                if (type == 1 && w > 1e-6) {
+                    // Keep lam strictly inside the dual box so barrier terms remain well-defined.
+                    double lam_max = w - config.min_barrier_slack;
+                    if (lam_max < config.min_barrier_slack) lam_max = config.min_barrier_slack;
+                    traj[k].lam(i) = std::min(traj[k].lam(i), lam_max);
+                    traj[k].lam(i) = std::max(traj[k].lam(i), lam_min);
+
+                    // Rebuild the soft slack on the central path for the restored mu.
+                    traj[k].soft_s(i) = std::max(config.min_barrier_slack, saved_mu / (w - traj[k].lam(i)));
+                } else {
+                    traj[k].lam(i) = std::max(traj[k].lam(i), lam_min);
+                }
+            }
         }
 
         mu = saved_mu;
@@ -748,7 +797,7 @@ private:
         double max_prim_inf = 0.0;
         double max_dual_inf = 0.0; 
         double total_gap = 0.0;
-        int total_con = 0;
+        int total_gap_dim = 0;
 
         for(int k=0; k<=N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
@@ -765,16 +814,34 @@ private:
             }
             
             for(int i=0; i<NC; ++i) {
-                double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu); 
+                const double s = traj[k].s(i);
+                const double lam = traj[k].lam(i);
+                double comp = std::abs(s * lam - mu);
                 if(comp > max_kkt_error) max_kkt_error = comp;
+
+                total_gap += s * lam;
+                total_gap_dim += 1;
+
+                // L1 soft constraint has an additional complementarity pair:
+                //   soft_s * (w - lam) = mu, with implicit soft-dual (w - lam) > 0.
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+                if (type == 1 && w > 1e-6) {
+                    const double soft_s = traj[k].soft_s(i);
+                    const double soft_dual = (w - lam);
+                    double comp_soft = std::abs(soft_s * soft_dual - mu);
+                    if (comp_soft > max_kkt_error) max_kkt_error = comp_soft;
+
+                    total_gap += soft_s * soft_dual;
+                    total_gap_dim += 1;
+                }
             }
-            total_gap += traj[k].s.dot(traj[k].lam);
-            total_con += NC;
-            
-            // Approximate Dual Inf from r_bar (Control Gradient Stationarity)
-            // Note: q_bar is Cost-to-Go gradient (lambda), which is NOT zero in general.
-            double r_norm = MatOps::norm_inf(traj[k].r_bar);
-            if(r_norm > max_dual_inf) max_dual_inf = r_norm;
         }
         
         // Use helper for Primal Inf
@@ -782,12 +849,6 @@ private:
         
         timer.stop();
         
-        // Initial convergence check (Primal + Dual + Mu)
-        // Skip on first iteration: r_bar (used for dual inf) has not yet been computed
-        // by compute_barrier_derivatives. It will be computed in the Riccati solve below.
-        // The final convergence verdict is always made in postsolve() with fresh data.
-        if(current_iter > 1 && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) return SolverStatus::OPTIMAL;
-
         // Check for Numerical Instability (NaN/Inf)
         if (has_nans(traj)) {
              if (config.print_level >= PrintLevel::INFO) 
@@ -795,7 +856,7 @@ private:
              return SolverStatus::NUMERICAL_ERROR;
         }
 
-        double avg_gap = (total_con > 0) ? (total_gap / total_con) : 0.0;
+        double avg_gap = (total_gap_dim > 0) ? (total_gap / total_gap_dim) : 0.0;
         
         // In Mehrotra mode, mu is updated dynamically inside the step via predictor-corrector logic.
         // We only use update_barrier for Monotone/Adaptive strategies or as a fallback.
@@ -971,8 +1032,23 @@ private:
 
         if (!solve_success) return SolverStatus::NUMERICAL_ERROR;
 
+        // Dual infeasibility metric: use Qu (stored in r_bar after the Riccati backward pass).
+        // This is only valid after a successful linear solve (r_bar is stale right after line-search swaps).
+        max_dual_inf = 0.0;
+        for(int k=0; k<=N; ++k) {
+            double r_norm = MatOps::norm_inf(traj[k].r_bar);
+            if (r_norm > max_dual_inf) max_dual_inf = r_norm;
+        }
+
+        // Convergence check (Primal + Dual + Mu) using the freshly computed dual residual.
+        // The final convergence verdict is always made in postsolve() with fresh data.
+        if(current_iter > 1 && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) return SolverStatus::OPTIMAL;
+
         timer.start("Line Search");
         double alpha = line_search->search(trajectory, *linear_solver, dt_traj, mu, reg, config);
+        // IMPORTANT: line_search may swap trajectory buffers.
+        // Do not use references to trajectory.active() taken before this call.
+        auto& traj_after_ls = trajectory.active();
         
         // If step size is valid, reset the counter
         if (alpha > 1e-8) {
@@ -1017,18 +1093,35 @@ private:
                 MLOG_DEBUG("Triggering Slack Reset (Attempt " << slack_reset_consecutive_count + 1 << ").");
                 
                 for(int k=0; k<=N; ++k) {
-                    auto& kp = traj[k];
+                    auto& kp = traj_after_ls[k];
                     for(int i=0; i<NC; ++i) {
                         double min_s = std::abs(kp.g_val(i)) + std::sqrt(mu);
                         if (kp.s(i) < min_s) {
                             kp.s(i) = min_s;
                             // Maintain consistency of dual variables, prevent aggressive reset
                             kp.lam(i) = std::max(kp.lam(i), config.mu_init / kp.s(i));
+
+                            // For L1 soft constraints, also keep the implicit soft-dual feasible: (w - lam) > 0.
+                            double w = 0.0;
+                            int type = 0;
+                            if constexpr (NC > 0) {
+                                if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                                    type = Model::constraint_types[i];
+                                    w = Model::constraint_weights[i];
+                                }
+                            }
+                            if (type == 1 && w > 1e-6) {
+                                double lam_max = w - config.min_barrier_slack;
+                                if (lam_max < config.min_barrier_slack) lam_max = config.min_barrier_slack;
+                                if (kp.lam(i) > lam_max) kp.lam(i) = lam_max;
+                                // Keep soft slack on the central path so barrier terms remain well-defined.
+                                kp.soft_s(i) = std::max(config.min_barrier_slack, mu / (w - kp.lam(i)));
+                            }
                         }
                     }
                 }
                 // Try one solve to see if a valid direction can be obtained
-                recovered = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
+                recovered = linear_solver->solve(traj_after_ls, N, mu, reg, config.inertia_strategy, config);
                 
                 if (recovered) {
                     // Mark: If this Reset failed to get us out of trouble, disallow it next time
@@ -1082,7 +1175,9 @@ private:
             }
         }
         
-        last_prim_inf = max_prim_inf;
+        // For outer-loop heuristics (e.g. cost stagnation), store feasibility of the *current* iterate,
+        // i.e. after line-search has potentially swapped buffers.
+        last_prim_inf = compute_max_violation(trajectory.active());
         last_dual_inf = max_dual_inf;
         return SolverStatus::UNSOLVED;
     }
