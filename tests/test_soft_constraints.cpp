@@ -3,72 +3,89 @@
  * @brief Tests for L1/L2 soft constraints: basic convergence + comparison
  *        between interface-based and manual-slack implementations.
  */
-#include <gtest/gtest.h>
 #include "minisolver/solver/solver.h"
 #include <array>
-#include <iostream>
 #include <cmath>
+#include <gtest/gtest.h>
+#include <iostream>
 
 using namespace minisolver;
 
 // Define SoftModel with mutable constraint configuration
 struct SoftModel {
-    static const int NX=1;
-    static const int NU=1;
-    static const int NC=1;
-    static const int NP=0;
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
 
     // Mutable for testing purposes
-    static std::array<double, NC> constraint_weights; 
+    static std::array<double, NC> constraint_weights;
     static std::array<int, NC> constraint_types;
 
-    static constexpr std::array<const char*, NX> state_names = {"x"};
-    static constexpr std::array<const char*, NU> control_names = {"u"};
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
 
-    template<typename T>
-    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/) {
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
         MSVec<T, NX> x_next;
         x_next(0) = x(0) + u(0) * dt;
         return x_next;
     }
 
-    template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
-        T x = kp.x(0); T u = kp.u(0);
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        T x = kp.x(0);
+        T u = kp.u(0);
         kp.f_resid(0) = x + u * dt;
-        kp.A(0,0) = 1.0;
-        kp.B(0,0) = dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
     }
 
-    template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
         T x = kp.x(0);
         // x <= 5 -> x - 5 <= 0
         kp.g_val(0) = x - 5.0;
-        kp.C(0,0) = 1.0;
-        kp.D(0,0) = 0.0;
+        kp.C(0, 0) = 1.0;
+        kp.D(0, 0) = 0.0;
     }
 
-    template<typename T>
-    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {
-        T x = kp.x(0); T u = kp.u(0);
+    template <typename T> static void compute_cost_impl(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        T x = kp.x(0);
+        T u = kp.u(0);
         // Cost: (x - 10)^2 + 1e-4 * u^2 (small regularization)
         T diff = x - 10.0;
-        kp.cost = diff*diff + 1e-4 * u*u;
-        
+        kp.cost = diff * diff + 1e-4 * u * u;
+
         kp.q(0) = 2 * diff;
         kp.r(0) = 2e-4 * u;
-        
-        kp.Q(0,0) = 2.0;
-        kp.R(0,0) = 2e-4;
+
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2e-4;
         kp.H.setZero();
     }
-    
-    template<typename T> static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_impl(kp); }
-    template<typename T> static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_impl(kp); }
-    template<typename T> static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_impl(kp); }
-    template<typename T> static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_impl(kp);
+    }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_impl(kp);
+    }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_impl(kp);
+    }
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost(kp);
@@ -76,24 +93,25 @@ struct SoftModel {
 };
 
 // Define static members
-std::array<double, SoftModel::NC> SoftModel::constraint_weights = {0.0};
-std::array<int, SoftModel::NC> SoftModel::constraint_types = {0};
+std::array<double, SoftModel::NC> SoftModel::constraint_weights = { 0.0 };
+std::array<int, SoftModel::NC> SoftModel::constraint_types = { 0 };
 
-TEST(SoftConstraintTest, L1_Convergence) {
+TEST(SoftConstraintTest, L1_Convergence)
+{
     // Setup L1
     SoftModel::constraint_types[0] = 1; // L1
     SoftModel::constraint_weights[0] = 1.0; // w=1
-    
+
     SolverConfig config;
-    //config.print_level = PrintLevel::DEBUG;
+    // config.print_level = PrintLevel::DEBUG;
     config.tol_con = 1e-4;
     config.tol_dual = 1e-4;
     config.max_iters = 50;
-    
+
     // N=1
     MiniSolver<SoftModel, 5> solver(1, Backend::CPU_SERIAL, config);
     solver.set_dt(1.0); // dt=1
-    
+
     // Initial guess x=0, u=10 (to reach 10)
     solver.set_initial_state("x", 0.0);
     solver.set_control_guess(0, "u", 10.0);
@@ -104,17 +122,17 @@ TEST(SoftConstraintTest, L1_Convergence) {
     // For x > 5: cost (x-10)^2 + (x-5). deriv 2(x-10)+1 = 2x-19=0 -> x=9.5. Cost 0.25+4.5 = 4.75.
     // For x <= 5: cost (x-10)^2. min at x=5 (constrained).
     // Global min x=9.5.
-    
+
     solver.solve();
-    
+
     double x_final = solver.get_state(1, 0);
     std::cout << "L1 Final X: " << x_final << std::endl;
-    
-    
-    EXPECT_NEAR(x_final, 9.5, 1.0e-3); 
+
+    EXPECT_NEAR(x_final, 9.5, 1.0e-3);
 }
 
-TEST(SoftConstraintTest, L1InvalidDualWarmStartFallsBackSafely) {
+TEST(SoftConstraintTest, L1InvalidDualWarmStartFallsBackSafely)
+{
     SoftModel::constraint_types[0] = 1;
     SoftModel::constraint_weights[0] = 1.0;
 
@@ -141,162 +159,196 @@ TEST(SoftConstraintTest, L1InvalidDualWarmStartFallsBackSafely) {
     EXPECT_NEAR(solver.get_state(1, 0), 9.5, 1.0e-3);
 }
 
-TEST(SoftConstraintTest, L2_Convergence) {
+TEST(SoftConstraintTest, L2_Convergence)
+{
     // Setup L2
     SoftModel::constraint_types[0] = 2; // L2
     SoftModel::constraint_weights[0] = 1.0; // w=1
-    
+
     SolverConfig config;
     config.tol_con = 1e-4;
     config.max_iters = 50;
-    
+
     MiniSolver<SoftModel, 5> solver(1, Backend::CPU_SERIAL, config);
-    solver.set_dt(1.0); 
+    solver.set_dt(1.0);
     // Start at x=10 (Cost min, but Feasibility violation)
     solver.set_initial_state("x", 10.0);
     solver.set_control_guess(0, "u", 0.0);
     solver.rollout_dynamics();
-    
+
     // Theoretical L2 Opt: x = 8.333
     // From x=10, cost increases, but violation decreases.
     // If phi doesn't include penalty, cost increases -> phi increases.
     // theta decreases.
     // Filter accepts if theta decreases enough.
-    
+
     solver.solve();
-    
+
     double x_final = solver.get_state(1, 0);
     std::cout << "L2 Final X (from x=10): " << x_final << std::endl;
-    
+
     EXPECT_NEAR(x_final, 8.333, 1.0e-3);
 }
-
 
 // ==========================================
 // 1. Interface Model (Benchmark)
 // Uses built-in L1/L2 soft constraint logic
 // ==========================================
 struct InterfaceModel {
-    static const int NX=1;
-    static const int NU=1;
-    static const int NC=1;
-    static const int NP=0;
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
 
-    static std::array<double, NC> constraint_weights; 
+    static std::array<double, NC> constraint_weights;
     static std::array<int, NC> constraint_types;
 
-    static constexpr std::array<const char*, NX> state_names = {"x"};
-    static constexpr std::array<const char*, NU> control_names = {"u"};
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
 
-    template<typename T>
-    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/) {
-        return x + u * dt; 
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        return x + u * dt;
     }
 
-    template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
         kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
-        kp.A(0,0) = 1.0; kp.B(0,0) = dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
     }
 
-    template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
         // Constraint: x <= 5.0
-        kp.g_val(0) = kp.x(0) - 5.0; 
-        kp.C(0,0) = 1.0; kp.D(0,0) = 0.0;
+        kp.g_val(0) = kp.x(0) - 5.0;
+        kp.C(0, 0) = 1.0;
+        kp.D(0, 0) = 0.0;
     }
 
-    template<typename T>
-    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
         T diff = kp.x(0) - 10.0; // Target x = 10
-        kp.cost = diff*diff + 1e-4 * kp.u(0)*kp.u(0); 
+        kp.cost = diff * diff + 1e-4 * kp.u(0) * kp.u(0);
         kp.q(0) = 2 * diff;
         kp.r(0) = 2e-4 * kp.u(0);
-        kp.Q(0,0) = 2.0; kp.R(0,0) = 2e-4;
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2e-4;
     }
-    
-    template<typename T> static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt); compute_constraints(kp); compute_cost(kp);
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_exact(kp);
+    }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_exact(kp);
+    }
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
     }
 };
 
-std::array<double, 1> InterfaceModel::constraint_weights = {0.0};
-std::array<int, 1> InterfaceModel::constraint_types = {0};
-
+std::array<double, 1> InterfaceModel::constraint_weights = { 0.0 };
+std::array<int, 1> InterfaceModel::constraint_types = { 0 };
 
 // ==========================================
 // 2. Manual L1 Model
 // Explicitly adds 'slk' as a control variable
 // ==========================================
 struct ManualL1Model {
-    static const int NX=1;
-    static const int NU=2; // [u, slk]
-    static const int NC=2; // [g-slk, -slk]
-    static const int NP=0;
-    
-    static constexpr std::array<double, NC> constraint_weights = {0.0, 0.0};
-    static constexpr std::array<int, NC> constraint_types = {0, 0};
-    
-    static constexpr std::array<const char*, NX> state_names = {"x"};
-    static constexpr std::array<const char*, NU> control_names = {"u", "slk"};
+    static const int NX = 1;
+    static const int NU = 2; // [u, slk]
+    static const int NC = 2; // [g-slk, -slk]
+    static const int NP = 0;
+
+    static constexpr std::array<double, NC> constraint_weights = { 0.0, 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0, 0 };
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u", "slk" };
     static constexpr std::array<const char*, NP> param_names = {};
 
-    template<typename T>
-    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/) {
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
         MSVec<T, NX> x_next;
         x_next(0) = x(0) + u(0) * dt; // slk (u[1]) does not affect dynamics
         return x_next;
     }
 
-    template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
         kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
-        kp.A(0,0) = 1.0; 
-        kp.B(0,0) = dt; kp.B(0,1) = 0.0; 
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+        kp.B(0, 1) = 0.0;
     }
 
-    template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
         T x = kp.x(0);
         T slk = kp.u(1);
-        
+
         // 1. x - 5 - slk <= 0
         kp.g_val(0) = x - 5.0 - slk;
-        kp.C(0,0) = 1.0; 
-        kp.D(0,0) = 0.0; kp.D(0,1) = -1.0; 
-        
+        kp.C(0, 0) = 1.0;
+        kp.D(0, 0) = 0.0;
+        kp.D(0, 1) = -1.0;
+
         // 2. -slk <= 0 (Non-negative slack)
         kp.g_val(1) = -slk;
-        kp.C(1,0) = 0.0;
-        kp.D(1,0) = 0.0; kp.D(1,1) = -1.0;
+        kp.C(1, 0) = 0.0;
+        kp.D(1, 0) = 0.0;
+        kp.D(1, 1) = -1.0;
     }
 
-    template<typename T>
-    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
         T diff = kp.x(0) - 10.0;
         T slk = kp.u(1);
         double w = 1.0; // Fixed L1 Weight
-        
+
         // Cost: (x-10)^2 + w*slk
-        kp.cost = diff*diff + 1e-4*kp.u(0)*kp.u(0) + w * slk;
-        
+        kp.cost = diff * diff + 1e-4 * kp.u(0) * kp.u(0) + w * slk;
+
         kp.q(0) = 2 * diff;
         kp.r(0) = 2e-4 * kp.u(0);
         kp.r(1) = w; // Gradient w.r.t slk is constant w
-        
-        kp.Q(0,0) = 2.0;
-        kp.R(0,0) = 2e-4; 
-        kp.R(1,1) = 0.0; // Linear cost -> 0 Hessian
-        kp.R(0,1) = 0.0; kp.R(1,0) = 0.0;
+
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2e-4;
+        kp.R(1, 1) = 0.0; // Linear cost -> 0 Hessian
+        kp.R(0, 1) = 0.0;
+        kp.R(1, 0) = 0.0;
     }
-    
-    template<typename T> static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt); compute_constraints(kp); compute_cost(kp);
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_exact(kp);
+    }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_exact(kp);
+    }
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
     }
 };
 
@@ -305,79 +357,96 @@ struct ManualL1Model {
 // Uses 0.5 * w * slk^2 to match Interface
 // ==========================================
 struct ManualL2Model {
-    static const int NX=1;
-    static const int NU=2; 
-    static const int NC=1; 
-    static const int NP=0;
-    
-    static constexpr std::array<double, NC> constraint_weights = {0.0};
-    static constexpr std::array<int, NC> constraint_types = {0};
-    static constexpr std::array<const char*, NX> state_names = {"x"};
-    static constexpr std::array<const char*, NU> control_names = {"u", "slk"};
+    static const int NX = 1;
+    static const int NU = 2;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u", "slk" };
     static constexpr std::array<const char*, NP> param_names = {};
 
-    template<typename T>
-    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/) {
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
         MSVec<T, NX> x_next;
-        x_next(0) = x(0) + u(0) * dt; 
+        x_next(0) = x(0) + u(0) * dt;
         return x_next;
     }
 
-    template<typename T>
-    static void compute_dynamics(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType /*type*/, double dt) {
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
         kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
-        kp.A(0,0) = 1.0; 
-        kp.B(0,0) = dt; kp.B(0,1) = 0.0; 
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+        kp.B(0, 1) = 0.0;
     }
 
-    template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
         T x = kp.x(0);
         T slk = kp.u(1);
         // x - 5 - slk <= 0
         kp.g_val(0) = x - 5.0 - slk;
-        kp.C(0,0) = 1.0; 
-        kp.D(0,0) = 0.0; kp.D(0,1) = -1.0; 
+        kp.C(0, 0) = 1.0;
+        kp.D(0, 0) = 0.0;
+        kp.D(0, 1) = -1.0;
     }
 
-    template<typename T>
-    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
         T diff = kp.x(0) - 10.0;
         T slk = kp.u(1);
         double w = 1.0; // Fixed L2 Weight
-        
+
         // Cost: 0.5 * w * slk^2 (Matches MiniSolver Interface L2 formulation)
-        kp.cost = diff*diff + 1e-4*kp.u(0)*kp.u(0) + 0.5 * w * slk * slk;
-        
+        kp.cost = diff * diff + 1e-4 * kp.u(0) * kp.u(0) + 0.5 * w * slk * slk;
+
         kp.q(0) = 2 * diff;
         kp.r(0) = 2e-4 * kp.u(0);
-        kp.r(1) = w * slk; 
-        
-        kp.Q(0,0) = 2.0;
-        kp.R(0,0) = 2e-4; 
-        kp.R(1,1) = w; 
-        kp.R(0,1) = 0.0; kp.R(1,0) = 0.0;
+        kp.r(1) = w * slk;
+
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2e-4;
+        kp.R(1, 1) = w;
+        kp.R(0, 1) = 0.0;
+        kp.R(1, 0) = 0.0;
     }
-    
-    template<typename T> static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) { compute_cost_exact(kp); }
-    template<typename T> static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
-        compute_dynamics(kp, type, dt); compute_constraints(kp); compute_cost(kp);
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_exact(kp);
+    }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_exact(kp);
+    }
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
     }
 };
-
 
 // ==========================================
 // 4. Comparison Tests
 // ==========================================
 
-TEST(ComparisonTest, L1_SoftConstraint) {
+TEST(ComparisonTest, L1_SoftConstraint)
+{
     SolverConfig config;
     config.tol_con = 1e-4;
     config.max_iters = 100;
     config.integrator = IntegratorType::EULER_EXPLICIT;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
-    
+
     // We use N=2 to ensure 'slk' (as a control input) is optimized at the intermediate node.
     // k=0: x0 -> u0 -> x1
     // k=1: x1 -> u1(slk) -> x2. Constraint applies here.
@@ -385,8 +454,8 @@ TEST(ComparisonTest, L1_SoftConstraint) {
 
     // --- 1. Interface (Ground Truth) ---
     InterfaceModel::constraint_types[0] = 1; // L1
-    InterfaceModel::constraint_weights[0] = 1.0; 
-    
+    InterfaceModel::constraint_weights[0] = 1.0;
+
     MiniSolver<InterfaceModel, 5> solver_if(N, Backend::CPU_SERIAL, config);
     solver_if.set_dt(1.0);
     solver_if.set_initial_state("x", 0.0);
@@ -395,56 +464,58 @@ TEST(ComparisonTest, L1_SoftConstraint) {
     solver_if.rollout_dynamics();
     solver_if.solve();
     double x_if = solver_if.get_state(1, 0); // Check x at k=1
-    
+
     // --- 2. Manual Model ---
     MiniSolver<ManualL1Model, 5> solver_man(N, Backend::CPU_SERIAL, config);
     solver_man.set_dt(1.0);
     solver_man.set_initial_state("x", 0.0);
     solver_man.set_control_guess(0, "u", 10.0);
     solver_man.set_control_guess(1, "u", 0.0);
-    
+
     // Manual Initialization for k=1 (where x=10 approx)
     // x ~ 10. Constraint x - 5 - slk <= 0.
     // To satisfy, slk needs to be 5.
-    double slk_init = 5.0; 
+    double slk_init = 5.0;
     solver_man.set_control_guess(1, "slk", slk_init);
-    
+
     solver_man.rollout_dynamics();
-    
+
     // [Init Dual Variables]
     // For L1: Stationarity implies Lambda = Weight = 1.0
-    solver_man.set_slack_guess(1, 0, 0.01);  // Small slack for active constraint
-    solver_man.set_dual_guess(1, 0, 1.0);    // L1 Dual = Weight
-    
+    solver_man.set_slack_guess(1, 0, 0.01); // Small slack for active constraint
+    solver_man.set_dual_guess(1, 0, 1.0); // L1 Dual = Weight
+
     solver_man.set_slack_guess(1, 1, slk_init); // Inactive non-negative constraint
     solver_man.set_dual_guess(1, 1, 0.01);
-    
+
     SolverConfig cfg_l1 = solver_man.get_config();
     cfg_l1.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
     solver_man.set_config(cfg_l1);
     solver_man.solve();
     double x_man = solver_man.get_state(1, 0);
-    
-    std::cout << "[L1 Comparison N=2] Interface x1: " << x_if << " vs Manual x1: " << x_man << std::endl;
-    
+
+    std::cout << "[L1 Comparison N=2] Interface x1: " << x_if << " vs Manual x1: " << x_man
+              << std::endl;
+
     // Theoretical Opt for L1: x = 9.5
     EXPECT_NEAR(x_if, 9.5, 1e-3);
     EXPECT_NEAR(x_if, x_man, 1e-3);
 }
 
-TEST(ComparisonTest, L2_SoftConstraint) {
+TEST(ComparisonTest, L2_SoftConstraint)
+{
     SolverConfig config;
     config.tol_con = 1e-4;
     config.max_iters = 100;
-    config.integrator = IntegratorType::EULER_EXPLICIT; 
-    config.barrier_strategy = BarrierStrategy::MEHROTRA; 
+    config.integrator = IntegratorType::EULER_EXPLICIT;
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
 
     int N = 2;
 
     // --- 1. Interface ---
     InterfaceModel::constraint_types[0] = 2; // L2
-    InterfaceModel::constraint_weights[0] = 1.0; 
-    
+    InterfaceModel::constraint_weights[0] = 1.0;
+
     MiniSolver<InterfaceModel, 5> solver_if(N, Backend::CPU_SERIAL, config);
     solver_if.set_dt(1.0);
     solver_if.set_initial_state("x", 0.0);
@@ -460,27 +531,28 @@ TEST(ComparisonTest, L2_SoftConstraint) {
     solver_man.set_initial_state("x", 0.0);
     solver_man.set_control_guess(0, "u", 10.0);
     solver_man.set_control_guess(1, "u", 0.0);
-    
+
     // Initialize slk at k=1
-    double slk_init = 5.0; 
+    double slk_init = 5.0;
     solver_man.set_control_guess(1, "slk", slk_init);
-    
+
     solver_man.rollout_dynamics();
-    
+
     // [Init Dual Variables]
     // For L2: Stationarity implies Lambda = Weight * Slack
     // Lam = 1.0 * 5.0 = 5.0
     solver_man.set_slack_guess(1, 0, 0.01);
     solver_man.set_dual_guess(1, 0, 5.0);
-    
+
     SolverConfig cfg_l2 = solver_man.get_config();
     cfg_l2.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
     solver_man.set_config(cfg_l2);
     solver_man.solve();
     double x_man = solver_man.get_state(1, 0);
-    
-    std::cout << "[L2 Comparison N=2] Interface x1: " << x_if << " vs Manual x1: " << x_man << std::endl;
-    
+
+    std::cout << "[L2 Comparison N=2] Interface x1: " << x_if << " vs Manual x1: " << x_man
+              << std::endl;
+
     // Theoretical Opt for L2: x = 25/3 = 8.333...
     EXPECT_NEAR(x_if, 8.333, 1e-3);
     EXPECT_NEAR(x_if, x_man, 1e-3);

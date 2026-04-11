@@ -5,11 +5,7 @@
 
 namespace minisolver {
 
-enum class GpuBackendType {
-    CUDA,
-    OPENCL,
-    NONE
-};
+enum class GpuBackendType { CUDA, OPENCL, NONE };
 
 struct GpuConfig {
     int block_size = 256;
@@ -18,8 +14,7 @@ struct GpuConfig {
 };
 
 // Data structure for parallel scan operations
-template<int NX>
-struct GpuLinearOp {
+template <int NX> struct GpuLinearOp {
     // Matrices for the associative operator (A_k, B_k in scan terms)
     // Placeholder logic
     double dummy_val;

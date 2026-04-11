@@ -1,14 +1,15 @@
-#include <gtest/gtest.h>
-#include "minisolver/core/serializer.h"
 #include "../examples/01_car_tutorial/generated/car_model.h"
+#include "minisolver/core/serializer.h"
 #include <cstdio> // for remove()
 #include <fstream>
+#include <gtest/gtest.h>
 #include <iterator>
 #include <vector>
 
 using namespace minisolver;
 
-TEST(SerializerTest, CaptureAndSaveAndLoad) {
+TEST(SerializerTest, CaptureAndSaveAndLoad)
+{
     int N = 20;
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
@@ -24,19 +25,21 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
     solver.set_dt(0.1);
 
     // Set parameters and initial state
-    for(int k=0; k<=N; ++k) {
+    for (int k = 0; k <= N; ++k) {
         solver.set_parameter(k, "v_ref", 5.0);
         solver.set_parameter(k, "w_vel", 1.0);
         solver.set_parameter(k, "obs_x", 100.0);
         solver.set_parameter(k, "obs_rad", 1.0);
         solver.set_parameter(k, "L", 2.5);
         solver.set_parameter(k, "car_rad", 1.0);
-        
+
         // Set some dummy state values manually to verify trajectory save/load
         // (Instead of solving, we just fill data to check exact IO reproduction)
-        for (int i = 0; i < CarModel::NX; ++i) solver.set_state_guess(k, i, k * 1.0);
+        for (int i = 0; i < CarModel::NX; ++i)
+            solver.set_state_guess(k, i, k * 1.0);
         if (k < N) {
-            for (int i = 0; i < CarModel::NU; ++i) solver.set_control_guess(k, i, k * 0.5);
+            for (int i = 0; i < CarModel::NU; ++i)
+                solver.set_control_guess(k, i, k * 0.5);
         }
         for (int i = 0; i < CarModel::NC; ++i) {
             solver.set_slack_guess(k, i, 0.1);
@@ -49,7 +52,7 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
     snapshot.iterations = 7;
     snapshot.mu = 0.3;
     snapshot.reg = 1.2;
-    
+
     EXPECT_EQ(snapshot.N, N);
     EXPECT_EQ(snapshot.config.mu_init, 0.5);
     EXPECT_EQ(snapshot.status, SolverStatus::FEASIBLE);
@@ -76,16 +79,16 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
     EXPECT_EQ(loaded_snapshot.iterations, 7);
     EXPECT_DOUBLE_EQ(loaded_snapshot.mu, 0.3);
     EXPECT_DOUBLE_EQ(loaded_snapshot.reg, 1.2);
-    
+
     // Verify Trajectory
-    for(int k=0; k<=N; ++k) {
+    for (int k = 0; k <= N; ++k) {
         // X
-        for(int i=0; i<CarModel::NX; ++i) {
+        for (int i = 0; i < CarModel::NX; ++i) {
             EXPECT_DOUBLE_EQ(solver2.get_state(k, i), k * 1.0);
         }
         // U
         if (k < N) {
-            for(int i=0; i<CarModel::NU; ++i) {
+            for (int i = 0; i < CarModel::NU; ++i) {
                 EXPECT_DOUBLE_EQ(solver2.get_control(k, i), k * 0.5);
             }
         }
@@ -94,7 +97,7 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
         EXPECT_EQ(solver2.get_parameter(k, solver2.get_param_idx("L")), 2.5);
 
         // Slacks/Duals
-        for(int i=0; i<CarModel::NC; ++i) {
+        for (int i = 0; i < CarModel::NC; ++i) {
             EXPECT_DOUBLE_EQ(solver2.get_slack(k, i), 0.1);
             EXPECT_DOUBLE_EQ(solver2.get_dual(k, i), 0.2);
         }
@@ -104,34 +107,35 @@ TEST(SerializerTest, CaptureAndSaveAndLoad) {
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, FullRoundTrip) {
+TEST(SerializerTest, FullRoundTrip)
+{
     int N = 5;
     SolverConfig config;
-    
+
     // 1. Create and Run Solver A
     MiniSolver<CarModel, 10> solverA(N, Backend::CPU_SERIAL, config);
     solverA.set_dt(0.1);
     solverA.set_initial_state("x", 1.0);
     solverA.set_parameter(0, "v_ref", 5.0);
-    
+
     // Run 1 step to populate internal state (s, lam, etc.)
     SolverConfig cfgA = solverA.get_config();
     cfgA.max_iters = 1;
     solverA.set_config(cfgA);
     solverA.solve();
-    
+
     // 2. Serialize to File
     std::string filename = "test_roundtrip.bin";
     minisolver::SolverSerializer<CarModel, 10>::save_case(filename, solverA);
-    
+
     // 3. Deserialize to Solver B
     MiniSolver<CarModel, 10> solverB(N, Backend::CPU_SERIAL, config);
     bool load_ok = minisolver::SolverSerializer<CarModel, 10>::load_case(filename, solverB);
     EXPECT_TRUE(load_ok);
-    
+
     // 4. Cleanup
     std::remove(filename.c_str());
-    
+
     // 5. Compare State (Bit-Exact)
     EXPECT_EQ(solverA.get_horizon(), solverB.get_horizon());
     EXPECT_EQ(solverA.get_iteration_count(), solverB.get_iteration_count());
@@ -141,21 +145,25 @@ TEST(SerializerTest, FullRoundTrip) {
     EXPECT_DOUBLE_EQ(stateA.mu, stateB.mu);
     EXPECT_DOUBLE_EQ(stateA.reg, stateB.reg);
     EXPECT_DOUBLE_EQ(stateA.total_cost, stateB.total_cost);
-    
-    for(int k=0; k<=N; ++k) {
-        for(int i=0; i<CarModel::NX; ++i) EXPECT_EQ(solverA.get_state(k, i), solverB.get_state(k, i));
+
+    for (int k = 0; k <= N; ++k) {
+        for (int i = 0; i < CarModel::NX; ++i)
+            EXPECT_EQ(solverA.get_state(k, i), solverB.get_state(k, i));
         if (k < N) {
-            for(int i=0; i<CarModel::NU; ++i) EXPECT_EQ(solverA.get_control(k, i), solverB.get_control(k, i));
+            for (int i = 0; i < CarModel::NU; ++i)
+                EXPECT_EQ(solverA.get_control(k, i), solverB.get_control(k, i));
         }
-        for(int i=0; i<CarModel::NC; ++i) {
+        for (int i = 0; i < CarModel::NC; ++i) {
             EXPECT_EQ(solverA.get_slack(k, i), solverB.get_slack(k, i));
             EXPECT_EQ(solverA.get_dual(k, i), solverB.get_dual(k, i));
         }
-        for(int i=0; i<CarModel::NP; ++i) EXPECT_EQ(solverA.get_parameter(k, i), solverB.get_parameter(k, i));
+        for (int i = 0; i < CarModel::NP; ++i)
+            EXPECT_EQ(solverA.get_parameter(k, i), solverB.get_parameter(k, i));
     }
 }
 
-TEST(SerializerTest, TruncatedFileRejected) {
+TEST(SerializerTest, TruncatedFileRejected)
+{
     int N = 3;
     MiniSolver<CarModel, 10> solver(N, Backend::CPU_SERIAL);
     solver.set_dt(0.1);
@@ -194,7 +202,8 @@ TEST(SerializerTest, TruncatedFileRejected) {
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, OversizeHorizonRejected) {
+TEST(SerializerTest, OversizeHorizonRejected)
+{
     // Save with MAX_N=50 and N=20, then attempt to load with MAX_N=10.
     // The loader should refuse to truncate.
     int N = 20;

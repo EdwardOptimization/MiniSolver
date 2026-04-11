@@ -1,30 +1,29 @@
 #pragma once
-#include <vector>
-#include <iostream>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
-#include <chrono>
+#include <iostream>
 #include <map>
-#include <memory> 
+#include <memory>
 #include <string>
-#include <unordered_map> 
+#include <unordered_map>
+#include <vector>
 
-#include "minisolver/core/types.h"
-#include "minisolver/core/solver_options.h"
-#include "minisolver/core/trajectory.h" 
 #include "minisolver/core/logger.h"
+#include "minisolver/core/solver_options.h"
+#include "minisolver/core/trajectory.h"
+#include "minisolver/core/types.h"
 
-#include "minisolver/algorithms/linear_solver.h" 
-#include "minisolver/algorithms/riccati_solver.h" 
-#include "minisolver/algorithms/line_search.h" 
+#include "minisolver/algorithms/line_search.h"
+#include "minisolver/algorithms/linear_solver.h"
+#include "minisolver/algorithms/riccati_solver.h"
 
 #include "minisolver/backend/backend_interface.h"
 
 namespace minisolver {
 
-template<typename Model, int MAX_N>
-class SolverSerializer;
+template <typename Model, int MAX_N> class SolverSerializer;
 
 class SolverTimer {
 public:
@@ -33,31 +32,39 @@ public:
     std::vector<std::pair<std::string, std::chrono::time_point<Clock>>> stack;
     bool enabled = false; // Default disabled, use for test memory allocation
 
-    void start(const std::string& name) {
-        if (!enabled) return;
-        stack.push_back({name, Clock::now()});
+    void start(const std::string& name)
+    {
+        if (!enabled)
+            return;
+        stack.push_back({ name, Clock::now() });
     }
 
-    void stop() {
-        if (!enabled) return;
-        if (stack.empty()) return;
+    void stop()
+    {
+        if (!enabled)
+            return;
+        if (stack.empty())
+            return;
         auto end_time = Clock::now();
         auto& entry = stack.back();
         std::chrono::duration<double, std::milli> ms = end_time - entry.second;
         times[entry.first] += ms.count();
         stack.pop_back();
     }
-    
-    void reset() { 
-        times.clear(); 
+
+    void reset()
+    {
+        times.clear();
         stack.clear();
     }
-    
-    void print() {
-        if (!enabled) return;
+
+    void print()
+    {
+        if (!enabled)
+            return;
         std::stringstream ss;
         ss << "\n--- Solver Profiling (ms) ---\n";
-        for(auto const& [name, time] : times) {
+        for (auto const& [name, time] : times) {
             ss << std::left << std::setw(20) << name << ": " << time << "\n";
         }
         ss << "-----------------------------";
@@ -65,8 +72,7 @@ public:
     }
 };
 
-template<typename Model, int _MAX_N>
-class MiniSolver {
+template <typename Model, int _MAX_N> class MiniSolver {
 public:
     static const int NX = Model::NX;
     static const int NU = Model::NU;
@@ -80,29 +86,34 @@ public:
 
     friend class SolverSerializer<Model, MAX_N>;
 
-    MiniSolver(int initial_N, Backend b, SolverConfig conf = SolverConfig()) 
-        : trajectory(std::max(0, std::min(initial_N, MAX_N))),
-          N(std::max(0, std::min(initial_N, MAX_N))),
-          backend(b),
-          config(conf),
-          mu(conf.mu_init),
-          reg(conf.reg_init) {
-        
+    MiniSolver(int initial_N, Backend b, SolverConfig conf = SolverConfig())
+        : trajectory(std::max(0, std::min(initial_N, MAX_N)))
+        , N(std::max(0, std::min(initial_N, MAX_N)))
+        , backend(b)
+        , config(conf)
+        , mu(conf.mu_init)
+        , reg(conf.reg_init)
+    {
+
         if (initial_N < 0 || initial_N > MAX_N) {
             std::cerr << "Error: N (" << initial_N << ") outside [0, " << MAX_N << "]. Clamping.\n";
         }
 
         dt_traj.fill(conf.default_dt);
         rebuild_solver_components();
-        
+
         // Initialize Maps
-        for (int i = 0; i < NX; ++i) state_map[Model::state_names[i]] = i;
-        for (int i = 0; i < NU; ++i) control_map[Model::control_names[i]] = i;
-        for (int i = 0; i < NP; ++i) param_map[Model::param_names[i]] = i;
+        for (int i = 0; i < NX; ++i)
+            state_map[Model::state_names[i]] = i;
+        for (int i = 0; i < NU; ++i)
+            control_map[Model::control_names[i]] = i;
+        for (int i = 0; i < NP; ++i)
+            param_map[Model::param_names[i]] = i;
     }
-    
+
     // Reset Function
-    void reset(ResetOption option = ResetOption::ALG_STATE) {
+    void reset(ResetOption option = ResetOption::ALG_STATE)
+    {
         // 1. Reset Algorithmic Scalars
         mu = config.mu_init;
         reg = config.reg_init;
@@ -111,60 +122,67 @@ public:
         last_dual_inf = 0.0;
         slack_reset_consecutive_count = 0;
         // 2. Reset Components
-        if (line_search) line_search->reset();
+        if (line_search)
+            line_search->reset();
         timer.reset();
-        
+
         // 3. Reset Trajectory Data (Optional)
         if (option == ResetOption::FULL) {
             trajectory.reset();
-            
+
             // Reset Time Steps to default configuration
             dt_traj.fill(config.default_dt);
-            
-            // Note: This clears parameters (p) too. 
+
+            // Note: This clears parameters (p) too.
             // You will need to call set_parameter() and set_dt() again after a FULL reset.
         }
     }
 
-    int get_state_idx(const std::string& name) const {
+    int get_state_idx(const std::string& name) const
+    {
         auto it = state_map.find(name);
-        if (it != state_map.end()) return it->second;
+        if (it != state_map.end())
+            return it->second;
         return -1;
     }
 
-    int get_control_idx(const std::string& name) const {
+    int get_control_idx(const std::string& name) const
+    {
         auto it = control_map.find(name);
-        if (it != control_map.end()) return it->second;
+        if (it != control_map.end())
+            return it->second;
         return -1;
     }
 
-    int get_param_idx(const std::string& name) const {
+    int get_param_idx(const std::string& name) const
+    {
         auto it = param_map.find(name);
-        if (it != param_map.end()) return it->second;
+        if (it != param_map.end())
+            return it->second;
         return -1;
     }
 
-	    void resize_horizon(int new_n) {
-	        if (new_n < 0 || new_n > MAX_N) {
-	            std::cerr << "Error: new_n outside valid range [0, MAX_N]\n";
-	            return;
-	        }
-	        int old_n = N;
-	        N = new_n;
-	        trajectory.resize(N);
-	        if (new_n > old_n) {
-	            // Initialize new time steps for newly added intervals.
-	            for (int k = old_n; k < new_n; ++k) {
-	                dt_traj[k] = config.default_dt;
-	            }
-	        }
-	    }
-
-    int get_horizon() const {
-        return N;
+    void resize_horizon(int new_n)
+    {
+        if (new_n < 0 || new_n > MAX_N) {
+            std::cerr << "Error: new_n outside valid range [0, MAX_N]\n";
+            return;
+        }
+        int old_n = N;
+        N = new_n;
+        trajectory.resize(N);
+        if (new_n > old_n) {
+            // Initialize new time steps for newly added intervals.
+            for (int k = old_n; k < new_n; ++k) {
+                dt_traj[k] = config.default_dt;
+            }
+        }
     }
 
-    void set_config(const SolverConfig& conf) {
+    int get_horizon() const { return N; }
+
+    void set_config(const SolverConfig& conf)
+    {
         bool line_search_changed = conf.line_search_type != config.line_search_type;
         config = conf;
         backend = conf.backend;
@@ -173,15 +191,12 @@ public:
         }
     }
 
-    const SolverConfig& get_config() const {
-        return config;
-    }
+    const SolverConfig& get_config() const { return config; }
 
-    int get_iteration_count() const {
-        return current_iter;
-    }
+    int get_iteration_count() const { return current_iter; }
 
-    double get_profile_time_ms(const std::string& name) const {
+    double get_profile_time_ms(const std::string& name) const
+    {
         auto it = timer.times.find(name);
         return it != timer.times.end() ? it->second : 0.0;
     }
@@ -189,286 +204,361 @@ public:
     // --- High-Level API ---
 
     // 1. Initial State
-    void set_initial_state(const std::vector<double>& x0) {
-        if (x0.size() != NX) return;
+    void set_initial_state(const std::vector<double>& x0)
+    {
+        if (x0.size() != NX)
+            return;
         auto& kp = trajectory[0];
-        for(int i=0; i<NX; ++i) kp.x(i) = x0[i];
+        for (int i = 0; i < NX; ++i)
+            kp.x(i) = x0[i];
     }
-    
-    void set_initial_state(const std::string& name, double value) {
+
+    void set_initial_state(const std::string& name, double value)
+    {
         int idx = get_state_idx(name);
-        if (idx != -1) trajectory[0].x(idx) = value;
-        else std::cerr << "Warning: Unknown state " << name << "\n";
+        if (idx != -1)
+            trajectory[0].x(idx) = value;
+        else
+            std::cerr << "Warning: Unknown state " << name << "\n";
     }
 
     // 2. Parameters
-    void set_parameter(int stage, int idx, double value) {
-        if (stage > N || stage < 0) return;
-        if (idx >= NP || idx < 0) return;
+    void set_parameter(int stage, int idx, double value)
+    {
+        if (stage > N || stage < 0)
+            return;
+        if (idx >= NP || idx < 0)
+            return;
         trajectory[stage].p(idx) = value;
     }
 
-    void set_parameter(int stage, const std::string& name, double value) {
+    void set_parameter(int stage, const std::string& name, double value)
+    {
         int idx = get_param_idx(name);
-        if (idx != -1) set_parameter(stage, idx, value);
-        else std::cerr << "Warning: Unknown param " << name << "\n";
+        if (idx != -1)
+            set_parameter(stage, idx, value);
+        else
+            std::cerr << "Warning: Unknown param " << name << "\n";
     }
-    
-    void set_global_parameter(int idx, double value) {
-        if (idx >= NP || idx < 0) return;
-        for(int k=0; k <= N; ++k) {
+
+    void set_global_parameter(int idx, double value)
+    {
+        if (idx >= NP || idx < 0)
+            return;
+        for (int k = 0; k <= N; ++k) {
             trajectory[k].p(idx) = value;
         }
     }
 
-    void set_global_parameter(const std::string& name, double value) {
+    void set_global_parameter(const std::string& name, double value)
+    {
         int idx = get_param_idx(name);
-        if (idx != -1) set_global_parameter(idx, value);
-        else std::cerr << "Warning: Unknown param " << name << "\n";
+        if (idx != -1)
+            set_global_parameter(idx, value);
+        else
+            std::cerr << "Warning: Unknown param " << name << "\n";
     }
 
-    double get_parameter(int stage, int idx) const {
-        if (stage > N || stage < 0 || idx >= NP || idx < 0) return 0.0;
+    double get_parameter(int stage, int idx) const
+    {
+        if (stage > N || stage < 0 || idx >= NP || idx < 0)
+            return 0.0;
         return trajectory[stage].p(idx);
     }
 
-    double get_parameter(int stage, const std::string& name) const {
+    double get_parameter(int stage, const std::string& name) const
+    {
         int idx = get_param_idx(name);
-        if (idx != -1) return get_parameter(stage, idx);
+        if (idx != -1)
+            return get_parameter(stage, idx);
         return 0.0;
     }
-    
-    std::vector<double> get_parameters(int stage) const {
-        if (stage > N || stage < 0) return {};
+
+    std::vector<double> get_parameters(int stage) const
+    {
+        if (stage > N || stage < 0)
+            return {};
         const auto& kp = trajectory[stage];
         std::vector<double> res(NP);
-        for(int i=0; i<NP; ++i) res[i] = kp.p(i);
+        for (int i = 0; i < NP; ++i)
+            res[i] = kp.p(i);
         return res;
     }
 
     // 3. State Access
-    void set_state_guess(int stage, int idx, double value) {
-        if (stage > N || stage < 0 || idx >= NX || idx < 0) return;
+    void set_state_guess(int stage, int idx, double value)
+    {
+        if (stage > N || stage < 0 || idx >= NX || idx < 0)
+            return;
         trajectory[stage].x(idx) = value;
     }
 
-    void set_state_guess(int stage, const std::string& name, double value) {
+    void set_state_guess(int stage, const std::string& name, double value)
+    {
         int idx = get_state_idx(name);
-        if (idx != -1) set_state_guess(stage, idx, value);
+        if (idx != -1)
+            set_state_guess(stage, idx, value);
     }
-    
-    void set_state_guess_traj(const std::string& name, const std::vector<double>& values) {
+
+    void set_state_guess_traj(const std::string& name, const std::vector<double>& values)
+    {
         int idx = get_state_idx(name);
-        if (idx == -1) return;
+        if (idx == -1)
+            return;
         int count = std::min((int)values.size(), N + 1);
-        for(int k=0; k<count; ++k) {
+        for (int k = 0; k < count; ++k) {
             trajectory[k].x(idx) = values[k];
         }
     }
 
-    std::vector<double> get_state_traj(const std::string& name) const {
+    std::vector<double> get_state_traj(const std::string& name) const
+    {
         int idx = get_state_idx(name);
-        if (idx == -1) return {};
+        if (idx == -1)
+            return {};
         std::vector<double> res;
         res.reserve(N + 1);
-        for(int k=0; k<=N; ++k) res.push_back(trajectory[k].x(idx));
-        return res;
-    }
-    
-    std::vector<double> get_state(int stage) const {
-        if (stage > N || stage < 0) return {};
-        const auto& kp = trajectory[stage];
-        std::vector<double> res(NX);
-        for(int i=0; i<NX; ++i) res[i] = kp.x(i);
+        for (int k = 0; k <= N; ++k)
+            res.push_back(trajectory[k].x(idx));
         return res;
     }
 
-    double get_state(int stage, int idx) const {
-        if (stage > N || stage < 0 || idx >= NX || idx < 0) return 0.0;
+    std::vector<double> get_state(int stage) const
+    {
+        if (stage > N || stage < 0)
+            return {};
+        const auto& kp = trajectory[stage];
+        std::vector<double> res(NX);
+        for (int i = 0; i < NX; ++i)
+            res[i] = kp.x(i);
+        return res;
+    }
+
+    double get_state(int stage, int idx) const
+    {
+        if (stage > N || stage < 0 || idx >= NX || idx < 0)
+            return 0.0;
         return trajectory[stage].x(idx);
     }
 
     // 4. Control Access
-    void set_control_guess(int stage, int idx, double value) {
-        if (stage >= N || stage < 0 || idx >= NU || idx < 0) return;
+    void set_control_guess(int stage, int idx, double value)
+    {
+        if (stage >= N || stage < 0 || idx >= NU || idx < 0)
+            return;
         trajectory[stage].u(idx) = value;
     }
 
-    void set_control_guess(int stage, const std::string& name, double value) {
+    void set_control_guess(int stage, const std::string& name, double value)
+    {
         int idx = get_control_idx(name);
-        if (idx != -1) set_control_guess(stage, idx, value);
+        if (idx != -1)
+            set_control_guess(stage, idx, value);
     }
-    
-    void set_control_guess_traj(const std::string& name, const std::vector<double>& values) {
+
+    void set_control_guess_traj(const std::string& name, const std::vector<double>& values)
+    {
         int idx = get_control_idx(name);
-        if (idx == -1) return;
+        if (idx == -1)
+            return;
         int count = std::min((int)values.size(), N);
-        for(int k=0; k<count; ++k) {
+        for (int k = 0; k < count; ++k) {
             trajectory[k].u(idx) = values[k];
         }
     }
 
-    std::vector<double> get_control_traj(const std::string& name) const {
+    std::vector<double> get_control_traj(const std::string& name) const
+    {
         int idx = get_control_idx(name);
-        if (idx == -1) return {};
+        if (idx == -1)
+            return {};
         std::vector<double> res;
         res.reserve(N);
-        for(int k=0; k<N; ++k) res.push_back(trajectory[k].u(idx));
-        return res;
-    }
-    
-    std::vector<double> get_control(int stage) const {
-        if (stage >= N || stage < 0) return {};
-        const auto& kp = trajectory[stage];
-        std::vector<double> res(NU);
-        for(int i=0; i<NU; ++i) res[i] = kp.u(i);
+        for (int k = 0; k < N; ++k)
+            res.push_back(trajectory[k].u(idx));
         return res;
     }
 
-    double get_control(int stage, int idx) const {
-        if (stage >= N || stage < 0 || idx >= NU || idx < 0) return 0.0;
+    std::vector<double> get_control(int stage) const
+    {
+        if (stage >= N || stage < 0)
+            return {};
+        const auto& kp = trajectory[stage];
+        std::vector<double> res(NU);
+        for (int i = 0; i < NU; ++i)
+            res[i] = kp.u(i);
+        return res;
+    }
+
+    double get_control(int stage, int idx) const
+    {
+        if (stage >= N || stage < 0 || idx >= NU || idx < 0)
+            return 0.0;
         return trajectory[stage].u(idx);
     }
 
     // 5. Slack / Dual Access
-    void set_slack_guess(int stage, int idx, double value) {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0) return;
+    void set_slack_guess(int stage, int idx, double value)
+    {
+        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+            return;
         trajectory[stage].s(idx) = value;
     }
 
-    void set_dual_guess(int stage, int idx, double value) {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0) return;
+    void set_dual_guess(int stage, int idx, double value)
+    {
+        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+            return;
         trajectory[stage].lam(idx) = value;
     }
 
-    std::vector<double> get_slack(int stage) const {
-        if (stage > N || stage < 0) return {};
+    std::vector<double> get_slack(int stage) const
+    {
+        if (stage > N || stage < 0)
+            return {};
         const auto& kp = trajectory[stage];
         std::vector<double> res(NC);
-        for(int i=0; i<NC; ++i) res[i] = kp.s(i);
+        for (int i = 0; i < NC; ++i)
+            res[i] = kp.s(i);
         return res;
     }
 
-    std::vector<double> get_dual(int stage) const {
-        if (stage > N || stage < 0) return {};
+    std::vector<double> get_dual(int stage) const
+    {
+        if (stage > N || stage < 0)
+            return {};
         const auto& kp = trajectory[stage];
         std::vector<double> res(NC);
-        for(int i=0; i<NC; ++i) res[i] = kp.lam(i);
+        for (int i = 0; i < NC; ++i)
+            res[i] = kp.lam(i);
         return res;
     }
 
-    double get_slack(int stage, int idx) const {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0) return 0.0;
+    double get_slack(int stage, int idx) const
+    {
+        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+            return 0.0;
         return trajectory[stage].s(idx);
     }
 
-    double get_dual(int stage, int idx) const {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0) return 0.0;
+    double get_dual(int stage, int idx) const
+    {
+        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+            return 0.0;
         return trajectory[stage].lam(idx);
     }
 
     // 6. Cost Access
-    double get_stage_cost(int stage) const {
-        if (stage > N || stage < 0) return 0.0;
+    double get_stage_cost(int stage) const
+    {
+        if (stage > N || stage < 0)
+            return 0.0;
         return trajectory[stage].cost;
     }
-    
+
     // Helper to get constraint value
-    double get_constraint_val(int stage, int idx) const {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0) return 0.0;
+    double get_constraint_val(int stage, int idx) const
+    {
+        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+            return 0.0;
         return trajectory[stage].g_val(idx);
     }
-    
-    void set_dt(const std::vector<double>& dts) {
-        if(dts.size() > MAX_N) {
+
+    void set_dt(const std::vector<double>& dts)
+    {
+        if (dts.size() > MAX_N) {
             std::cerr << "Warning: DT vector too large.\n";
         }
         int count = std::min((int)dts.size(), N);
-        for(int i=0; i<count; ++i) dt_traj[i] = dts[i];
-        
+        for (int i = 0; i < count; ++i)
+            dt_traj[i] = dts[i];
+
         // [FIX] Initialize remaining steps to avoid garbage values
-        double fill_val = (count > 0) ? dts[count-1] : config.default_dt;
-        for(int i=count; i<MAX_N; ++i) dt_traj[i] = fill_val;
-    }
-    
-    void set_dt(double dt) {
-        dt_traj.fill(dt);
+        double fill_val = (count > 0) ? dts[count - 1] : config.default_dt;
+        for (int i = count; i < MAX_N; ++i)
+            dt_traj[i] = fill_val;
     }
 
-    void rollout_dynamics() {
+    void set_dt(double dt) { dt_traj.fill(dt); }
+
+    void rollout_dynamics()
+    {
         auto& traj = trajectory.active();
-        for(int k=0; k<N; ++k) {
+        for (int k = 0; k < N; ++k) {
             double current_dt = dt_traj[k];
-            traj[k+1].x = Model::integrate(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator);
+            traj[k + 1].x
+                = Model::integrate(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator);
         }
     }
 
 private:
-    bool check_convergence(double max_viol, double max_dual, double max_kkt_error) {
+    bool check_convergence(double max_viol, double max_dual, double max_kkt_error)
+    {
         // must satisfy all of the following conditions:
         // 1. barrier parameter mu is small enough (target precision)
         // 2. primal constraints are satisfied (Feasible)
         // 3. dual gradient is satisfied (Stationary)
         // 4. complementarity is satisfied (Complementarity): s*lam is close to mu
-        
+
         bool mu_converged = (mu <= config.mu_final);
         bool primal_ok = (max_viol <= config.tol_con);
         bool dual_ok = (max_dual <= config.tol_dual);
-        
-        // complementarity error tolerance is usually set to kappa * mu or a slightly relaxed fixed value
-        // here we require it to converge to tol_cost or tol_mu level
+
+        // complementarity error tolerance is usually set to kappa * mu or a slightly relaxed fixed
+        // value here we require it to converge to tol_cost or tol_mu level
         bool kkt_ok = (max_kkt_error <= std::max(config.tol_mu, 10.0 * mu));
-        
+
         return mu_converged && primal_ok && dual_ok && kkt_ok;
     }
 
-    void update_barrier(double max_kkt_error, double avg_gap) {
-        switch(config.barrier_strategy) {
-            case BarrierStrategy::MONOTONE:
-                if (max_kkt_error < config.barrier_tolerance_factor * mu) {
-                    double next_mu = std::max(config.mu_final, mu * config.mu_linear_decrease_factor);
-                    mu = next_mu;
-                }
-                break;
-            case BarrierStrategy::ADAPTIVE: {
-                double target = avg_gap * config.mu_safety_margin; 
-                // Removed forced decrease to allow mu to hold steady if needed for convergence
-                mu = std::max(config.mu_final, std::min(mu, target));
-                break;
-            }
-            case BarrierStrategy::MEHROTRA: {
-                double ratio = avg_gap / mu;
-                if(ratio > 1.0) ratio = 1.0; 
-                double sigma = std::pow(ratio, 3);
-                if(sigma < 0.05) sigma = 0.05;
-                if(sigma > 0.8) sigma = 0.8;
-                double next_mu = std::max(config.mu_final, mu * sigma);
+    void update_barrier(double max_kkt_error, double avg_gap)
+    {
+        switch (config.barrier_strategy) {
+        case BarrierStrategy::MONOTONE:
+            if (max_kkt_error < config.barrier_tolerance_factor * mu) {
+                double next_mu = std::max(config.mu_final, mu * config.mu_linear_decrease_factor);
                 mu = next_mu;
-                break;
             }
+            break;
+        case BarrierStrategy::ADAPTIVE: {
+            double target = avg_gap * config.mu_safety_margin;
+            // Removed forced decrease to allow mu to hold steady if needed for convergence
+            mu = std::max(config.mu_final, std::min(mu, target));
+            break;
+        }
+        case BarrierStrategy::MEHROTRA: {
+            double ratio = avg_gap / mu;
+            if (ratio > 1.0)
+                ratio = 1.0;
+            double sigma = std::pow(ratio, 3);
+            if (sigma < 0.05)
+                sigma = 0.05;
+            if (sigma > 0.8)
+                sigma = 0.8;
+            double next_mu = std::max(config.mu_final, mu * sigma);
+            mu = next_mu;
+            break;
+        }
         }
     }
 
-    void print_iteration_log(double alpha, bool header = false) {
-        // Use MLOG_INFO instead of std::cout, respecting the log level.
-        // We can check MINISOLVER_LOG_LEVEL against MLOG_LEVEL_INFO to avoid formatting cost if disabled.
-        #if MINISOLVER_LOG_LEVEL < MLOG_LEVEL_INFO
-            return;
-        #endif
+    void print_iteration_log(double alpha, bool header = false)
+    {
+// Use MLOG_INFO instead of std::cout, respecting the log level.
+// We can check MINISOLVER_LOG_LEVEL against MLOG_LEVEL_INFO to avoid formatting cost if disabled.
+#if MINISOLVER_LOG_LEVEL < MLOG_LEVEL_INFO
+        return;
+#endif
 
-        if (config.print_level < PrintLevel::ITER) return;
+        if (config.print_level < PrintLevel::ITER)
+            return;
 
         std::stringstream ss;
         if (header) {
-            ss << std::left 
-                      << std::setw(5) << "Iter" 
-                      << std::setw(12) << "Cost" 
-                      << std::setw(10) << "Log(Mu)" 
-                      << std::setw(10) << "Log(Reg)" 
-                      << std::setw(10) << "PrimInf" 
-                      << std::setw(10) << "DualInf" 
-                      << std::setw(10) << "Alpha";
-            
+            ss << std::left << std::setw(5) << "Iter" << std::setw(12) << "Cost" << std::setw(10)
+               << "Log(Mu)" << std::setw(10) << "Log(Reg)" << std::setw(10) << "PrimInf"
+               << std::setw(10) << "DualInf" << std::setw(10) << "Alpha";
+
             if (config.print_level >= PrintLevel::DEBUG) {
                 ss << std::setw(12) << "MinSlack";
             }
@@ -485,11 +575,12 @@ private:
         // Use helper for Primal Inf
         double max_prim_inf = compute_max_violation(traj);
 
-        for(int k=0; k<=N; ++k) {
+        for (int k = 0; k <= N; ++k) {
             const auto& kp = traj[k];
             total_cost += kp.cost;
-            for(int i=0; i<NC; ++i) {
-                if(kp.s(i) < min_slack) min_slack = kp.s(i);
+            for (int i = 0; i < NC; ++i) {
+                if (kp.s(i) < min_slack)
+                    min_slack = kp.s(i);
             }
             // q_bar contains Vx (cost-to-go gradient / dynamics multiplier).
             // It is NOT a residual and should not be zero.
@@ -497,21 +588,15 @@ private:
             double g_norm = 0.0; // MatOps::norm_inf(kp.q_bar);
             double r_norm = MatOps::norm_inf(kp.r_bar);
             double dual = std::max(g_norm, r_norm);
-            if(dual > max_dual_inf) max_dual_inf = dual;
+            if (dual > max_dual_inf)
+                max_dual_inf = dual;
         }
 
-        ss << std::left  
-                  << std::setw(5) << current_iter 
-                  << std::scientific << std::setprecision(3) 
-                  << std::setw(12) << total_cost 
-                  << std::fixed << std::setprecision(2)
-                  << std::setw(10) << std::log10(mu) 
-                  << std::setw(10) << std::log10(reg) 
-                  << std::scientific << std::setprecision(2)
-                  << std::setw(10) << max_prim_inf 
-                  << std::setw(10) << max_dual_inf 
-                  << std::fixed << std::setprecision(3)
-                  << std::setw(10) << alpha;
+        ss << std::left << std::setw(5) << current_iter << std::scientific << std::setprecision(3)
+           << std::setw(12) << total_cost << std::fixed << std::setprecision(2) << std::setw(10)
+           << std::log10(mu) << std::setw(10) << std::log10(reg) << std::scientific
+           << std::setprecision(2) << std::setw(10) << max_prim_inf << std::setw(10) << max_dual_inf
+           << std::fixed << std::setprecision(3) << std::setw(10) << alpha;
 
         if (config.print_level >= PrintLevel::DEBUG) {
             ss << std::scientific << std::setprecision(2) << std::setw(12) << min_slack;
@@ -519,32 +604,42 @@ private:
         MLOG_INFO(ss.str());
     }
 
-    bool has_nans(const typename TrajectoryType::TrajArray& t) const {
+    bool has_nans(const typename TrajectoryType::TrajArray& t) const
+    {
         // Checking all variables is expensive (O(N * (NX+NU+NC))).
-        // Instead, we only check the updates (dx, du, ds, dlam) and cost/constraints 
+        // Instead, we only check the updates (dx, du, ds, dlam) and cost/constraints
         // which are the sources of NaNs.
-        for(int k=0; k<=N; ++k) {
+        for (int k = 0; k <= N; ++k) {
             const auto& kp = t[k];
             // Check Search Directions (Most likely place for NaN from Linear Solve)
-            if(!kp.dx.allFinite()) return true;
-            if(!kp.du.allFinite()) return true;
-            if(!kp.ds.allFinite()) return true;
-            if(!kp.dlam.allFinite()) return true;
-            
+            if (!kp.dx.allFinite())
+                return true;
+            if (!kp.du.allFinite())
+                return true;
+            if (!kp.ds.allFinite())
+                return true;
+            if (!kp.dlam.allFinite())
+                return true;
+
             // Check key scalar values
-            if(!std::isfinite(kp.cost)) return true;
+            if (!std::isfinite(kp.cost))
+                return true;
         }
         return false;
     }
 
-    bool has_valid_primal_dual_guess(const typename TrajectoryType::TrajArray& t) const {
-        for(int k=0; k<=N; ++k) {
+    bool has_valid_primal_dual_guess(const typename TrajectoryType::TrajArray& t) const
+    {
+        for (int k = 0; k <= N; ++k) {
             const auto& kp = t[k];
-            if (!kp.x.allFinite() || !kp.u.allFinite() || !kp.p.allFinite()) return false;
-            if (!kp.s.allFinite() || !kp.lam.allFinite()) return false;
+            if (!kp.x.allFinite() || !kp.u.allFinite() || !kp.p.allFinite())
+                return false;
+            if (!kp.s.allFinite() || !kp.lam.allFinite())
+                return false;
 
-            for(int i=0; i<NC; ++i) {
-                if (kp.s(i) <= 0.0 || kp.lam(i) <= 0.0) return false;
+            for (int i = 0; i < NC; ++i) {
+                if (kp.s(i) <= 0.0 || kp.lam(i) <= 0.0)
+                    return false;
 
                 double w = 0.0;
                 int type = 0;
@@ -556,85 +651,91 @@ private:
                 }
 
                 if (type == 1 && w > 1e-6) {
-                    if (!std::isfinite(kp.soft_s(i)) || kp.soft_s(i) <= 0.0) return false;
-                    if (w - kp.lam(i) <= config.min_barrier_slack) return false;
+                    if (!std::isfinite(kp.soft_s(i)) || kp.soft_s(i) <= 0.0)
+                        return false;
+                    if (w - kp.lam(i) <= config.min_barrier_slack)
+                        return false;
                 }
             }
         }
         return !has_nans(t);
     }
-    
-    bool feasibility_restoration() {
-        if (config.print_level >= PrintLevel::DEBUG) 
+
+    bool feasibility_restoration()
+    {
+        if (config.print_level >= PrintLevel::DEBUG)
             MLOG_DEBUG("Entering Feasibility Restoration Phase.");
         double saved_mu = mu;
         double saved_reg = reg;
-        mu = config.restoration_mu; 
-        reg = config.restoration_reg; 
-        
+        mu = config.restoration_mu;
+        reg = config.restoration_reg;
+
         auto& traj = trajectory.active();
         bool success = false;
-        
-        for(int r_iter=0; r_iter < config.max_restoration_iters; ++r_iter) { 
-            for(int k=0; k<=N; ++k) {
-                double current_dt = (k < N) ? dt_traj[k] : 0.0; 
+
+        for (int r_iter = 0; r_iter < config.max_restoration_iters; ++r_iter) {
+            for (int k = 0; k <= N; ++k) {
+                double current_dt = (k < N) ? dt_traj[k] : 0.0;
                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
                 Model::compute_constraints(traj[k]);
-                
-                traj[k].Q.setIdentity(); 
+
+                traj[k].Q.setIdentity();
                 traj[k].q.setZero();
                 traj[k].H.setZero();
-                
+
                 if (k < N) {
-                    traj[k].R.setIdentity(); 
+                    traj[k].R.setIdentity();
                     traj[k].r.setZero();
                 } else {
                     traj[k].R.setZero();
                     traj[k].r.setZero();
                 }
             }
-            
+
             // Restoration linear solve
             // [ALADIN-Inspired] Augmented Lagrangian Restoration
             // Minimizing 0.5*||dx||^2 + 0.5*rho*||C*dx + D*du + g + s||^2
-            // This pulls the solution towards the constraint manifold more aggressively than simple min-norm.
-            if (config.barrier_strategy != BarrierStrategy::MEHROTRA) { 
-                 double rho = 1000.0; // Penalty weight from ALADIN concepts
-                 for(int k=0; k<=N; ++k) {
-                     auto& kp = traj[k];
-                     
-                     // Q += rho * C^T * C
-                     kp.Q.noalias() += rho * kp.C.transpose() * kp.C;
-                     
-                     // R += rho * D^T * D
-                     kp.R.noalias() += rho * kp.D.transpose() * kp.D;
-                     
-                     // H += rho * D^T * C (Cross term)
-                     kp.H.noalias() += rho * kp.D.transpose() * kp.C;
-                     
-                     // q += rho * C^T * g_val
-                     // Note: Restoration usually ignores 's' in the quadratic penalty approximation 
-                     // or treats it as fixed residuals g_val.
-                     kp.q.noalias() += rho * kp.C.transpose() * kp.g_val;
-                     
-                     // r += rho * D^T * g_val
-                     kp.r.noalias() += rho * kp.D.transpose() * kp.g_val;
-                 }
+            // This pulls the solution towards the constraint manifold more aggressively than simple
+            // min-norm.
+            if (config.barrier_strategy != BarrierStrategy::MEHROTRA) {
+                double rho = 1000.0; // Penalty weight from ALADIN concepts
+                for (int k = 0; k <= N; ++k) {
+                    auto& kp = traj[k];
+
+                    // Q += rho * C^T * C
+                    kp.Q.noalias() += rho * kp.C.transpose() * kp.C;
+
+                    // R += rho * D^T * D
+                    kp.R.noalias() += rho * kp.D.transpose() * kp.D;
+
+                    // H += rho * D^T * C (Cross term)
+                    kp.H.noalias() += rho * kp.D.transpose() * kp.C;
+
+                    // q += rho * C^T * g_val
+                    // Note: Restoration usually ignores 's' in the quadratic penalty approximation
+                    // or treats it as fixed residuals g_val.
+                    kp.q.noalias() += rho * kp.C.transpose() * kp.g_val;
+
+                    // r += rho * D^T * g_val
+                    kp.r.noalias() += rho * kp.D.transpose() * kp.g_val;
+                }
             }
 
-            if(!linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config)) {
+            if (!linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config)) {
                 break;
             }
-            
+
             double alpha = 1.0;
-            for(int k=0; k<=N; ++k) {
-                for(int i=0; i<NC; ++i) {
+            for (int k = 0; k <= N; ++k) {
+                for (int i = 0; i < NC; ++i) {
                     double s = traj[k].s(i);
                     double ds = traj[k].ds(i);
                     double lam = traj[k].lam(i);
                     double dlam = traj[k].dlam(i);
-                    if (ds < 0) alpha = std::min(alpha, -config.restoration_alpha * s / ds);
-                    if (dlam < 0) alpha = std::min(alpha, -config.restoration_alpha * lam / dlam);
+                    if (ds < 0)
+                        alpha = std::min(alpha, -config.restoration_alpha * s / ds);
+                    if (dlam < 0)
+                        alpha = std::min(alpha, -config.restoration_alpha * lam / dlam);
 
                     // For L1 soft constraints, maintain:
                     // - soft_s > 0
@@ -650,7 +751,8 @@ private:
                     if (type == 1 && w > 1e-6) {
                         const double soft_s = traj[k].soft_s(i);
                         const double dsoft_s = traj[k].dsoft_s(i);
-                        if (dsoft_s < 0) alpha = std::min(alpha, -config.restoration_alpha * soft_s / dsoft_s);
+                        if (dsoft_s < 0)
+                            alpha = std::min(alpha, -config.restoration_alpha * soft_s / dsoft_s);
 
                         if (dlam > 0) {
                             const double gap = (w - lam) - config.min_barrier_slack;
@@ -663,12 +765,12 @@ private:
                     }
                 }
             }
-            
-            if(alpha < 1e-4) {
-                 break; 
+
+            if (alpha < 1e-4) {
+                break;
             }
 
-            for(int k=0; k<=N; ++k) {
+            for (int k = 0; k <= N; ++k) {
                 traj[k].x += alpha * traj[k].dx;
                 traj[k].u += alpha * traj[k].du;
                 traj[k].s += alpha * traj[k].ds;
@@ -677,13 +779,14 @@ private:
             }
             success = true; // At least one restoration step was applied
         }
-        
+
         // Reset Lagrange Multipliers for the original problem to avoid dual contamination
         // form the restoration phase (which solves a different problem).
-        for(int k=0; k<=N; ++k) {
-            for(int i=0; i<NC; ++i) {
+        for (int k = 0; k <= N; ++k) {
+            for (int i = 0; i < NC; ++i) {
                 // Ensure s is positive
-                if(traj[k].s(i) < 1e-9) traj[k].s(i) = 1e-9;
+                if (traj[k].s(i) < 1e-9)
+                    traj[k].s(i) = 1e-9;
 
                 double w = 0.0;
                 int type = 0;
@@ -694,18 +797,21 @@ private:
                     }
                 }
 
-                // Preserve dual info from restoration if valuable, but ensure complementarity lower bound.
+                // Preserve dual info from restoration if valuable, but ensure complementarity lower
+                // bound.
                 double lam_min = saved_mu / traj[k].s(i);
 
                 if (type == 1 && w > 1e-6) {
                     // Keep lam strictly inside the dual box so barrier terms remain well-defined.
                     double lam_max = w - config.min_barrier_slack;
-                    if (lam_max < config.min_barrier_slack) lam_max = config.min_barrier_slack;
+                    if (lam_max < config.min_barrier_slack)
+                        lam_max = config.min_barrier_slack;
                     traj[k].lam(i) = std::min(traj[k].lam(i), lam_max);
                     traj[k].lam(i) = std::max(traj[k].lam(i), lam_min);
 
                     // Rebuild the soft slack on the central path for the restored mu.
-                    traj[k].soft_s(i) = std::max(config.min_barrier_slack, saved_mu / (w - traj[k].lam(i)));
+                    traj[k].soft_s(i)
+                        = std::max(config.min_barrier_slack, saved_mu / (w - traj[k].lam(i)));
                 } else {
                     traj[k].lam(i) = std::max(traj[k].lam(i), lam_min);
                 }
@@ -719,31 +825,32 @@ private:
     }
 
 public:
-    SolverStatus solve() {
+    SolverStatus solve()
+    {
         ensure_solver_components_ready();
         // 1. Presolve: 数据准备、冷热启动处理、内存复位
         presolve();
-        
+
         SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
         double last_cost = 1e30;
 
         // 2. Solve Loop: 数值迭代
-        for(int iter=0; iter < config.max_iters; ++iter) {
+        for (int iter = 0; iter < config.max_iters; ++iter) {
             timer.start("Total Step");
             SolverStatus step_stat = step();
             timer.stop();
-            
+
             // SQP-RTI 模式：做一步即走，状态由 postsolve 判定
             if (config.enable_rti) {
-                loop_exit_status = SolverStatus::UNSOLVED; 
+                loop_exit_status = SolverStatus::UNSOLVED;
                 break;
             }
 
             // A. 完美收敛 -> 记录状态并跳出，交给 postsolve 复核
             if (step_stat == SolverStatus::OPTIMAL) {
                 loop_exit_status = SolverStatus::OPTIMAL;
-                if (config.print_level >= PrintLevel::INFO) 
-                    MLOG_INFO("Converged in " << iter+1 << " iterations.");
+                if (config.print_level >= PrintLevel::INFO)
+                    MLOG_INFO("Converged in " << iter + 1 << " iterations.");
                 break;
             }
 
@@ -751,7 +858,7 @@ public:
                 loop_exit_status = step_stat;
                 break;
             }
-            
+
             // B. 数值错误 -> 立即中止
             if (step_stat == SolverStatus::NUMERICAL_ERROR) {
                 loop_exit_status = SolverStatus::NUMERICAL_ERROR;
@@ -762,62 +869,66 @@ public:
             if (mu <= config.mu_final) {
                 // 计算当前 Cost
                 double current_cost = 0.0;
-                for(int k=0; k<=N; ++k) current_cost += trajectory.active()[k].cost;
-                
+                for (int k = 0; k <= N; ++k)
+                    current_cost += trajectory.active()[k].cost;
+
                 // 只有在满足一定可行性时，Cost 停滞才有意义
                 // 使用上一步计算的 max_prim_inf (last_prim_inf)
                 double feasible_bound = config.tol_con * config.feasible_tol_scale;
-                
+
                 if (last_prim_inf <= feasible_bound) {
                     double cost_diff = std::abs(current_cost - last_cost);
                     if (cost_diff < config.tol_cost) {
                         if (config.print_level >= PrintLevel::INFO) {
                             MLOG_INFO("Cost Stagnation detected. Stopping early.");
                         }
-                        // 标记为 UNSOLVED，表示非自然收敛，交给 postsolve 判定是 Feasible 还是 Optimal
-                        loop_exit_status = SolverStatus::UNSOLVED; 
-                        break; 
+                        // 标记为 UNSOLVED，表示非自然收敛，交给 postsolve 判定是 Feasible 还是
+                        // Optimal
+                        loop_exit_status = SolverStatus::UNSOLVED;
+                        break;
                     }
                 }
                 last_cost = current_cost;
             }
         }
-        
+
         // 3. Postsolve: 扫尾、刷新导数、统一评级
         return postsolve(loop_exit_status);
     }
 
 private:
-    SolverStatus step() {
+    SolverStatus step()
+    {
         current_iter++;
         auto& traj = trajectory.active();
-        
+
         timer.start("Derivatives");
         double max_kkt_error = 0.0;
         double max_prim_inf = 0.0;
-        double max_dual_inf = 0.0; 
+        double max_dual_inf = 0.0;
         double total_gap = 0.0;
         int total_gap_dim = 0;
 
-        for(int k=0; k<=N; ++k) {
+        for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
-            
+
             // Conditionally use GN or Exact compute
             if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                 Model::compute_cost_gn(traj[k]);
-                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                 Model::compute_constraints(traj[k]);
+                Model::compute_cost_gn(traj[k]);
+                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                Model::compute_constraints(traj[k]);
             } else {
-                 Model::compute_cost_exact(traj[k]);
-                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                 Model::compute_constraints(traj[k]);
+                Model::compute_cost_exact(traj[k]);
+                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                Model::compute_constraints(traj[k]);
             }
-            
-            for(int i=0; i<NC; ++i) {
+
+            for (int i = 0; i < NC; ++i) {
                 const double s = traj[k].s(i);
                 const double lam = traj[k].lam(i);
                 double comp = std::abs(s * lam - mu);
-                if(comp > max_kkt_error) max_kkt_error = comp;
+                if (comp > max_kkt_error)
+                    max_kkt_error = comp;
 
                 total_gap += s * lam;
                 total_gap_dim += 1;
@@ -836,41 +947,42 @@ private:
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - lam);
                     double comp_soft = std::abs(soft_s * soft_dual - mu);
-                    if (comp_soft > max_kkt_error) max_kkt_error = comp_soft;
+                    if (comp_soft > max_kkt_error)
+                        max_kkt_error = comp_soft;
 
                     total_gap += soft_s * soft_dual;
                     total_gap_dim += 1;
                 }
             }
         }
-        
+
         // Use helper for Primal Inf
         max_prim_inf = compute_max_violation(traj);
-        
+
         timer.stop();
-        
+
         // Check for Numerical Instability (NaN/Inf)
         if (has_nans(traj)) {
-             if (config.print_level >= PrintLevel::INFO) 
+            if (config.print_level >= PrintLevel::INFO)
                 MLOG_ERROR("Numerical Error: NaNs detected in derivatives or state.");
-             return SolverStatus::NUMERICAL_ERROR;
+            return SolverStatus::NUMERICAL_ERROR;
         }
 
         double avg_gap = (total_gap_dim > 0) ? (total_gap / total_gap_dim) : 0.0;
-        
-        // In Mehrotra mode, mu is updated dynamically inside the step via predictor-corrector logic.
-        // We only use update_barrier for Monotone/Adaptive strategies or as a fallback.
+
+        // In Mehrotra mode, mu is updated dynamically inside the step via predictor-corrector
+        // logic. We only use update_barrier for Monotone/Adaptive strategies or as a fallback.
         if (config.barrier_strategy != BarrierStrategy::MEHROTRA) {
             update_barrier(max_kkt_error, avg_gap);
         }
-        
+
         if (config.line_search_type == LineSearchType::MERIT) {
-             // line_search->prepare_step(traj); // If needed
+            // line_search->prepare_step(traj); // If needed
         }
 
         timer.start("Linear Solve");
         bool solve_success = false;
-        
+
         // Candidate buffer preparation (shared by Mehrotra predictor and IR backup).
         // Both features need a full copy of the current linearized system (A, B, Q, R).
         // - Mehrotra: uses it as the affine solve workspace
@@ -878,75 +990,84 @@ private:
         // Note: The Mehrotra affine solve only modifies solver workspace (Q_bar, R_bar, K, dx...)
         //        but NOT model derivatives (A, B, C, D, Q, R, f_resid, x), so the IR backup
         //        remains valid even after the affine solve.
-        bool need_candidate_backup = (config.barrier_strategy == BarrierStrategy::MEHROTRA) 
-                                     || config.enable_iterative_refinement;
+        bool need_candidate_backup = (config.barrier_strategy == BarrierStrategy::MEHROTRA)
+            || config.enable_iterative_refinement;
         if (need_candidate_backup) {
             trajectory.prepare_candidate_full();
         }
-        
+
         // Mehrotra Predictor-Corrector Logic
         if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
             // 1. Affine Step (Predictor)
             // Candidate already prepared above with full copy
             auto& affine_traj = trajectory.candidate();
-            
+
             bool aff_success = false;
             // Solve with mu = 0
-            for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
+            for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
                 // Use new enum for exact/GN
-                aff_success = linear_solver->solve(affine_traj, N, 0.0, reg, config.inertia_strategy, config);
-                if (aff_success) break;
-                if (reg < config.reg_min) reg = config.reg_min;
+                aff_success = linear_solver->solve(
+                    affine_traj, N, 0.0, reg, config.inertia_strategy, config);
+                if (aff_success)
+                    break;
+                if (reg < config.reg_min)
+                    reg = config.reg_min;
                 reg *= config.reg_scale_up;
-                if (reg > config.reg_max) reg = config.reg_max;
+                if (reg > config.reg_max)
+                    reg = config.reg_max;
             }
-            
+
             if (!aff_success) {
                 timer.stop();
                 return SolverStatus::NUMERICAL_ERROR;
             }
-            
+
             // Calc max step for affine direction
             // Re-implement fraction-to-boundary locally since it's simple
             double alpha_aff = 1.0;
-            for(int k=0; k<=N; ++k) {
-                for(int i=0; i<NC; ++i) {
+            for (int k = 0; k <= N; ++k) {
+                for (int i = 0; i < NC; ++i) {
                     double s = affine_traj[k].s(i);
                     double ds = affine_traj[k].ds(i);
                     double lam = affine_traj[k].lam(i);
                     double dlam = affine_traj[k].dlam(i);
-                    
+
                     if (ds < 0) {
-                        double a = -s / ds; 
-                        if (a < alpha_aff) alpha_aff = a;
+                        double a = -s / ds;
+                        if (a < alpha_aff)
+                            alpha_aff = a;
                     }
                     if (dlam < 0) {
                         double a = -lam / dlam;
-                        if (a < alpha_aff) alpha_aff = a;
+                        if (a < alpha_aff)
+                            alpha_aff = a;
                     }
                 }
             }
-            
+
             double mu_curr = mu;
             double mu_aff = 0.0;
             double total_comp = 0.0;
             int total_dim = 0;
-            
-            for(int k=0; k<=N; ++k) {
-                for(int i=0; i<NC; ++i) {
+
+            for (int k = 0; k <= N; ++k) {
+                for (int i = 0; i < NC; ++i) {
                     double s_new = traj[k].s(i) + alpha_aff * affine_traj[k].ds(i);
                     double lam_new = traj[k].lam(i) + alpha_aff * affine_traj[k].dlam(i);
-                    if(s_new < 0) s_new = 1e-8; // Should not happen with fraction_to_boundary
-                    if(lam_new < 0) lam_new = 1e-8;
+                    if (s_new < 0)
+                        s_new = 1e-8; // Should not happen with fraction_to_boundary
+                    if (lam_new < 0)
+                        lam_new = 1e-8;
                     total_comp += s_new * lam_new;
                     total_dim++;
                 }
             }
             mu_aff = total_comp / std::max(1, total_dim);
-            
+
             // DEBUG PRINT
             if (config.print_level >= PrintLevel::DEBUG) {
-                 MLOG_INFO("Mehrotra Debug: mu_curr=" << mu_curr << ", mu_aff=" << mu_aff << ", alpha_aff=" << alpha_aff);
+                MLOG_INFO("Mehrotra Debug: mu_curr=" << mu_curr << ", mu_aff=" << mu_aff
+                                                     << ", alpha_aff=" << alpha_aff);
             }
 
             // Aggressive Update: Use sigma^k with k >= 1
@@ -954,12 +1075,13 @@ private:
             // If alpha_aff is small, be conservative.
             double sigma_base = std::pow(mu_aff / mu_curr, 3);
             double sigma = sigma_base;
-            
+
             // Aggressive Strategy
             // If alpha_aff close to 1, we can reduce mu significantly
             if (config.enable_aggressive_barrier) {
                 if (alpha_aff > 0.9) {
-                    sigma = std::min(sigma, 0.01); // [AGGRESSIVE] Force 100x reduction if direction is good (was 0.1)
+                    sigma = std::min(sigma,
+                        0.01); // [AGGRESSIVE] Force 100x reduction if direction is good (was 0.1)
                 }
                 // If we are far from solution (large gap), allow faster drop
                 if (mu_curr > 1.0) {
@@ -971,107 +1093,127 @@ private:
                 if (alpha_aff < 0.1) {
                     // If affine direction is blocked quickly, we are close to boundary.
                     // Be conservative to allow centering.
-                    sigma = std::max(sigma, 0.5); 
+                    sigma = std::max(sigma, 0.5);
                 } else if (alpha_aff > 0.9) {
                     // If affine direction is good, we can reduce mu significantly
                     sigma = std::min(sigma, 0.1);
                 }
             }
-            
-            if (sigma > 1.0) sigma = 1.0;
-            if (sigma < 1e-4) sigma = 1e-4; // Prevent too small sigma
-            
+
+            if (sigma > 1.0)
+                sigma = 1.0;
+            if (sigma < 1e-4)
+                sigma = 1e-4; // Prevent too small sigma
+
             double mu_target = sigma * mu_curr;
-            if (mu_target < config.mu_final) mu_target = config.mu_final; // Enforce lower bound
-            
+            if (mu_target < config.mu_final)
+                mu_target = config.mu_final; // Enforce lower bound
+
             // 2. Corrector Step
             // Solve with mu_target and affine correction term
             if (config.enable_corrector) {
                 // Pass affine_traj to solve()
-                for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
-                    solve_success = linear_solver->solve(traj, N, mu_target, reg, config.inertia_strategy, config, &affine_traj);
-                    if (solve_success) break;
-                    // If failed, regularize and retry (note: reg might have increased in affine step already)
+                for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
+                    solve_success = linear_solver->solve(
+                        traj, N, mu_target, reg, config.inertia_strategy, config, &affine_traj);
+                    if (solve_success)
+                        break;
+                    // If failed, regularize and retry (note: reg might have increased in affine
+                    // step already)
                     reg *= config.reg_scale_up;
-                    if (reg > config.reg_max) reg = config.reg_max;
+                    if (reg > config.reg_max)
+                        reg = config.reg_max;
                 }
             } else {
                 // Predictor only (just update mu but don't add correction term)
-                for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
-                    solve_success = linear_solver->solve(traj, N, mu_target, reg, config.inertia_strategy, config);
-                    if (solve_success) break;
+                for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
+                    solve_success = linear_solver->solve(
+                        traj, N, mu_target, reg, config.inertia_strategy, config);
+                    if (solve_success)
+                        break;
                     reg *= config.reg_scale_up;
-                    if (reg > config.reg_max) reg = config.reg_max;
+                    if (reg > config.reg_max)
+                        reg = config.reg_max;
                 }
             }
-            
+
             mu = mu_target;
-            
+
         } else {
             // Standard IPM
-            for(int try_count=0; try_count < config.inertia_max_retries; ++try_count) {
-                solve_success = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
-                if (solve_success) break;
-                if (reg < config.reg_min) reg = config.reg_min;
+            for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
+                solve_success
+                    = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
+                if (solve_success)
+                    break;
+                if (reg < config.reg_min)
+                    reg = config.reg_min;
                 reg *= config.reg_scale_up;
-                if (reg > config.reg_max) reg = config.reg_max;
+                if (reg > config.reg_max)
+                    reg = config.reg_max;
             }
         }
 
         if (solve_success && reg > config.reg_min) {
-             reg = std::max(config.reg_min, reg / config.reg_scale_down);
+            reg = std::max(config.reg_min, reg / config.reg_scale_down);
         }
-        
+
         // Iterative Refinement
         if (solve_success && config.enable_iterative_refinement) {
-             // Pass 'traj' (which contains solution dx, du) and 'candidate' (which contains original system)
-             linear_solver->refine(traj, trajectory.candidate(), N, mu, reg, config);
+            // Pass 'traj' (which contains solution dx, du) and 'candidate' (which contains original
+            // system)
+            linear_solver->refine(traj, trajectory.candidate(), N, mu, reg, config);
         }
-        
+
         timer.stop();
 
-        if (!solve_success) return SolverStatus::NUMERICAL_ERROR;
+        if (!solve_success)
+            return SolverStatus::NUMERICAL_ERROR;
 
         // Dual infeasibility metric: use Qu (stored in r_bar after the Riccati backward pass).
-        // This is only valid after a successful linear solve (r_bar is stale right after line-search swaps).
+        // This is only valid after a successful linear solve (r_bar is stale right after
+        // line-search swaps).
         max_dual_inf = 0.0;
-        for(int k=0; k<=N; ++k) {
+        for (int k = 0; k <= N; ++k) {
             double r_norm = MatOps::norm_inf(traj[k].r_bar);
-            if (r_norm > max_dual_inf) max_dual_inf = r_norm;
+            if (r_norm > max_dual_inf)
+                max_dual_inf = r_norm;
         }
 
         // Convergence check (Primal + Dual + Mu) using the freshly computed dual residual.
         // The final convergence verdict is always made in postsolve() with fresh data.
-        if(current_iter > 1 && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) return SolverStatus::OPTIMAL;
+        if (current_iter > 1 && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error))
+            return SolverStatus::OPTIMAL;
 
         timer.start("Line Search");
         double alpha = line_search->search(trajectory, *linear_solver, dt_traj, mu, reg, config);
         // IMPORTANT: line_search may swap trajectory buffers.
         // Do not use references to trajectory.active() taken before this call.
         auto& traj_after_ls = trajectory.active();
-        
+
         // If step size is valid, reset the counter
         if (alpha > 1e-8) {
             slack_reset_consecutive_count = 0;
-        }
-        else {
+        } else {
             // Alpha <= 1e-8 (Step size too small / Stagnation)
 
             // 1. Check if stagnated at a feasible solution satisfying tolerances (Optimality check)
-            //    This prevents triggering incorrect restoration mechanisms due to numerical noise near a perfect solution
+            //    This prevents triggering incorrect restoration mechanisms due to numerical noise
+            //    near a perfect solution
             if (max_prim_inf <= config.tol_con) {
                 // Further check dual feasibility to distinguish between SOLVED and FEASIBLE
                 if (max_dual_inf <= config.tol_dual) {
                     if (config.print_level >= PrintLevel::INFO) {
-                        MLOG_INFO("Line search stagnated at optimal point (PrimInf: " << max_prim_inf 
-                                << ", DualInf: " << max_dual_inf << "). Terminating as SOLVED.");
+                        MLOG_INFO("Line search stagnated at optimal point (PrimInf: "
+                            << max_prim_inf << ", DualInf: " << max_dual_inf
+                            << "). Terminating as SOLVED.");
                     }
                     timer.stop();
                     return SolverStatus::OPTIMAL;
                 } else {
                     if (config.print_level >= PrintLevel::INFO) {
-                        MLOG_INFO("Line search stagnated at feasible point (PrimInf: " << max_prim_inf 
-                                << "). Terminating as FEASIBLE.");
+                        MLOG_INFO("Line search stagnated at feasible point (PrimInf: "
+                            << max_prim_inf << "). Terminating as FEASIBLE.");
                     }
                     timer.stop();
                     return SolverStatus::FEASIBLE;
@@ -1080,28 +1222,28 @@ private:
 
             // 2. Step 1: Slack Reset (With counter protection)
             bool recovered = false;
-            
+
             // Logic explanation:
             // Only allow attempt when slack_reset_consecutive_count < 1.
-            // This means if SlackReset was used in the last iteration but Alpha=0 still (dead loop),
-            // this time we force skipping Step 1 and go directly to Step 2 (Restoration).
-            if (config.enable_slack_reset && 
-                alpha < config.slack_reset_trigger && 
-                slack_reset_consecutive_count < 1) 
-            {
-                if (config.print_level >= PrintLevel::DEBUG) 
-                MLOG_DEBUG("Triggering Slack Reset (Attempt " << slack_reset_consecutive_count + 1 << ").");
-                
-                for(int k=0; k<=N; ++k) {
+            // This means if SlackReset was used in the last iteration but Alpha=0 still (dead
+            // loop), this time we force skipping Step 1 and go directly to Step 2 (Restoration).
+            if (config.enable_slack_reset && alpha < config.slack_reset_trigger
+                && slack_reset_consecutive_count < 1) {
+                if (config.print_level >= PrintLevel::DEBUG)
+                    MLOG_DEBUG("Triggering Slack Reset (Attempt "
+                        << slack_reset_consecutive_count + 1 << ").");
+
+                for (int k = 0; k <= N; ++k) {
                     auto& kp = traj_after_ls[k];
-                    for(int i=0; i<NC; ++i) {
+                    for (int i = 0; i < NC; ++i) {
                         double min_s = std::abs(kp.g_val(i)) + std::sqrt(mu);
                         if (kp.s(i) < min_s) {
                             kp.s(i) = min_s;
                             // Maintain consistency of dual variables, prevent aggressive reset
                             kp.lam(i) = std::max(kp.lam(i), config.mu_init / kp.s(i));
 
-                            // For L1 soft constraints, also keep the implicit soft-dual feasible: (w - lam) > 0.
+                            // For L1 soft constraints, also keep the implicit soft-dual feasible:
+                            // (w - lam) > 0.
                             double w = 0.0;
                             int type = 0;
                             if constexpr (NC > 0) {
@@ -1112,31 +1254,36 @@ private:
                             }
                             if (type == 1 && w > 1e-6) {
                                 double lam_max = w - config.min_barrier_slack;
-                                if (lam_max < config.min_barrier_slack) lam_max = config.min_barrier_slack;
-                                if (kp.lam(i) > lam_max) kp.lam(i) = lam_max;
-                                // Keep soft slack on the central path so barrier terms remain well-defined.
-                                kp.soft_s(i) = std::max(config.min_barrier_slack, mu / (w - kp.lam(i)));
+                                if (lam_max < config.min_barrier_slack)
+                                    lam_max = config.min_barrier_slack;
+                                if (kp.lam(i) > lam_max)
+                                    kp.lam(i) = lam_max;
+                                // Keep soft slack on the central path so barrier terms remain
+                                // well-defined.
+                                kp.soft_s(i)
+                                    = std::max(config.min_barrier_slack, mu / (w - kp.lam(i)));
                             }
                         }
                     }
                 }
                 // Try one solve to see if a valid direction can be obtained
-                recovered = linear_solver->solve(traj_after_ls, N, mu, reg, config.inertia_strategy, config);
-                
+                recovered = linear_solver->solve(
+                    traj_after_ls, N, mu, reg, config.inertia_strategy, config);
+
                 if (recovered) {
                     // Mark: If this Reset failed to get us out of trouble, disallow it next time
                     slack_reset_consecutive_count++;
                 }
+            } else if (config.enable_slack_reset && slack_reset_consecutive_count >= 1) {
+                if (config.print_level >= PrintLevel::DEBUG)
+                    MLOG_DEBUG("Skipping Slack Reset to prevent cycle. Forcing Restoration.");
             }
-            else if (config.enable_slack_reset && slack_reset_consecutive_count >= 1) {
-                if (config.print_level >= PrintLevel::DEBUG) 
-                MLOG_DEBUG("Skipping Slack Reset to prevent cycle. Forcing Restoration.");
-            }
-            
+
             // 3. Step 2: Feasibility Restoration (If Step 1 failed or was skipped)
             if (!recovered && config.enable_feasibility_restoration) {
                 recovered = feasibility_restoration();
-                // If restoration succeeded (state x moved), we can reset the counter, allowing SlackReset to be used again in the future
+                // If restoration succeeded (state x moved), we can reset the counter, allowing
+                // SlackReset to be used again in the future
                 if (recovered) {
                     slack_reset_consecutive_count = 0;
                 }
@@ -1157,26 +1304,27 @@ private:
         // Avoids wasting a full derivative computation in next step if we are already done.
         bool is_feasible = (max_prim_inf < config.tol_con);
         bool is_dual_feasible = (max_dual_inf < config.tol_dual);
-        
+
         // 1. Standard "Small Mu" Convergence
         if (mu <= config.mu_final && alpha > 1e-5) {
             // Check stationarity via step size
             double max_dx = 0.0;
-            for(int k=0; k<=N; ++k) {
+            for (int k = 0; k <= N; ++k) {
                 // Use MatOps::norm_inf to support both Eigen and MiniMatrix
                 double dx_norm = MatOps::norm_inf(trajectory.active()[k].dx);
-                if (dx_norm > max_dx) max_dx = dx_norm;
+                if (dx_norm > max_dx)
+                    max_dx = dx_norm;
             }
             // Use unscaled Newton step (max_dx) to check stationarity.
-            // Using (alpha * max_dx) is dangerous because small alpha (blocked step) 
+            // Using (alpha * max_dx) is dangerous because small alpha (blocked step)
             // can look like convergence.
             if (max_dx < config.tol_grad && is_feasible && is_dual_feasible) {
                 return SolverStatus::OPTIMAL;
             }
         }
-        
-        // For outer-loop heuristics (e.g. cost stagnation), store feasibility of the *current* iterate,
-        // i.e. after line-search has potentially swapped buffers.
+
+        // For outer-loop heuristics (e.g. cost stagnation), store feasibility of the *current*
+        // iterate, i.e. after line-search has potentially swapped buffers.
         last_prim_inf = compute_max_violation(trajectory.active());
         last_dual_inf = max_dual_inf;
         return SolverStatus::UNSOLVED;
@@ -1185,13 +1333,15 @@ private:
     // ============================================================
     // [Phase 1] Presolve: Preparation
     // ============================================================
-    void presolve() {
+    void presolve()
+    {
         // [Enable/Disable Profiling]
         timer.enabled = config.enable_profiling;
-        if (line_search) line_search->reset();
-        
+        if (line_search)
+            line_search->reset();
+
         current_iter = 0;
-        slack_reset_consecutive_count = 0; 
+        slack_reset_consecutive_count = 0;
         reg = config.reg_init;
         mu = config.mu_init;
 
@@ -1207,86 +1357,87 @@ private:
 
         if (need_init) {
             auto& traj = trajectory.active();
-            for(int k=0; k<=N; ++k) {
-                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                 Model::compute(traj[k], config.integrator, current_dt);
-                 
-                 for(int i=0; i<NC; ++i) {
-                     double g = traj[k].g_val(i);
-                     double w = 0.0;
-                     int type = 0;
-                     if constexpr (NC > 0) {
-                         if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+            for (int k = 0; k <= N; ++k) {
+                double current_dt = (k < N) ? dt_traj[k] : 0.0;
+                Model::compute(traj[k], config.integrator, current_dt);
+
+                for (int i = 0; i < NC; ++i) {
+                    double g = traj[k].g_val(i);
+                    double w = 0.0;
+                    int type = 0;
+                    if constexpr (NC > 0) {
+                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
                             type = Model::constraint_types[i];
                             w = Model::constraint_weights[i];
-                         }
-                     }
-                     
-                     if (type == 1 && w > 1e-6) { // L1 Soft Constraint
-                         // Central Path: 
-                         // 1) g + s - soft_s = 0
-                         // 2) s * lam = mu
-                         // 3) soft_s * (w - lam) = mu
-                         // Reduce to quadratic in lam: g*lam^2 - (g*w - 2*mu)*lam - mu*w = 0
-                         double a = g;
-                         double b = -(g * w - 2 * mu);
-                         double c = -mu * w;
-                         
-                         double lam_val;
-                         if (std::abs(a) < 1e-9) {
-                             // Linear case (g ≈ 0): 2*mu*lam = mu*w → lam = w/2
-                             lam_val = w / 2.0;
-                         } else {
-                             double delta = b*b - 4*a*c;
-                             if (delta < 0) delta = 0;
-                             lam_val = (-b + std::sqrt(delta)) / (2*a);
-                         }
-                         
-                         // Clamp for safety
-                         lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
-                         
-                         traj[k].lam(i) = lam_val;
-                         traj[k].s(i) = mu / lam_val;
-                         traj[k].soft_s(i) = mu / (w - lam_val);
-                     } 
-                     else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
-                         // Central Path:
-                         // 1) g + s - lam/w = 0
-                         // 2) s * lam = mu
-                         // Reduce to quadratic in lam: lam^2 - g*w*lam - mu*w = 0
-                         double b = -g * w;
-                         double c = -mu * w;
-                         // lam = (-b + sqrt(b^2 - 4ac)) / 2a, here a=1
-                         // lam = (g*w + sqrt(g^2*w^2 + 4*mu*w)) / 2
-                         double delta = b*b - 4*c; // b^2 + 4*mu*w > 0 always
-                         double lam_val = (-b + std::sqrt(delta)) / 2.0;
-                         
-                         traj[k].lam(i) = std::max(1e-8, lam_val);
-                         traj[k].s(i) = mu / traj[k].lam(i);
-                         // soft_s not used in L2
-                     } 
-                     else { // Hard Constraint
-                         double s_val = std::max(1e-6, -g);
-                         traj[k].s(i) = s_val;
-                         traj[k].lam(i) = mu / s_val;
-                     }
-                 }
+                        }
+                    }
+
+                    if (type == 1 && w > 1e-6) { // L1 Soft Constraint
+                        // Central Path:
+                        // 1) g + s - soft_s = 0
+                        // 2) s * lam = mu
+                        // 3) soft_s * (w - lam) = mu
+                        // Reduce to quadratic in lam: g*lam^2 - (g*w - 2*mu)*lam - mu*w = 0
+                        double a = g;
+                        double b = -(g * w - 2 * mu);
+                        double c = -mu * w;
+
+                        double lam_val;
+                        if (std::abs(a) < 1e-9) {
+                            // Linear case (g ≈ 0): 2*mu*lam = mu*w → lam = w/2
+                            lam_val = w / 2.0;
+                        } else {
+                            double delta = b * b - 4 * a * c;
+                            if (delta < 0)
+                                delta = 0;
+                            lam_val = (-b + std::sqrt(delta)) / (2 * a);
+                        }
+
+                        // Clamp for safety
+                        lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
+
+                        traj[k].lam(i) = lam_val;
+                        traj[k].s(i) = mu / lam_val;
+                        traj[k].soft_s(i) = mu / (w - lam_val);
+                    } else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
+                        // Central Path:
+                        // 1) g + s - lam/w = 0
+                        // 2) s * lam = mu
+                        // Reduce to quadratic in lam: lam^2 - g*w*lam - mu*w = 0
+                        double b = -g * w;
+                        double c = -mu * w;
+                        // lam = (-b + sqrt(b^2 - 4ac)) / 2a, here a=1
+                        // lam = (g*w + sqrt(g^2*w^2 + 4*mu*w)) / 2
+                        double delta = b * b - 4 * c; // b^2 + 4*mu*w > 0 always
+                        double lam_val = (-b + std::sqrt(delta)) / 2.0;
+
+                        traj[k].lam(i) = std::max(1e-8, lam_val);
+                        traj[k].s(i) = mu / traj[k].lam(i);
+                        // soft_s not used in L2
+                    } else { // Hard Constraint
+                        double s_val = std::max(1e-6, -g);
+                        traj[k].s(i) = s_val;
+                        traj[k].lam(i) = mu / s_val;
+                    }
+                }
             }
         }
-        
-        print_iteration_log(0.0, true); 
-        timer.reset(); 
+
+        print_iteration_log(0.0, true);
+        timer.reset();
     }
 
     // ============================================================
     // [Phase 3] Postsolve: Finalization & Verdict
     // ============================================================
-    SolverStatus postsolve(SolverStatus loop_status) {
+    SolverStatus postsolve(SolverStatus loop_status)
+    {
         if (loop_status == SolverStatus::NUMERICAL_ERROR) {
             return SolverStatus::NUMERICAL_ERROR;
         }
         if (config.print_level >= PrintLevel::INFO) {
-            if (loop_status == SolverStatus::UNSOLVED) MLOG_INFO("Max iterations or stagnation.");
+            if (loop_status == SolverStatus::UNSOLVED)
+                MLOG_INFO("Max iterations or stagnation.");
         }
         // [Fix 2 Logic] 强制刷新导数
         // 无论是因为收敛还是因为耗尽步数退出，我们都重新计算一次精确的残差，
@@ -1295,38 +1446,41 @@ private:
         double max_kkt_error = 0.0;
         double max_dual_inf = 0.0;
         auto& riccati_workspace = linear_solver->workspace;
-        for(int k=0; k<=N; ++k) {
-             double current_dt = (k < N) ? dt_traj[k] : 0.0;
-             
-             // 1. Recompute Primal/Dual properties
-             if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                 Model::compute_cost_gn(traj[k]);
-                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                 Model::compute_constraints(traj[k]);
-             } else {
-                 Model::compute_cost_exact(traj[k]);
-                 Model::compute_dynamics(traj[k], config.integrator, current_dt);
-                 Model::compute_constraints(traj[k]);
-             }
-             
-             // 2. Recompute Barrier Gradients (check riccati.h)
-             compute_barrier_derivatives<Knot, Model>(traj[k], mu, config, riccati_workspace, nullptr, nullptr);
-             // 3. Check NaNs
-             for(int i=0; i<NC; ++i) {
-                 if (std::isnan(traj[k].g_val(i)) || std::isnan(traj[k].s(i))) 
-                     return SolverStatus::NUMERICAL_ERROR;
-             }
-             // 4. Collect Metrics
-             double r_norm = MatOps::norm_inf(traj[k].r_bar);
-             if(r_norm > max_dual_inf) max_dual_inf = r_norm;
-             for(int i=0; i<NC; ++i) {
+        for (int k = 0; k <= N; ++k) {
+            double current_dt = (k < N) ? dt_traj[k] : 0.0;
+
+            // 1. Recompute Primal/Dual properties
+            if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                Model::compute_cost_gn(traj[k]);
+                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                Model::compute_constraints(traj[k]);
+            } else {
+                Model::compute_cost_exact(traj[k]);
+                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                Model::compute_constraints(traj[k]);
+            }
+
+            // 2. Recompute Barrier Gradients (check riccati.h)
+            compute_barrier_derivatives<Knot, Model>(
+                traj[k], mu, config, riccati_workspace, nullptr, nullptr);
+            // 3. Check NaNs
+            for (int i = 0; i < NC; ++i) {
+                if (std::isnan(traj[k].g_val(i)) || std::isnan(traj[k].s(i)))
+                    return SolverStatus::NUMERICAL_ERROR;
+            }
+            // 4. Collect Metrics
+            double r_norm = MatOps::norm_inf(traj[k].r_bar);
+            if (r_norm > max_dual_inf)
+                max_dual_inf = r_norm;
+            for (int i = 0; i < NC; ++i) {
                 double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu);
-                if(comp > max_kkt_error) max_kkt_error = comp;
-             }
+                if (comp > max_kkt_error)
+                    max_kkt_error = comp;
+            }
         }
         double max_viol = compute_max_violation(traj);
         // [最终评级]
-        
+
         // Level 1: SOLVED (Optimal)
         // 即使 Loop 是因为 Stagnation 退出的，如果此时恰好满足最优性，也给 SOLVED
         if (check_convergence(max_viol, max_dual_inf, max_kkt_error)) {
@@ -1336,7 +1490,8 @@ private:
         double feasible_bound = config.tol_con * config.feasible_tol_scale;
         if (max_viol <= feasible_bound) {
             if (config.print_level >= PrintLevel::INFO) {
-                MLOG_INFO("Result: FEASIBLE (Viol: " << max_viol << " <= " << feasible_bound << ")");
+                MLOG_INFO(
+                    "Result: FEASIBLE (Viol: " << max_viol << " <= " << feasible_bound << ")");
             }
             return SolverStatus::FEASIBLE;
         }
@@ -1350,45 +1505,49 @@ private:
 private:
     // helper function: calculate the maximum constraint violation of the current trajectory
     // Includes both inequality constraint residuals AND dynamics defects (multiple shooting).
-    double compute_max_violation(const TrajArray& traj) const {
+    double compute_max_violation(const TrajArray& traj) const
+    {
         double max_viol = 0.0;
-        for(int k=0; k<=N; ++k) {
+        for (int k = 0; k <= N; ++k) {
             const auto& kp = traj[k];
-            
+
             // 1. Inequality constraint violation
-            for(int i=0; i<NC; ++i) {
+            for (int i = 0; i < NC; ++i) {
                 double viol = 0.0;
-                
+
                 double w = 0.0;
                 int type = 0;
                 if constexpr (NC > 0) {
-                     if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
                         type = Model::constraint_types[i];
                         w = Model::constraint_weights[i];
-                     }
+                    }
                 }
                 if (type == 1 && w > 1e-6) { // L1
-                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                    viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
                 } else if (type == 2 && w > 1e-6) { // L2
-                     viol = std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i)/w);
+                    viol = std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i) / w);
                 } else { // Hard
-                     viol = std::abs(kp.g_val(i) + kp.s(i));
+                    viol = std::abs(kp.g_val(i) + kp.s(i));
                 }
-                if(viol > max_viol) max_viol = viol;
+                if (viol > max_viol)
+                    max_viol = viol;
             }
-            
+
             // 2. Dynamics defect (multiple shooting): x_{k+1} - f(x_k, u_k)
             if (k < N) {
-                for(int j=0; j<NX; ++j) {
-                    double defect = std::abs(traj[k+1].x(j) - kp.f_resid(j));
-                    if(defect > max_viol) max_viol = defect;
+                for (int j = 0; j < NX; ++j) {
+                    double defect = std::abs(traj[k + 1].x(j) - kp.f_resid(j));
+                    if (defect > max_viol)
+                        max_viol = defect;
                 }
             }
         }
         return max_viol;
     }
 
-    void rebuild_solver_components() {
+    void rebuild_solver_components()
+    {
         linear_solver = std::make_unique<RiccatiSolver<TrajArray, Model>>();
 
         if (config.line_search_type == LineSearchType::MERIT) {
@@ -1398,8 +1557,10 @@ private:
         }
     }
 
-    void ensure_solver_components_ready() {
-        if (!components_dirty) return;
+    void ensure_solver_components_ready()
+    {
+        if (!components_dirty)
+            return;
         rebuild_solver_components();
         components_dirty = false;
     }
@@ -1418,13 +1579,13 @@ private:
 
     int N;
     std::array<double, MAX_N> dt_traj;
-    
+
     SolverTimer timer;
-    
+
     Backend backend;
     SolverConfig config;
     bool components_dirty = false;
-    
+
     double mu;
     double reg;
     int current_iter = 0;

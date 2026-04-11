@@ -1,11 +1,11 @@
-#include <iostream>
-#include <vector>
-#include <chrono>
-#include <string>
-#include <iomanip>
 #include <algorithm>
-#include <numeric>
+#include <chrono>
 #include <cmath>
+#include <iomanip>
+#include <iostream>
+#include <numeric>
+#include <string>
+#include <vector>
 
 // Assumes CarModel is generated in include/model/
 #include "../../examples/01_car_tutorial/generated/car_model.h"
@@ -35,10 +35,11 @@ struct Result {
 
 // --- Scenario Setup ---
 // Defines a standard obstacle avoidance and lane change scenario
-void setup_scenario(MiniSolver<CarModel, 60>& solver) {
+void setup_scenario(MiniSolver<CarModel, 60>& solver)
+{
     int N = solver.get_horizon();
     double target_v = 5.0;
-    
+
     // Initial State (Stopped at origin)
     solver.set_initial_state("x", 0.0);
     solver.set_initial_state("y", 0.0);
@@ -46,30 +47,30 @@ void setup_scenario(MiniSolver<CarModel, 60>& solver) {
     solver.set_initial_state("v", 0.0);
 
     // Horizon Parameters
-    for(int k=0; k<=N; ++k) {
+    for (int k = 0; k <= N; ++k) {
         double t = k * solver.get_config().default_dt;
-        
+
         // Target: Move along X-axis at 5 m/s
         solver.set_parameter(k, "v_ref", target_v);
         solver.set_parameter(k, "x_ref", t * target_v);
-        solver.set_parameter(k, "y_ref", 0.0); 
-        
+        solver.set_parameter(k, "y_ref", 0.0);
+
         // Obstacle: Placed at x=10.0 to force deviation
         solver.set_parameter(k, "obs_x", 10.0);
         solver.set_parameter(k, "obs_y", 0.0);
         solver.set_parameter(k, "obs_rad", 1.5);
-        
+
         // Vehicle Dimensions
         solver.set_parameter(k, "L", 2.5);
         solver.set_parameter(k, "car_rad", 1.0);
-        
+
         // Tuning Weights
         solver.set_parameter(k, "w_pos", 1.0);
         solver.set_parameter(k, "w_vel", 1.0);
         solver.set_parameter(k, "w_theta", 0.1);
         solver.set_parameter(k, "w_acc", 0.1);
         solver.set_parameter(k, "w_steer", 1.0);
-        
+
         // Cold Start Guess (Zero controls)
         if (k < N) {
             solver.set_control_guess(k, "acc", 0.0);
@@ -79,7 +80,8 @@ void setup_scenario(MiniSolver<CarModel, 60>& solver) {
 }
 
 // --- Runner ---
-Result run_case(const BenchmarkCase& test_case) {
+Result run_case(const BenchmarkCase& test_case)
+{
     const int N = 50;
     const int NUM_RUNS = 100;
     const int WARMUP = 10;
@@ -88,7 +90,7 @@ Result run_case(const BenchmarkCase& test_case) {
 
     setup_scenario(solver);
     solver.rollout_dynamics(); // Initial dynamics propagation
-    
+
     std::vector<double> times;
     times.reserve(NUM_RUNS);
     double sum_deriv = 0;
@@ -97,37 +99,38 @@ Result run_case(const BenchmarkCase& test_case) {
 
     Result res;
     res.name = test_case.name;
-    
-    for(int i=0; i < WARMUP + NUM_RUNS; ++i) {
+
+    for (int i = 0; i < WARMUP + NUM_RUNS; ++i) {
         solver.reset(ResetOption::FULL);
         solver.set_dt(0.1);
 
         setup_scenario(solver);
         solver.rollout_dynamics(); // Initial dynamics propagation
-        
+
         auto start = std::chrono::steady_clock::now();
         SolverStatus status = solver.solve();
         auto end = std::chrono::steady_clock::now();
-        
+
         if (i >= WARMUP) {
             times.push_back(std::chrono::duration<double, std::milli>(end - start).count());
             sum_deriv += solver.get_profile_time_ms("Derivatives");
             sum_solve += solver.get_profile_time_ms("Linear Solve");
-            sum_ls    += solver.get_profile_time_ms("Line Search");
+            sum_ls += solver.get_profile_time_ms("Line Search");
 
             // Capture stats from the final run
             if (i == WARMUP + NUM_RUNS - 1) {
                 res.success = (status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
                 res.iters = solver.get_iteration_count();
-                
+
                 // Compute Metrics
                 double max_viol = 0.0;
                 double total_cost = 0.0;
-                for(int k=0; k<=N; ++k) {
+                for (int k = 0; k <= N; ++k) {
                     total_cost += solver.get_stage_cost(k);
-                    for(int j=0; j<CarModel::NC; ++j) {
+                    for (int j = 0; j < CarModel::NC; ++j) {
                         double v = solver.get_constraint_val(k, j); // Violations are g(x) > 0
-                        if (v > max_viol) max_viol = v;
+                        if (v > max_viol)
+                            max_viol = v;
                     }
                 }
                 res.cost = total_cost;
@@ -135,18 +138,19 @@ Result run_case(const BenchmarkCase& test_case) {
             }
         }
     }
-    
+
     double sum = std::accumulate(times.begin(), times.end(), 0.0);
     res.time_ms = sum / NUM_RUNS;
     res.deriv_avg = sum_deriv / NUM_RUNS;
     res.solve_avg = sum_solve / NUM_RUNS;
-    res.ls_avg    = sum_ls / NUM_RUNS;
+    res.ls_avg = sum_ls / NUM_RUNS;
     return res;
 }
 
-int main() {
+int main()
+{
     std::vector<BenchmarkCase> cases;
-    
+
     // 1. TURBO_MPC
     // Target: Embedded MCUs, <100Hz loops.
     // Config: Euler Integration, Adaptive Barrier (Fast Drop), Loose Tolerance.
@@ -157,18 +161,18 @@ int main() {
     c1.tol_con = 1e-2;
     c1.max_iters = 20;
     c1.print_level = PrintLevel::NONE;
-    cases.push_back({"TURBO_MPC", "Euler + Adaptive + Loose Tol", c1});
+    cases.push_back({ "TURBO_MPC", "Euler + Adaptive + Loose Tol", c1 });
 
     // 2. BALANCED_RT
     // Target: General Robotics (UGV/UAV), 50Hz loops.
     // Config: RK2 (Midpoint), Mehrotra (Fewer Iters), Standard Tol.
     SolverConfig c2;
     c2.integrator = IntegratorType::RK2_EXPLICIT;
-    c2.barrier_strategy = BarrierStrategy::MEHROTRA; 
+    c2.barrier_strategy = BarrierStrategy::MEHROTRA;
     c2.line_search_type = LineSearchType::FILTER;
     c2.tol_con = 1e-3;
     c2.print_level = PrintLevel::NONE;
-    cases.push_back({"BALANCED_RT", "RK2 + Mehrotra + Filter", c2});
+    cases.push_back({ "BALANCED_RT", "RK2 + Mehrotra + Filter", c2 });
 
     // 3. QUALITY_PLANNER (Default)
     // Target: Autonomous Driving Planning, high fidelity.
@@ -179,7 +183,7 @@ int main() {
     c3.line_search_type = LineSearchType::FILTER;
     c3.tol_con = 1e-4;
     c3.print_level = PrintLevel::NONE;
-    cases.push_back({"QUALITY_PLANNER", "RK4 + Mehrotra + High Prec", c3});
+    cases.push_back({ "QUALITY_PLANNER", "RK4 + Mehrotra + High Prec", c3 });
 
     // 4. CLASSIC_STABLE
     // Target: Research comparison, older reliable methods.
@@ -190,7 +194,7 @@ int main() {
     c4.line_search_type = LineSearchType::MERIT;
     c4.tol_con = 1e-4;
     c4.print_level = PrintLevel::NONE;
-    cases.push_back({"CLASSIC_STABLE", "RK4 + Monotone + Merit", c4});
+    cases.push_back({ "CLASSIC_STABLE", "RK4 + Monotone + Merit", c4 });
 
     // 5. ROBUST_OBSTACLE
     // Target: Complex environments, narrow passages.
@@ -199,7 +203,7 @@ int main() {
     c5.enable_soc = true;
     c5.enable_feasibility_restoration = true;
     c5.enable_slack_reset = true;
-    cases.push_back({"ROBUST_OBS", "Quality + SOC + Restoration", c5});
+    cases.push_back({ "ROBUST_OBS", "Quality + SOC + Restoration", c5 });
 
     // 6. HIGH_PRECISION
     // Target: Ground Truth generation, offline trajectory optimization.
@@ -208,7 +212,7 @@ int main() {
     c6.hessian_approximation = HessianApproximation::EXACT;
     c6.tol_con = 1e-6;
     c6.tol_dual = 1e-6;
-    cases.push_back({"HIGH_PRECISION", "RK4 + Exact Hessian + 1e-6", c6});
+    cases.push_back({ "HIGH_PRECISION", "RK4 + Exact Hessian + 1e-6", c6 });
 
     // 7. AGGRESSIVE_RACING
     // Target: Racing scenarios where approximate feasibility is acceptable for speed.
@@ -216,7 +220,7 @@ int main() {
     SolverConfig c7 = c3;
     c7.enable_aggressive_barrier = true;
     c7.inertia_strategy = InertiaStrategy::IGNORE_SINGULAR;
-    cases.push_back({"AGGRESSIVE", "Mehrotra + Aggressive Mu", c7});
+    cases.push_back({ "AGGRESSIVE", "Mehrotra + Aggressive Mu", c7 });
 
     // 8. SQP_RTI
     // Target: >1000Hz Control Loops.
@@ -226,40 +230,36 @@ int main() {
     c8.max_iters = 1;
     c8.enable_rti = true;
     c8.print_level = PrintLevel::NONE;
-    cases.push_back({"SQP_RTI", "Euler + Single Iteration", c8});
+    cases.push_back({ "SQP_RTI", "Euler + Single Iteration", c8 });
 
     // --- Report Generation ---
-    std::cout << "\n==========================================================================================================================================\n";
-    std::cout << std::left << std::setw(18) << "Archetype" 
-              << std::setw(35) << "Configuration Summary" 
-              << std::setw(12) << "Time(ms)" 
-              << std::setw(12) << "Deriv(ms)" 
-              << std::setw(12) << "Solve(ms)" 
-              << std::setw(12) << "LS(ms)" 
-              << std::setw(8) << "Iters" 
-              << std::setw(10) << "Status" 
-              << std::setw(12) << "Cost"
-              << std::setw(10) << "MaxViol" << "\n";
-    std::cout << "------------------------------------------------------------------------------------------------------------------------------------------\n";
+    std::cout << "\n==============================================================================="
+                 "===========================================================\n";
+    std::cout << std::left << std::setw(18) << "Archetype" << std::setw(35)
+              << "Configuration Summary" << std::setw(12) << "Time(ms)" << std::setw(12)
+              << "Deriv(ms)" << std::setw(12) << "Solve(ms)" << std::setw(12) << "LS(ms)"
+              << std::setw(8) << "Iters" << std::setw(10) << "Status" << std::setw(12) << "Cost"
+              << std::setw(10) << "MaxViol"
+              << "\n";
+    std::cout << "---------------------------------------------------------------------------------"
+                 "---------------------------------------------------------\n";
 
-    for(const auto& c : cases) {
+    for (const auto& c : cases) {
         Result r = run_case(c);
-        
+
         std::string status_str = r.success ? "OK" : "FAIL";
-        if (c.config.enable_rti) status_str = "RTI"; // RTI always "completes"
-        
-        std::cout << std::left << std::setw(18) << r.name 
-                  << std::setw(35) << c.description 
-                  << std::fixed << std::setprecision(3) << std::setw(12) << r.time_ms 
-                  << std::setw(12) << r.deriv_avg
-                  << std::setw(12) << r.solve_avg
-                  << std::setw(12) << r.ls_avg
-                  << std::setw(8) << r.iters 
-                  << std::setw(10) << status_str 
+        if (c.config.enable_rti)
+            status_str = "RTI"; // RTI always "completes"
+
+        std::cout << std::left << std::setw(18) << r.name << std::setw(35) << c.description
+                  << std::fixed << std::setprecision(3) << std::setw(12) << r.time_ms
+                  << std::setw(12) << r.deriv_avg << std::setw(12) << r.solve_avg << std::setw(12)
+                  << r.ls_avg << std::setw(8) << r.iters << std::setw(10) << status_str
                   << std::scientific << std::setprecision(2) << std::setw(12) << r.cost
                   << std::scientific << std::setprecision(1) << std::setw(10) << r.viol << "\n";
     }
-    std::cout << "\n==========================================================================================================================================\n";
+    std::cout << "\n==============================================================================="
+                 "===========================================================\n";
 
     return 0;
 }

@@ -5,24 +5,26 @@
 #include <cmath>
 
 #include "asset_regression_reference_data.h"
-#include "minisolver/solver/solver.h"
 #include "doubleintegrator3dregressionmodel.h"
 #include "kinematicbicycleregressionmodel.h"
+#include "minisolver/solver/solver.h"
 
 using namespace minisolver;
 
 namespace {
 
-bool is_success(SolverStatus status) {
+bool is_success(SolverStatus status)
+{
     return status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE;
 }
 
-double wrap_angle(double angle) {
+double wrap_angle(double angle)
+{
     return std::atan2(std::sin(angle), std::cos(angle));
 }
 
-template <typename SolverT>
-double total_cost(const SolverT& solver, int horizon) {
+template <typename SolverT> double total_cost(const SolverT& solver, int horizon)
+{
     double cost = 0.0;
     for (int k = 0; k <= horizon; ++k) {
         cost += solver.get_stage_cost(k);
@@ -31,15 +33,16 @@ double total_cost(const SolverT& solver, int horizon) {
 }
 
 template <size_t N>
-void expect_state_near(const std::array<double, N>& expected,
-                       const std::array<double, N>& actual,
-                       double tol) {
+void expect_state_near(
+    const std::array<double, N>& expected, const std::array<double, N>& actual, double tol)
+{
     for (size_t i = 0; i < N; ++i) {
         EXPECT_NEAR(actual[i], expected[i], tol) << "state index " << i;
     }
 }
 
-void shift_bicycle_guess(MiniSolver<KinematicBicycleRegressionModel, 24>& solver, int horizon) {
+void shift_bicycle_guess(MiniSolver<KinematicBicycleRegressionModel, 24>& solver, int horizon)
+{
     for (int k = 0; k <= horizon; ++k) {
         int src_k = std::min(k + 1, horizon);
         for (int i = 0; i < KinematicBicycleRegressionModel::NX; ++i) {
@@ -54,7 +57,9 @@ void shift_bicycle_guess(MiniSolver<KinematicBicycleRegressionModel, 24>& solver
     }
 }
 
-void shift_double_integrator_guess(MiniSolver<DoubleIntegrator3DRegressionModel, 24>& solver, int horizon) {
+void shift_double_integrator_guess(
+    MiniSolver<DoubleIntegrator3DRegressionModel, 24>& solver, int horizon)
+{
     for (int k = 0; k <= horizon; ++k) {
         int src_k = std::min(k + 1, horizon);
         for (int i = 0; i < DoubleIntegrator3DRegressionModel::NX; ++i) {
@@ -69,10 +74,9 @@ void shift_double_integrator_guess(MiniSolver<DoubleIntegrator3DRegressionModel,
     }
 }
 
-void setup_straight_track(MiniSolver<KinematicBicycleRegressionModel, 24>& solver,
-                          int horizon,
-                          double dt,
-                          double stage_offset) {
+void setup_straight_track(MiniSolver<KinematicBicycleRegressionModel, 24>& solver, int horizon,
+    double dt, double stage_offset)
+{
     constexpr double kRefSpeed = 2.0;
     constexpr double kTrackHalfWidth = 1.0;
     for (int k = 0; k <= horizon; ++k) {
@@ -88,10 +92,9 @@ void setup_straight_track(MiniSolver<KinematicBicycleRegressionModel, 24>& solve
     }
 }
 
-void setup_curved_track(MiniSolver<KinematicBicycleRegressionModel, 24>& solver,
-                        int horizon,
-                        double dt,
-                        double stage_offset) {
+void setup_curved_track(MiniSolver<KinematicBicycleRegressionModel, 24>& solver, int horizon,
+    double dt, double stage_offset)
+{
     constexpr double kRefSpeed = 1.8;
     constexpr double kAmp = 0.28;
     constexpr double kFreq = 0.55;
@@ -116,11 +119,9 @@ void setup_curved_track(MiniSolver<KinematicBicycleRegressionModel, 24>& solver,
     }
 }
 
-void setup_3d_reference(MiniSolver<DoubleIntegrator3DRegressionModel, 24>& solver,
-                        int horizon,
-                        double dt,
-                        double phase = 0.0,
-                        double amplitude_scale = 1.0) {
+void setup_3d_reference(MiniSolver<DoubleIntegrator3DRegressionModel, 24>& solver, int horizon,
+    double dt, double phase = 0.0, double amplitude_scale = 1.0)
+{
     for (int k = 0; k <= horizon; ++k) {
         double t = phase + k * dt;
         double x_ref = 0.5 + 0.35 * t;
@@ -139,9 +140,10 @@ void setup_3d_reference(MiniSolver<DoubleIntegrator3DRegressionModel, 24>& solve
     }
 }
 
-}  // namespace
+} // namespace
 
-TEST(AssetRegressionTest, KinematicBicycleStraightTrackRecovery) {
+TEST(AssetRegressionTest, KinematicBicycleStraightTrackRecovery)
+{
     constexpr int N = 12;
     constexpr double dt = 0.1;
 
@@ -189,9 +191,12 @@ TEST(AssetRegressionTest, KinematicBicycleStraightTrackRecovery) {
     EXPECT_LT(std::abs(wrap_angle(psi_final)), 0.12);
     EXPECT_GT(v_final, 1.5);
     EXPECT_LE(cost, testdata::kKinematicBicycleStraightReference.objective * 1.02);
-    expect_state_near(testdata::kKinematicBicycleStraightReference.terminal_state, actual_terminal, 5e-3);
-    EXPECT_NEAR(actual_first_control[0], testdata::kKinematicBicycleStraightReference.first_control[0], 1e-3);
-    EXPECT_NEAR(actual_first_control[1], testdata::kKinematicBicycleStraightReference.first_control[1], 1e-3);
+    expect_state_near(
+        testdata::kKinematicBicycleStraightReference.terminal_state, actual_terminal, 5e-3);
+    EXPECT_NEAR(actual_first_control[0],
+        testdata::kKinematicBicycleStraightReference.first_control[0], 1e-3);
+    EXPECT_NEAR(actual_first_control[1],
+        testdata::kKinematicBicycleStraightReference.first_control[1], 1e-3);
 
     for (int k = 0; k <= N; ++k) {
         double x_ref = solver.get_parameter(k, "x_ref");
@@ -208,7 +213,8 @@ TEST(AssetRegressionTest, KinematicBicycleStraightTrackRecovery) {
     }
 }
 
-TEST(AssetRegressionTest, DoubleIntegrator3DReferenceTracking) {
+TEST(AssetRegressionTest, DoubleIntegrator3DReferenceTracking)
+{
     constexpr int N = 15;
     constexpr double dt = 0.1;
 
@@ -233,11 +239,11 @@ TEST(AssetRegressionTest, DoubleIntegrator3DReferenceTracking) {
     solver.set_initial_state("vz", 0.0);
     solver.rollout_dynamics();
 
-    double initial_error =
-        std::hypot(solver.get_state(0, solver.get_state_idx("x")) - solver.get_parameter(0, "x_ref"),
-                   solver.get_state(0, solver.get_state_idx("y")) - solver.get_parameter(0, "y_ref"));
+    double initial_error = std::hypot(
+        solver.get_state(0, solver.get_state_idx("x")) - solver.get_parameter(0, "x_ref"),
+        solver.get_state(0, solver.get_state_idx("y")) - solver.get_parameter(0, "y_ref"));
     initial_error = std::hypot(initial_error,
-                               solver.get_state(0, solver.get_state_idx("z")) - solver.get_parameter(0, "z_ref"));
+        solver.get_state(0, solver.get_state_idx("z")) - solver.get_parameter(0, "z_ref"));
 
     SolverStatus status = solver.solve();
     ASSERT_TRUE(is_success(status));
@@ -249,17 +255,18 @@ TEST(AssetRegressionTest, DoubleIntegrator3DReferenceTracking) {
     double vy_final = solver.get_state(N, solver.get_state_idx("vy"));
     double vz_final = solver.get_state(N, solver.get_state_idx("vz"));
 
-    double terminal_error =
-        std::hypot(x_final - solver.get_parameter(N, "x_ref"), y_final - solver.get_parameter(N, "y_ref"));
+    double terminal_error = std::hypot(
+        x_final - solver.get_parameter(N, "x_ref"), y_final - solver.get_parameter(N, "y_ref"));
     terminal_error = std::hypot(terminal_error, z_final - solver.get_parameter(N, "z_ref"));
 
-    double terminal_velocity_error =
-        std::hypot(vx_final - solver.get_parameter(N, "vx_ref"), vy_final - solver.get_parameter(N, "vy_ref"));
-    terminal_velocity_error =
-        std::hypot(terminal_velocity_error, vz_final - solver.get_parameter(N, "vz_ref"));
+    double terminal_velocity_error = std::hypot(
+        vx_final - solver.get_parameter(N, "vx_ref"), vy_final - solver.get_parameter(N, "vy_ref"));
+    terminal_velocity_error
+        = std::hypot(terminal_velocity_error, vz_final - solver.get_parameter(N, "vz_ref"));
     double cost = total_cost(solver, N);
 
-    std::array<double, 6> actual_terminal = {x_final, y_final, z_final, vx_final, vy_final, vz_final};
+    std::array<double, 6> actual_terminal
+        = { x_final, y_final, z_final, vx_final, vy_final, vz_final };
     std::array<double, 3> actual_first_control = {
         solver.get_control(0, solver.get_control_idx("ax")),
         solver.get_control(0, solver.get_control_idx("ay")),
@@ -269,10 +276,14 @@ TEST(AssetRegressionTest, DoubleIntegrator3DReferenceTracking) {
     EXPECT_LT(terminal_error, initial_error * 0.35);
     EXPECT_LT(terminal_velocity_error, 0.5);
     EXPECT_NEAR(cost, testdata::kDoubleIntegrator3DTrackingReference.objective, 5e-3);
-    expect_state_near(testdata::kDoubleIntegrator3DTrackingReference.terminal_state, actual_terminal, 5e-4);
-    EXPECT_NEAR(actual_first_control[0], testdata::kDoubleIntegrator3DTrackingReference.first_control[0], 5e-3);
-    EXPECT_NEAR(actual_first_control[1], testdata::kDoubleIntegrator3DTrackingReference.first_control[1], 5e-3);
-    EXPECT_NEAR(actual_first_control[2], testdata::kDoubleIntegrator3DTrackingReference.first_control[2], 5e-3);
+    expect_state_near(
+        testdata::kDoubleIntegrator3DTrackingReference.terminal_state, actual_terminal, 5e-4);
+    EXPECT_NEAR(actual_first_control[0],
+        testdata::kDoubleIntegrator3DTrackingReference.first_control[0], 5e-3);
+    EXPECT_NEAR(actual_first_control[1],
+        testdata::kDoubleIntegrator3DTrackingReference.first_control[1], 5e-3);
+    EXPECT_NEAR(actual_first_control[2],
+        testdata::kDoubleIntegrator3DTrackingReference.first_control[2], 5e-3);
 
     for (int k = 0; k < N; ++k) {
         EXPECT_LE(std::abs(solver.get_control(k, solver.get_control_idx("ax"))), 12.0 + 1e-4);
@@ -281,7 +292,8 @@ TEST(AssetRegressionTest, DoubleIntegrator3DReferenceTracking) {
     }
 }
 
-TEST(AssetRegressionTest, KinematicBicycleCurvedTrackClosedLoop) {
+TEST(AssetRegressionTest, KinematicBicycleCurvedTrackClosedLoop)
+{
     constexpr int N = 14;
     constexpr int MPC_STEPS = 6;
     constexpr double dt = 0.1;
@@ -346,13 +358,12 @@ TEST(AssetRegressionTest, KinematicBicycleCurvedTrackClosedLoop) {
     EXPECT_LT(std::abs(sim_y), 0.35);
     EXPECT_LT(std::abs(wrap_angle(sim_psi)), 0.30);
     EXPECT_GT(sim_v, 1.2);
-    expect_state_near(
-        testdata::kKinematicBicycleCurvedClosedLoopFinalState,
-        std::array<double, 5>{sim_x, sim_y, sim_psi, sim_v, sim_delta},
-        5e-3);
+    expect_state_near(testdata::kKinematicBicycleCurvedClosedLoopFinalState,
+        std::array<double, 5> { sim_x, sim_y, sim_psi, sim_v, sim_delta }, 5e-3);
 }
 
-TEST(AssetRegressionTest, DoubleIntegrator3DShiftedResolveMatchesReference) {
+TEST(AssetRegressionTest, DoubleIntegrator3DShiftedResolveMatchesReference)
+{
     constexpr int N = 16;
     constexpr double dt = 0.1;
 
@@ -408,8 +419,12 @@ TEST(AssetRegressionTest, DoubleIntegrator3DShiftedResolveMatchesReference) {
     double cost = total_cost(solver, N);
 
     EXPECT_NEAR(cost, testdata::kDoubleIntegrator3DShiftedReference.objective, 5e-3);
-    expect_state_near(testdata::kDoubleIntegrator3DShiftedReference.terminal_state, actual_terminal, 5e-4);
-    EXPECT_NEAR(actual_first_control[0], testdata::kDoubleIntegrator3DShiftedReference.first_control[0], 5e-3);
-    EXPECT_NEAR(actual_first_control[1], testdata::kDoubleIntegrator3DShiftedReference.first_control[1], 5e-3);
-    EXPECT_NEAR(actual_first_control[2], testdata::kDoubleIntegrator3DShiftedReference.first_control[2], 5e-3);
+    expect_state_near(
+        testdata::kDoubleIntegrator3DShiftedReference.terminal_state, actual_terminal, 5e-4);
+    EXPECT_NEAR(actual_first_control[0],
+        testdata::kDoubleIntegrator3DShiftedReference.first_control[0], 5e-3);
+    EXPECT_NEAR(actual_first_control[1],
+        testdata::kDoubleIntegrator3DShiftedReference.first_control[1], 5e-3);
+    EXPECT_NEAR(actual_first_control[2],
+        testdata::kDoubleIntegrator3DShiftedReference.first_control[2], 5e-3);
 }
