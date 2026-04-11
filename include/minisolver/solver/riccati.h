@@ -241,14 +241,17 @@ namespace internal {
         // --- Case 1: 1x1 Matrix ---
         if constexpr (ROWS == 1) { 
             double val = A(0,0);
-            if (std::abs(val) < epsilon) return false;
+            // This fast path is only valid for SPD matrices.
+            if (val <= epsilon) return false;
             A_inv(0,0) = 1.0 / val;
             return true;
         } 
         // --- Case 2: 2x2 Matrix ---
         else if constexpr (ROWS == 2) {
             double det = A(0,0)*A(1,1) - A(0,1)*A(1,0);
-            if (std::abs(det) < epsilon) return false;
+            // SPD check via leading principal minors (Sylvester criterion for symmetric matrices).
+            if (A(0,0) <= epsilon) return false;
+            if (det <= epsilon) return false;
             
             double inv_det = 1.0 / det;
             A_inv(0,0) =  A(1,1) * inv_det;
@@ -264,11 +267,16 @@ namespace internal {
             double A10 = A(1,0), A11 = A(1,1), A12 = A(1,2);
             double A20 = A(2,0), A21 = A(2,1), A22 = A(2,2);
 
+            // SPD check via leading principal minors (Sylvester criterion for symmetric matrices).
+            if (A00 <= epsilon) return false;
+            double det2 = A00*A11 - A01*A10;
+            if (det2 <= epsilon) return false;
+
             double det = A00*(A11*A22 - A12*A21) -
                          A01*(A10*A22 - A12*A20) +
                          A02*(A10*A21 - A11*A20);
                          
-            if (std::abs(det) < epsilon) return false;
+            if (det <= epsilon) return false;
             double inv_det = 1.0 / det;
 
             A_inv(0,0) = (A11*A22 - A12*A21) * inv_det;
@@ -382,7 +390,100 @@ namespace internal {
             }
 
             if (strategy == minisolver::InertiaStrategy::REGULARIZATION && Knot::NU <= 3) {
-                if (!fast_inverse(kp.R_bar, ws.Quu_inv, config.singular_threshold)) return false;
+                // Fast path: small dense Quu inversion. Requires SPD.
+                // Fallback: if Quu is not SPD (indefinite or singular), freeze a minimal set of control
+                // dimensions and solve only in a SPD principal subspace. This is a robustness heuristic
+                // that avoids stalling on extreme regularization for tiny control dimensions.
+                bool inv_ok = fast_inverse(kp.R_bar, ws.Quu_inv, config.singular_threshold);
+                if (!inv_ok) {
+                    MatOps::setZero(ws.Quu_inv);
+
+                    if constexpr (Knot::NU == 1) {
+                        // fast_inverse already checked SPD (A00 > eps).
+                        inv_ok = false;
+                    }
+                    else if constexpr (Knot::NU == 2) {
+                        const double a00 = kp.R_bar(0,0);
+                        const double a11 = kp.R_bar(1,1);
+
+                        // Choose the strongest SPD 1x1 principal block.
+                        int keep = -1;
+                        double best = config.singular_threshold;
+                        if (a00 > best) { best = a00; keep = 0; }
+                        if (a11 > best) { best = a11; keep = 1; }
+
+                        if (keep >= 0) {
+                            ws.Quu_inv(keep, keep) = 1.0 / ((keep == 0) ? a00 : a11);
+                            inv_ok = true;
+                        }
+                    }
+                    else if constexpr (Knot::NU == 3) {
+                        auto is_spd_2x2 = [&](int i, int j) -> bool {
+                            const double aii = kp.R_bar(i,i);
+                            const double ajj = kp.R_bar(j,j);
+                            const double aij = kp.R_bar(i,j);
+                            const double aji = kp.R_bar(j,i);
+                            const double det = aii * ajj - aij * aji;
+                            return (aii > config.singular_threshold) && (det > config.singular_threshold);
+                        };
+
+                        auto det_2x2 = [&](int i, int j) -> double {
+                            const double aii = kp.R_bar(i,i);
+                            const double ajj = kp.R_bar(j,j);
+                            const double aij = kp.R_bar(i,j);
+                            const double aji = kp.R_bar(j,i);
+                            return aii * ajj - aij * aji;
+                        };
+
+                        int keep_i = -1;
+                        int keep_j = -1;
+                        double best_det = config.singular_threshold;
+
+                        // Prefer keeping a 2D SPD principal block if possible (freeze only 1 dim).
+                        for (int i = 0; i < 3; ++i) {
+                            for (int j = i + 1; j < 3; ++j) {
+                                if (!is_spd_2x2(i, j)) continue;
+                                const double d = det_2x2(i, j);
+                                if (d > best_det) {
+                                    best_det = d;
+                                    keep_i = i;
+                                    keep_j = j;
+                                }
+                            }
+                        }
+
+                        if (keep_i >= 0) {
+                            const int i = keep_i;
+                            const int j = keep_j;
+                            const double aii = kp.R_bar(i,i);
+                            const double ajj = kp.R_bar(j,j);
+                            const double aij = kp.R_bar(i,j);
+                            const double aji = kp.R_bar(j,i);
+                            const double det = aii * ajj - aij * aji;
+                            const double inv_det = 1.0 / det;
+
+                            ws.Quu_inv(i,i) =  ajj * inv_det;
+                            ws.Quu_inv(i,j) = -aij * inv_det;
+                            ws.Quu_inv(j,i) = -aji * inv_det;
+                            ws.Quu_inv(j,j) =  aii * inv_det;
+                            inv_ok = true;
+                        } else {
+                            // Otherwise, fall back to the strongest SPD 1x1 principal block.
+                            int keep = -1;
+                            double best = config.singular_threshold;
+                            for (int i = 0; i < 3; ++i) {
+                                const double aii = kp.R_bar(i,i);
+                                if (aii > best) { best = aii; keep = i; }
+                            }
+                            if (keep >= 0) {
+                                ws.Quu_inv(keep, keep) = 1.0 / kp.R_bar(keep, keep);
+                                inv_ok = true;
+                            }
+                        }
+                    }
+
+                    if (!inv_ok) return false;
+                }
                 
                 kp.d.noalias() = -ws.Quu_inv * kp.r_bar; // Qu is in kp.r_bar
                 kp.K.noalias() = -ws.Quu_inv * kp.H_bar; // Qux is in kp.H_bar

@@ -171,6 +171,9 @@ add_subdirectory(examples/02_advanced_bicycle)
 add_executable(benchmark_suite tools/benchmark_suite/benchmark_suite.cpp)
 target_link_libraries(benchmark_suite minisolver_lib)
 
+add_executable(fast_inverse_bench tools/fast_inverse_bench/fast_inverse_bench.cpp)
+target_link_libraries(fast_inverse_bench minisolver_lib)
+
 add_executable(auto_tuner tools/auto_tuner.cpp)
 target_link_libraries(auto_tuner minisolver_lib)
 

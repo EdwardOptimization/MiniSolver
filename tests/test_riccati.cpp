@@ -4,6 +4,63 @@
 
 using namespace minisolver;
 
+TEST(RiccatiTest, FastInverseRejectsNonSPD) {
+    {
+        MSMat<double, 1, 1> A;
+        MSMat<double, 1, 1> A_inv;
+        A(0, 0) = -1.0;
+        EXPECT_FALSE(fast_inverse(A, A_inv, 1e-12));
+    }
+    {
+        // det != 0 but indefinite -> must be rejected for SPD-only path.
+        MSMat<double, 2, 2> A;
+        MSMat<double, 2, 2> A_inv;
+        A(0, 0) = 1.0; A(0, 1) = 2.0;
+        A(1, 0) = 2.0; A(1, 1) = 1.0;
+        EXPECT_FALSE(fast_inverse(A, A_inv, 1e-12));
+    }
+}
+
+TEST(RiccatiTest, NonSPDQuuFreezesControlDimsInsteadOfFailing) {
+    using Knot = KnotPoint<double, 4, 2, 5, 13>;
+    using TrajArray = std::array<Knot, 3>; // N=2
+
+    TrajArray traj;
+    const int N = 2;
+
+    for (int k = 0; k <= N; ++k) {
+        traj[k].set_zero();
+        traj[k].Q.setIdentity();
+        traj[k].R.setIdentity();
+        // Make Quu indefinite (non-SPD) in a controlled way.
+        traj[k].R(1, 1) = -1000.0;
+
+        traj[k].A.setIdentity();
+        traj[k].B.setZero();
+        traj[k].B(0, 0) = 1.0;
+        traj[k].B(1, 1) = 1.0;
+
+        traj[k].x.setZero();
+        traj[k].u.setZero();
+    }
+
+    // Inject a terminal gradient so the recursion produces a meaningful feedback gain.
+    traj[N].q(0) = 1.0;
+
+    SolverConfig config;
+    config.reg_min = 1e-9;
+    // Keep default singular_threshold (1e-4). The indefinite block should be rejected regardless.
+
+    RiccatiSolver<TrajArray, CarModel> solver;
+    bool success = solver.solve(traj, N, 0.01, 1e-9, InertiaStrategy::REGULARIZATION, config);
+    EXPECT_TRUE(success);
+
+    // The second control dimension must be frozen (no update) due to non-SPD Quu.
+    EXPECT_NEAR(traj[1].d(1), 0.0, 1e-12);
+    EXPECT_NEAR(traj[1].K(1, 0), 0.0, 1e-12);
+    EXPECT_NEAR(traj[1].K(1, 1), 0.0, 1e-12);
+}
+
 // Mock Trajectory with N=2
 // We test if Riccati solves a trivial Linear Quadratic problem correctly
 TEST(RiccatiTest, TrivialLQR) {
@@ -76,4 +133,3 @@ TEST(RiccatiTest, TrivialLQR) {
     // P propagates A=I. So P_xx grows.
     EXPECT_NEAR(traj[1].K(0,2), 0.0, 1e-5);
 }
-
