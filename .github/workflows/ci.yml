@@ -107,22 +107,24 @@ jobs:
     # 5. Configure CMake
     - name: Configure CMake
       run: |
-        # only enable Sanitizers in Debug mode (memory checking)
-        SANITIZER_FLAGS=""
+        # Only enable sanitizers in Debug builds.
+        # Note: do NOT embed quotes inside a variable with spaces; it will be split into multiple args.
         if [ "${{ matrix.build_type }}" == "Debug" ]; then
-          SANITIZER_FLAGS="-DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'"
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            ${{ matrix.cmake_args }} \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+        else
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            ${{ matrix.cmake_args }}
         fi
-
-        cmake -B build \
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-          ${{ matrix.cmake_args }} \
-          $SANITIZER_FLAGS
 
     # 6. Compile project
     - name: Build Project
       run: |
         # Use multi-core compilation to speed up
-        cmake --build build --config ${{ matrix.build_type }} -j$(nproc)
+        cmake --build build --config ${{ matrix.build_type }} --parallel $(nproc)
 
     # 7. Run unit tests
     - name: Run Unit Tests
