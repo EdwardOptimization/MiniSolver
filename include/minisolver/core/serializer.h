@@ -3,6 +3,7 @@
 #include "minisolver/solver/solver.h"
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -18,8 +19,9 @@ namespace minisolver {
 template <typename Model, int MAX_N> class SolverSerializer {
 public:
     using SolverType = MiniSolver<Model, MAX_N>;
-    static constexpr const char* kCurrentFormatMagic = "MINISOLV_2";
-    static constexpr const char* kLegacyFormatMagic = "MINISOLV_1";
+    static constexpr const char* kCurrentFormatMagic = "MINISOLV_3";
+    static constexpr const char* kLegacyFormatMagicV2 = "MINISOLV_2";
+    static constexpr const char* kLegacyFormatMagicV1 = "MINISOLV_1";
 
     // =============================================================
     // [New] Memory Snapshot Structure
@@ -44,11 +46,210 @@ public:
             std::array<double, Model::NU> u;
             std::array<double, Model::NP> p;
             std::array<double, Model::NC> s;
+            std::array<double, Model::NC> soft_s;
             std::array<double, Model::NC> lam;
         };
         std::vector<KnotData> trajectory;
     };
 
+private:
+    template <typename T> static void write_pod(std::ofstream& out, const T& v)
+    {
+        out.write(reinterpret_cast<const char*>(&v), sizeof(T));
+    }
+
+    template <typename T> static bool read_pod(std::ifstream& in, T& v)
+    {
+        in.read(reinterpret_cast<char*>(&v), sizeof(T));
+        return in.good();
+    }
+
+    template <typename Enum> static void write_enum(std::ofstream& out, Enum e)
+    {
+        std::int32_t v = static_cast<std::int32_t>(e);
+        write_pod(out, v);
+    }
+
+    template <typename Enum> static bool read_enum(std::ifstream& in, Enum& e)
+    {
+        std::int32_t v = 0;
+        if (!read_pod(in, v))
+            return false;
+        e = static_cast<Enum>(v);
+        return true;
+    }
+
+    static void write_bool(std::ofstream& out, bool v)
+    {
+        std::uint8_t b = v ? 1u : 0u;
+        write_pod(out, b);
+    }
+
+    static bool read_bool(std::ifstream& in, bool& v)
+    {
+        std::uint8_t b = 0;
+        if (!read_pod(in, b))
+            return false;
+        v = (b != 0);
+        return true;
+    }
+
+    static void write_config(std::ofstream& out, const SolverConfig& cfg)
+    {
+        write_enum(out, cfg.backend);
+        write_enum(out, cfg.initialization);
+
+        write_enum(out, cfg.integrator);
+        write_pod(out, cfg.default_dt);
+
+        write_enum(out, cfg.barrier_strategy);
+        write_pod(out, cfg.mu_init);
+        write_pod(out, cfg.mu_final);
+        write_pod(out, cfg.mu_linear_decrease_factor);
+        write_pod(out, cfg.barrier_tolerance_factor);
+        write_pod(out, cfg.mu_safety_margin);
+
+        write_enum(out, cfg.inertia_strategy);
+        write_pod(out, cfg.reg_init);
+        write_pod(out, cfg.reg_min);
+        write_pod(out, cfg.reg_max);
+        write_pod(out, cfg.reg_scale_up);
+        write_pod(out, cfg.reg_scale_down);
+        write_pod(out, cfg.regularization_step);
+        write_pod(out, cfg.singular_threshold);
+        write_pod(out, cfg.huge_penalty);
+        std::int32_t inertia_max_retries = static_cast<std::int32_t>(cfg.inertia_max_retries);
+        write_pod(out, inertia_max_retries);
+
+        write_pod(out, cfg.tol_grad);
+        write_pod(out, cfg.tol_con);
+        write_pod(out, cfg.tol_dual);
+        write_pod(out, cfg.tol_mu);
+        write_pod(out, cfg.tol_cost);
+        write_pod(out, cfg.feasible_tol_scale);
+
+        write_enum(out, cfg.line_search_type);
+        std::int32_t line_search_max_iters = static_cast<std::int32_t>(cfg.line_search_max_iters);
+        write_pod(out, line_search_max_iters);
+        write_pod(out, cfg.line_search_tau);
+        write_pod(out, cfg.line_search_backtrack_factor);
+        write_pod(out, cfg.filter_gamma_theta);
+        write_pod(out, cfg.filter_gamma_phi);
+
+        write_pod(out, cfg.min_barrier_slack);
+        write_pod(out, cfg.barrier_inf_cost);
+        write_pod(out, cfg.slack_reset_trigger);
+        write_pod(out, cfg.warm_start_slack_init);
+        write_pod(out, cfg.soc_trigger_alpha);
+        write_pod(out, cfg.merit_nu_init);
+        write_pod(out, cfg.eta_suff_descent);
+
+        std::int32_t max_restoration_iters = static_cast<std::int32_t>(cfg.max_restoration_iters);
+        write_pod(out, max_restoration_iters);
+        write_pod(out, cfg.restoration_mu);
+        write_pod(out, cfg.restoration_reg);
+        write_pod(out, cfg.restoration_alpha);
+
+        std::int32_t max_iters = static_cast<std::int32_t>(cfg.max_iters);
+        write_pod(out, max_iters);
+        write_enum(out, cfg.print_level);
+        write_bool(out, cfg.enable_profiling);
+
+        write_enum(out, cfg.hessian_approximation);
+        write_bool(out, cfg.enable_iterative_refinement);
+        std::int32_t max_refinement_steps = static_cast<std::int32_t>(cfg.max_refinement_steps);
+        write_pod(out, max_refinement_steps);
+        write_bool(out, cfg.enable_rti);
+        write_bool(out, cfg.enable_line_search_rollout);
+
+        write_bool(out, cfg.enable_defect_correction);
+        write_bool(out, cfg.enable_corrector);
+        write_bool(out, cfg.enable_aggressive_barrier);
+
+        write_bool(out, cfg.enable_slack_reset);
+        write_bool(out, cfg.enable_feasibility_restoration);
+        write_bool(out, cfg.enable_soc);
+    }
+
+    static bool read_config(std::ifstream& in, SolverConfig& cfg)
+    {
+        if (!read_enum(in, cfg.backend) || !read_enum(in, cfg.initialization)
+            || !read_enum(in, cfg.integrator) || !read_pod(in, cfg.default_dt)
+            || !read_enum(in, cfg.barrier_strategy) || !read_pod(in, cfg.mu_init)
+            || !read_pod(in, cfg.mu_final) || !read_pod(in, cfg.mu_linear_decrease_factor)
+            || !read_pod(in, cfg.barrier_tolerance_factor) || !read_pod(in, cfg.mu_safety_margin)
+            || !read_enum(in, cfg.inertia_strategy) || !read_pod(in, cfg.reg_init)
+            || !read_pod(in, cfg.reg_min) || !read_pod(in, cfg.reg_max)
+            || !read_pod(in, cfg.reg_scale_up) || !read_pod(in, cfg.reg_scale_down)
+            || !read_pod(in, cfg.regularization_step) || !read_pod(in, cfg.singular_threshold)
+            || !read_pod(in, cfg.huge_penalty)) {
+            return false;
+        }
+
+        std::int32_t inertia_max_retries = 0;
+        if (!read_pod(in, inertia_max_retries))
+            return false;
+        cfg.inertia_max_retries = static_cast<int>(inertia_max_retries);
+
+        if (!read_pod(in, cfg.tol_grad) || !read_pod(in, cfg.tol_con) || !read_pod(in, cfg.tol_dual)
+            || !read_pod(in, cfg.tol_mu) || !read_pod(in, cfg.tol_cost)
+            || !read_pod(in, cfg.feasible_tol_scale) || !read_enum(in, cfg.line_search_type)) {
+            return false;
+        }
+
+        std::int32_t line_search_max_iters = 0;
+        if (!read_pod(in, line_search_max_iters))
+            return false;
+        cfg.line_search_max_iters = static_cast<int>(line_search_max_iters);
+
+        if (!read_pod(in, cfg.line_search_tau) || !read_pod(in, cfg.line_search_backtrack_factor)
+            || !read_pod(in, cfg.filter_gamma_theta) || !read_pod(in, cfg.filter_gamma_phi)
+            || !read_pod(in, cfg.min_barrier_slack) || !read_pod(in, cfg.barrier_inf_cost)
+            || !read_pod(in, cfg.slack_reset_trigger) || !read_pod(in, cfg.warm_start_slack_init)
+            || !read_pod(in, cfg.soc_trigger_alpha) || !read_pod(in, cfg.merit_nu_init)
+            || !read_pod(in, cfg.eta_suff_descent)) {
+            return false;
+        }
+
+        std::int32_t max_restoration_iters = 0;
+        if (!read_pod(in, max_restoration_iters))
+            return false;
+        cfg.max_restoration_iters = static_cast<int>(max_restoration_iters);
+
+        if (!read_pod(in, cfg.restoration_mu) || !read_pod(in, cfg.restoration_reg)
+            || !read_pod(in, cfg.restoration_alpha)) {
+            return false;
+        }
+
+        std::int32_t max_iters = 0;
+        if (!read_pod(in, max_iters))
+            return false;
+        cfg.max_iters = static_cast<int>(max_iters);
+
+        if (!read_enum(in, cfg.print_level) || !read_bool(in, cfg.enable_profiling)
+            || !read_enum(in, cfg.hessian_approximation)
+            || !read_bool(in, cfg.enable_iterative_refinement)) {
+            return false;
+        }
+
+        std::int32_t max_refinement_steps = 0;
+        if (!read_pod(in, max_refinement_steps))
+            return false;
+        cfg.max_refinement_steps = static_cast<int>(max_refinement_steps);
+
+        if (!read_bool(in, cfg.enable_rti) || !read_bool(in, cfg.enable_line_search_rollout)
+            || !read_bool(in, cfg.enable_defect_correction) || !read_bool(in, cfg.enable_corrector)
+            || !read_bool(in, cfg.enable_aggressive_barrier)
+            || !read_bool(in, cfg.enable_slack_reset)
+            || !read_bool(in, cfg.enable_feasibility_restoration)
+            || !read_bool(in, cfg.enable_soc)) {
+            return false;
+        }
+
+        return true;
+    }
+
+public:
     /**
      * @brief [New] Core Interface 1: Capture current solver state into memory
      * This is a very fast operation (memory copy), safe to call in control loops.
@@ -93,6 +294,8 @@ public:
                 data.p[i] = kp.p(i);
             for (int i = 0; i < Model::NC; ++i)
                 data.s[i] = kp.s(i);
+            for (int i = 0; i < Model::NC; ++i)
+                data.soft_s[i] = kp.soft_s(i);
             for (int i = 0; i < Model::NC; ++i)
                 data.lam[i] = kp.lam(i);
         }
@@ -142,7 +345,7 @@ public:
         out.write((char*)&NC, sizeof(NC));
 
         // 3. Configuration
-        out.write((char*)&state.config, sizeof(SolverConfig));
+        write_config(out, state.config);
 
         // 4. Status & Stats
         int status_i = static_cast<int>(state.status);
@@ -163,6 +366,7 @@ public:
             out.write((char*)knot.u.data(), sizeof(double) * NU);
             out.write((char*)knot.p.data(), sizeof(double) * NP);
             out.write((char*)knot.s.data(), sizeof(double) * NC);
+            out.write((char*)knot.soft_s.data(), sizeof(double) * NC);
             out.write((char*)knot.lam.data(), sizeof(double) * NC);
         }
 
@@ -208,10 +412,9 @@ public:
         }
         std::string version(magic);
 
-        if (version == kLegacyFormatMagic) {
-            std::cerr
-                << "[Serializer] Unsupported legacy format MINISOLV_1. "
-                << "SolverConfig layout changed; regenerate the snapshot with a newer build.\n";
+        if (version == kLegacyFormatMagicV2 || version == kLegacyFormatMagicV1) {
+            std::cerr << "[Serializer] Unsupported snapshot format " << version
+                      << ". Regenerate the snapshot with the current build.\n";
             return false;
         }
 
@@ -246,7 +449,7 @@ public:
         }
 
         SolverConfig cfg;
-        if (!read_exact((char*)&cfg, sizeof(SolverConfig))) {
+        if (!read_config(in, cfg)) {
             std::cerr << "[Serializer] Failed to read solver configuration.\n";
             return false;
         }
@@ -282,6 +485,7 @@ public:
                 || !read_exact(reinterpret_cast<char*>(knot.u.data()), sizeof(double) * NU)
                 || !read_exact(reinterpret_cast<char*>(knot.p.data()), sizeof(double) * NP)
                 || !read_exact(reinterpret_cast<char*>(knot.s.data()), sizeof(double) * NC)
+                || !read_exact(reinterpret_cast<char*>(knot.soft_s.data()), sizeof(double) * NC)
                 || !read_exact(reinterpret_cast<char*>(knot.lam.data()), sizeof(double) * NC)) {
                 std::cerr << "[Serializer] Failed to read trajectory data.\n";
                 return false;
@@ -307,11 +511,18 @@ public:
         auto& traj = solver.trajectory.active();
         for (int k = 0; k <= N; ++k) {
             const auto& src = knots[static_cast<size_t>(k)];
-            std::copy_n(src.x.data(), NX, traj[k].x.data());
-            std::copy_n(src.u.data(), NU, traj[k].u.data());
-            std::copy_n(src.p.data(), NP, traj[k].p.data());
-            std::copy_n(src.s.data(), NC, traj[k].s.data());
-            std::copy_n(src.lam.data(), NC, traj[k].lam.data());
+            for (int i = 0; i < NX; ++i)
+                traj[k].x(i) = src.x[static_cast<size_t>(i)];
+            for (int i = 0; i < NU; ++i)
+                traj[k].u(i) = src.u[static_cast<size_t>(i)];
+            for (int i = 0; i < NP; ++i)
+                traj[k].p(i) = src.p[static_cast<size_t>(i)];
+            for (int i = 0; i < NC; ++i)
+                traj[k].s(i) = src.s[static_cast<size_t>(i)];
+            for (int i = 0; i < NC; ++i)
+                traj[k].soft_s(i) = src.soft_s[static_cast<size_t>(i)];
+            for (int i = 0; i < NC; ++i)
+                traj[k].lam(i) = src.lam[static_cast<size_t>(i)];
         }
 
         // Keep candidate buffer consistent with the loaded active buffer.

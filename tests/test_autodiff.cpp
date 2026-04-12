@@ -15,10 +15,16 @@ TEST(AutoDiffTest, CarModelDynamics)
     // x_dot = [v cos(theta), v sin(theta), v/L tan(steer), acc]
 
     MSVec<double, 4> x;
-    x << 0.0, 0.0, 0.0, 10.0;
+    x.setZero();
+    x(0) = 0.0;
+    x(1) = 0.0;
+    x(2) = 0.0;
+    x(3) = 10.0;
 
     MSVec<double, 2> u;
-    u << 2.0, 0.1; // steer approx 0.1 rad
+    u.setZero();
+    u(0) = 2.0;
+    u(1) = 0.1; // steer approx 0.1 rad
 
     MSVec<double, 13> p;
     p.setZero();
@@ -38,10 +44,16 @@ TEST(AutoDiffTest, CarModelDynamics)
 TEST(AutoDiffTest, CarModelIntegratorEuler)
 {
     MSVec<double, 4> x;
-    x << 0.0, 0.0, 0.0, 10.0;
+    x.setZero();
+    x(0) = 0.0;
+    x(1) = 0.0;
+    x(2) = 0.0;
+    x(3) = 10.0;
 
     MSVec<double, 2> u;
-    u << 0.0, 0.0; // Straight line
+    u.setZero();
+    u(0) = 0.0;
+    u(1) = 0.0; // Straight line
 
     MSVec<double, 13> p;
     p.setZero();

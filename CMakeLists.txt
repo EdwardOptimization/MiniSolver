@@ -4,6 +4,24 @@ project(MiniSolver LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# =============================================================
+# Linear Algebra Backend Selection
+# =============================================================
+# These options control preprocessor macros used in include/minisolver/core/matrix_defs.h.
+# Default is Eigen. If both are enabled, CustomMatrix takes precedence (matches matrix_defs.h).
+option(USE_EIGEN "Use Eigen backend for linear algebra" ON)
+option(USE_CUSTOM_MATRIX "Use custom MiniMatrix backend for linear algebra" OFF)
+
+if(USE_CUSTOM_MATRIX AND USE_EIGEN)
+    message(STATUS "USE_CUSTOM_MATRIX=ON overrides USE_EIGEN=ON")
+    set(USE_EIGEN OFF CACHE BOOL "Use Eigen backend for linear algebra" FORCE)
+endif()
+
+if(NOT USE_EIGEN AND NOT USE_CUSTOM_MATRIX)
+    message(STATUS "Neither USE_EIGEN nor USE_CUSTOM_MATRIX selected; defaulting to USE_EIGEN")
+    set(USE_EIGEN ON CACHE BOOL "Use Eigen backend for linear algebra" FORCE)
+endif()
+
 # Optimization options
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -157,7 +175,13 @@ endif()
 # Define Interface Library for MiniSolver
 add_library(minisolver_lib INTERFACE)
 target_include_directories(minisolver_lib INTERFACE include)
-target_link_libraries(minisolver_lib INTERFACE Eigen3::Eigen)
+
+if(USE_CUSTOM_MATRIX)
+    target_compile_definitions(minisolver_lib INTERFACE USE_CUSTOM_MATRIX)
+else()
+    target_compile_definitions(minisolver_lib INTERFACE USE_EIGEN)
+    target_link_libraries(minisolver_lib INTERFACE Eigen3::Eigen)
+endif()
 
 if(TARGET gpu_backend)
     target_link_libraries(minisolver_lib INTERFACE gpu_backend)

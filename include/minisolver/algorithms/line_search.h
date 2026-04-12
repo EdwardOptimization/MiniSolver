@@ -378,6 +378,13 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     */
 
 public:
+    FilterLineSearch()
+    {
+        // Real-time friendly: allocate once during construction (typically in MiniSolver ctor),
+        // and avoid heap allocations inside solve()/search().
+        filter.reserve(256);
+    }
+
     void reset() override { filter.clear(); }
 
     double search(TrajectoryType& trajectory, LinearSolver<TrajArray>& linear_solver,
@@ -465,8 +472,8 @@ public:
                 if (config.print_level >= PrintLevel::DEBUG)
                     MLOG_DEBUG("Step rejected. Attempting SOC.");
 
-                auto soc_data = std::make_unique<TrajArray>();
-                *soc_data = active; // [FIX] Copy system matrices from active trajectory
+                // Avoid heap allocation in the solve loop.
+                TrajArray soc_data = active; // Copy system matrices from active trajectory
 
                 // [NEW] Use solve_soc
                 // Note: solve_soc takes 'soc_rhs_traj'. We want to pass the current trial point
@@ -474,7 +481,7 @@ public:
                 // linear_solver needs to solve J * dx_soc = -g(candidate)
 
                 bool soc_success = linear_solver.solve_soc(
-                    *soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
+                    soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
 
                 if (soc_success) {
                     for (int k = 0; k <= N; ++k) {
@@ -487,12 +494,12 @@ public:
 
                         // Apply SOC correction to candidate
                         if (!config.enable_line_search_rollout) {
-                            candidate[k].x += (*soc_data)[k].dx;
+                            candidate[k].x += soc_data[k].dx;
                         }
-                        candidate[k].u += (*soc_data)[k].du;
-                        candidate[k].s += (*soc_data)[k].ds;
-                        candidate[k].lam += (*soc_data)[k].dlam;
-                        candidate[k].soft_s += (*soc_data)[k].dsoft_s;
+                        candidate[k].u += soc_data[k].du;
+                        candidate[k].s += soc_data[k].ds;
+                        candidate[k].lam += soc_data[k].dlam;
+                        candidate[k].soft_s += soc_data[k].dsoft_s;
 
                         // Re-evaluate dynamics/constraints for SOC candidate
                         double current_dt = (k < N) ? dt_traj[k] : 0.0;
