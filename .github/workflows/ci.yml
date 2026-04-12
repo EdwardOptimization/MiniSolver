@@ -124,7 +124,8 @@ jobs:
     - name: Build Project
       run: |
         # Use multi-core compilation to speed up
-        cmake --build build --config ${{ matrix.build_type }} --parallel $(nproc)
+        # Use native build tool parallelism for maximum CMake compatibility.
+        cmake --build build --config ${{ matrix.build_type }} -- -j"$(nproc)"
 
     # 7. Run unit tests
     - name: Run Unit Tests
