@@ -1,19 +1,13 @@
 name: MiniSolver CI Pipeline
 
-# Trigger mechanism: When code is pushed to the main branch, or a Pull Request is submitted
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   pull_request:
-    branches: [ "main", "master" ]
-  # Allow manual trigger on GitHub Actions page
+    branches: ["main", "master"]
   workflow_dispatch:
 
 jobs:
-  # =========================================================
-  # Task 1: Code Style Check
-  # Goal: Ensure all submitted code conforms to .clang-format specification
-  # =========================================================
   style-check:
     name: Check Code Style
     runs-on: ubuntu-latest
@@ -30,145 +24,82 @@ jobs:
       - name: Verify C++ Formatting
         run: |
           echo ">> Verifying C++ code style against .clang-format..."
-          # 1. Find all .h, .cpp, .cu files
-          # 2. grep -v exclude 'generated' directory (automatically generated code should not be forced to format)
-          # 3. clang-format parameters:
-          #    -style=file: use .clang-format in project root
-          #    --dry-run:    only check, do not modify
-          #    --Werror:     report format errors directly (Exit Code 1)
-          
           find include src examples tests tools -type f \( -name "*.h" -o -name "*.cpp" -o -name "*.cu" \) \
             | grep -v "generated" \
             | xargs clang-format-16 -style=file --dry-run --Werror
-            
-          echo ">> Style check passed! ✨"
+          echo ">> Style check passed!"
 
-  # =========================================================
-  # Task 2: Build and Test
-  # =========================================================
   build-and-test:
     name: ${{ matrix.os }} - ${{ matrix.backend }} - ${{ matrix.build_type }}
-    # Only run build if style check passes <<<
-    needs: style-check 
+    needs: style-check
     runs-on: ${{ matrix.os }}
-    
-    # Matrix strategy: Automatically combine different operating systems, backends, and build types for parallel testing
     strategy:
-      fail-fast: false # If one task fails, do not immediately cancel other tasks
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest] # Can expand to windows-latest, macos-latest
+        os: [ubuntu-latest]
         build_type: [Release, Debug]
-        backend: [Eigen, CustomMatrix] 
+        backend: [Eigen, CustomMatrix]
         include:
-          # Set CMake parameters for different backends
           - backend: Eigen
-            cmake_args: "-DUSE_EIGEN=ON"
+            cmake_args: -DUSE_EIGEN=ON
           - backend: CustomMatrix
-            cmake_args: "-DUSE_CUSTOM_MATRIX=ON"
+            cmake_args: -DUSE_CUSTOM_MATRIX=ON
 
     steps:
-    # 1. Pull code
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    # 2. Prepare Python environment (for code generation)
-    - name: Set up Python 3.x
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-        cache: 'pip' # Cache pip dependencies to speed up build
+      - name: Set up Python 3.x
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
 
-    # 3. Install dependencies (SymPy & System Tools)
-    - name: Install Dependencies
-      run: |
-        # Update apt and install build tools
-        sudo apt-get update
-        sudo apt-get install -y cmake g++ make unzip
-        # Install dependencies from requirements.txt if it exists
-        if [ -f "requirements.txt" ]; then
-          pip install -r requirements.txt
-        else
-          pip install sympy
-        fi
-        
-    # 4. Execute code generation (simulate build.sh logic)
-    - name: Generate Model Code
-      run: |
-        echo ">> Generating C++ headers from Python models..."
-        # Set PYTHONPATH to find minisolver module
-        export PYTHONPATH=$PYTHONPATH:$(pwd)/python
-        
-        # Run vehicle model generation script
-        python3 examples/01_car_tutorial/generate_model.py
-        
-        # Run advanced bicycle model generation script
-        python3 examples/02_advanced_bicycle/generate_advanced_model.py
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ make unzip
+          python3 -m pip install --upgrade pip
+          if [ -f "requirements.txt" ]; then
+            python3 -m pip install -r requirements.txt
+          else
+            python3 -m pip install sympy
+          fi
 
-    # 5. Configure CMake
-    - name: Configure CMake
-      run: |
-        # Only enable sanitizers in Debug builds.
-        # Note: do NOT embed quotes inside a variable with spaces; it will be split into multiple args.
-        if [ "${{ matrix.build_type }}" == "Debug" ]; then
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            ${{ matrix.cmake_args }} \
-            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
-        else
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            ${{ matrix.cmake_args }}
-        fi
+      - name: Generate Model Code
+        run: |
+          python3 examples/01_car_tutorial/generate_model.py
+          python3 examples/02_advanced_bicycle/generate_advanced_model.py
 
-    # 6. Compile project
-    - name: Build Project
-      run: |
-        # Use multi-core compilation to speed up
-        # Use native build tool parallelism for maximum CMake compatibility.
-        set -o pipefail
-        # The runner executes bash with -e; disable it temporarily so we can capture the build exit code.
-        set +e
-        cmake --build build --config ${{ matrix.build_type }} -- -j"$(nproc)" 2>&1 | tee build.log
-        status=${PIPESTATUS[0]}
-        set -e
-	        if [ "$status" -ne 0 ]; then
-	          echo "Build failed (exit=$status). Extracting error lines for GitHub annotations..."
-	          msg="$(grep -n \"error:\" build.log | head -n 20 || true)"
-	          if [ -z \"$msg\" ]; then
-	            msg=\"$(tail -n 80 build.log)\"
-	          fi
-	          # Escape for workflow commands.
-	          msg=\"$(printf '%s' \"$msg\" | sed -e 's/%/%25/g' -e 's/\\r/%0D/g' -e 's/\\n/%0A/g')\"
-	          echo \"::error::$msg\"
-	          exit \"$status\"
-	        fi
+      - name: Configure CMake
+        run: |
+          if [ "${{ matrix.build_type }}" = "Debug" ]; then
+            cmake -B build \
+              -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+              ${{ matrix.cmake_args }} \
+              -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          else
+            cmake -B build \
+              -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+              ${{ matrix.cmake_args }}
+          fi
 
-	    - name: Upload Build Log
-	      if: always()
-	      uses: actions/upload-artifact@v4
-	      with:
-	        name: build-log-${{ matrix.backend }}-${{ matrix.build_type }}
-	        path: build.log
-	        if-no-files-found: ignore
-	        retention-days: 7
-	
-	    # 7. Run unit tests
-	    - name: Run Unit Tests
-	      working-directory: build
-      run: |
-        echo ">> Running GTest Suite..."
-        # --output-on-failure: Output detailed logs when tests fail for debugging
-        ctest --output-on-failure -C ${{ matrix.build_type }}
+      - name: Build Project
+        run: |
+          cmake --build build --config ${{ matrix.build_type }} -- -j"$(nproc)"
 
-    # 8. (Optional) Run Benchmark to ensure performance does not drop significantly
-    # Only run in Release mode to avoid misleading performance data in Debug mode
-    - name: Run Benchmark Check
-      if: matrix.build_type == 'Release'
-      working-directory: build
-      run: |
-        if [ -f "./tools/benchmark_suite/benchmark_suite" ]; then
-          echo ">> Running Benchmark Suite..."
-          ./tools/benchmark_suite/benchmark_suite
-        else
-          echo "Benchmark executable not found, skipping."
-        fi
+      - name: Run Unit Tests
+        working-directory: build
+        run: |
+          ctest --output-on-failure -C ${{ matrix.build_type }}
+
+      - name: Run Benchmark Check
+        if: matrix.build_type == 'Release'
+        working-directory: build
+        run: |
+          if [ -f "./benchmark_suite" ]; then
+            ./benchmark_suite
+          else
+            echo "benchmark_suite not found, skipping."
+          fi
+
