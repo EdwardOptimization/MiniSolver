@@ -73,20 +73,33 @@ jobs:
 
       - name: Configure CMake
         run: |
+          PYTHON_EXE="$(python3 -c 'import sys; print(sys.executable)')"
+          echo ">> Using Python3_EXECUTABLE=${PYTHON_EXE}"
           if [ "${{ matrix.build_type }}" = "Debug" ]; then
             cmake -B build \
               -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
               ${{ matrix.cmake_args }} \
+              -DPython3_EXECUTABLE="${PYTHON_EXE}" \
               -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           else
             cmake -B build \
               -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-              ${{ matrix.cmake_args }}
+              ${{ matrix.cmake_args }} \
+              -DPython3_EXECUTABLE="${PYTHON_EXE}"
           fi
 
       - name: Build Project
         run: |
-          cmake --build build --config ${{ matrix.build_type }} -- -j"$(nproc)"
+          set +e
+          cmake --build build --config ${{ matrix.build_type }} -- -j"$(nproc)" 2>&1 | tee build.log
+          BUILD_EXIT_CODE="${PIPESTATUS[0]}"
+          if [ "${BUILD_EXIT_CODE}" -ne 0 ]; then
+            echo "::error title=Build Project failed::exit_code=${BUILD_EXIT_CODE}"
+            echo "::group::Build errors (first 200 matches)"
+            grep -nE "error:|fatal error:|undefined reference|ModuleNotFoundError|ImportError|No module named|Killed" build.log | head -n 200 || true
+            echo "::endgroup::"
+          fi
+          exit "${BUILD_EXIT_CODE}"
 
       - name: Run Unit Tests
         working-directory: build
@@ -102,4 +115,3 @@ jobs:
           else
             echo "benchmark_suite not found, skipping."
           fi
-
