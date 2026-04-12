@@ -126,8 +126,11 @@ jobs:
         # Use multi-core compilation to speed up
         # Use native build tool parallelism for maximum CMake compatibility.
         set -o pipefail
+        # The runner executes bash with -e; disable it temporarily so we can capture the build exit code.
+        set +e
         cmake --build build --config ${{ matrix.build_type }} -- -j"$(nproc)" 2>&1 | tee build.log
         status=${PIPESTATUS[0]}
+        set -e
         if [ "$status" -ne 0 ]; then
           echo "Build failed (exit=$status). Extracting error lines for GitHub annotations..."
           msg="$(grep -n \"error:\" build.log | head -n 20 || true)"
