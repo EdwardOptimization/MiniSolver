@@ -131,21 +131,30 @@ jobs:
         cmake --build build --config ${{ matrix.build_type }} -- -j"$(nproc)" 2>&1 | tee build.log
         status=${PIPESTATUS[0]}
         set -e
-        if [ "$status" -ne 0 ]; then
-          echo "Build failed (exit=$status). Extracting error lines for GitHub annotations..."
-          msg="$(grep -n \"error:\" build.log | head -n 20 || true)"
-          if [ -z \"$msg\" ]; then
-            msg=\"$(tail -n 80 build.log)\"
-          fi
-          # Escape for workflow commands.
-          msg=\"$(printf '%s' \"$msg\" | sed -e 's/%/%25/g' -e 's/\\r/%0D/g' -e 's/\\n/%0A/g')\"
-          echo \"::error::$msg\"
-          exit \"$status\"
-        fi
+	        if [ "$status" -ne 0 ]; then
+	          echo "Build failed (exit=$status). Extracting error lines for GitHub annotations..."
+	          msg="$(grep -n \"error:\" build.log | head -n 20 || true)"
+	          if [ -z \"$msg\" ]; then
+	            msg=\"$(tail -n 80 build.log)\"
+	          fi
+	          # Escape for workflow commands.
+	          msg=\"$(printf '%s' \"$msg\" | sed -e 's/%/%25/g' -e 's/\\r/%0D/g' -e 's/\\n/%0A/g')\"
+	          echo \"::error::$msg\"
+	          exit \"$status\"
+	        fi
 
-    # 7. Run unit tests
-    - name: Run Unit Tests
-      working-directory: build
+	    - name: Upload Build Log
+	      if: always()
+	      uses: actions/upload-artifact@v4
+	      with:
+	        name: build-log-${{ matrix.backend }}-${{ matrix.build_type }}
+	        path: build.log
+	        if-no-files-found: ignore
+	        retention-days: 7
+	
+	    # 7. Run unit tests
+	    - name: Run Unit Tests
+	      working-directory: build
       run: |
         echo ">> Running GTest Suite..."
         # --output-on-failure: Output detailed logs when tests fail for debugging
