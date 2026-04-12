@@ -26,44 +26,7 @@ public:
         // GPU Dispatch
         if (config.backend == Backend::GPU_MPX || config.backend == Backend::GPU_PCR) {
 #ifdef USE_CUDA
-            // 1. Serialize to GPU Format
-            // We need to construct linear operators from the trajectory
-            std::vector<GpuLinearOp<Model::NX>> ops(N);
-            for (int k = 0; k < N; ++k) {
-                // ... (Implementation of packing A, B, Q, R into GpuLinearOp is complex here) ...
-                // For now, since we lack the full packing logic in this header,
-                // and GpuLinearOp definition is in gpu_types.h, we need to implement the packing.
-                // But wait, GpuLinearOp is for the *Associative Scan* form of Riccati.
-                // It requires converting the KKT system into fundamental matrix operators.
-                // This is a non-trivial transformation (see "Parallel Constrained LRQR" papers).
-
-                // Given the user asked to "Connect GPU Backend" and "Fix Dead Code",
-                // I should assume the `gpu_dispatch_solve` expects the operators to be ready?
-                // But `traj` contains raw matrices.
-                // The packing logic seems missing from the codebase entirely?
-                // Or maybe it's in `gpu_types.h`?
-            }
-            // Since the packing logic is missing, I cannot fully implement this without writing the
-            // serializer. However, I can put the structure in place and throw an error or warning
-            // if not implemented, or write a basic serializer if GpuLinearOp is simple.
-
-            // Let's look at GpuLinearOp in `include/core/gpu_types.h` if I can.
-            // But I'll stick to fixing the *connection* logic.
-            // I will call `gpu_dispatch_solve` but comment out the data packing with a TODO,
-            // OR if I can find the packer.
-
-            // Actually, if the code is dead, maybe I should just fallback to CPU with a warning for
-            // now, but the user specifically asked to "Connect" it. I'll implement the dispatch
-            // logic assuming `GpuLinearOp` exists and can be constructed.
-
-            // Realistically, for this task, I should enable the path.
-            // I'll fallback to CPU if USE_CUDA is not defined.
-
-            // To properly fix this, I would need to write the `linearize_and_pack` function.
-            // I will add a placeholder for that and call the dispatch.
-
-            MLOG_ERROR("GPU Backend implementation incomplete (Data Packing missing). Falling back "
-                       "to CPU.");
+            MLOG_ERROR("GPU backend is not implemented yet. Falling back to CPU.");
             return cpu_serial_solve<TrajArray, Model>(
                 traj, N, mu, reg, strategy, config, workspace, affine_traj);
 #else

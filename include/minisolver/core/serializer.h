@@ -293,7 +293,6 @@ public:
         // Commit to solver only after the full read succeeds.
         solver.resize_horizon(N);
         solver.config = cfg;
-        solver.backend = cfg.backend;
         solver.current_iter = iter;
         solver.mu = mu_val;
         solver.reg = reg_val;

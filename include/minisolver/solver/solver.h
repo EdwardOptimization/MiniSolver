@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <string>
@@ -89,7 +90,6 @@ public:
     MiniSolver(int initial_N, Backend b, SolverConfig conf = SolverConfig())
         : trajectory(std::max(0, std::min(initial_N, MAX_N)))
         , N(std::max(0, std::min(initial_N, MAX_N)))
-        , backend(b)
         , config(conf)
         , mu(conf.mu_init)
         , reg(conf.reg_init)
@@ -98,6 +98,9 @@ public:
         if (initial_N < 0 || initial_N > MAX_N) {
             std::cerr << "Error: N (" << initial_N << ") outside [0, " << MAX_N << "]. Clamping.\n";
         }
+
+        // Constructor has an explicit backend argument; keep it as the source of truth.
+        config.backend = b;
 
         dt_traj.fill(conf.default_dt);
         rebuild_solver_components();
@@ -185,7 +188,6 @@ public:
     {
         bool line_search_changed = conf.line_search_type != config.line_search_type;
         config = conf;
-        backend = conf.backend;
         if (line_search_changed) {
             components_dirty = true;
         }
@@ -1444,8 +1446,6 @@ private:
         // 以便做出最公正的最终评判。
         auto& traj = trajectory.active();
         double max_kkt_error = 0.0;
-        double max_dual_inf = 0.0;
-        auto& riccati_workspace = linear_solver->workspace;
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
@@ -1460,30 +1460,61 @@ private:
                 Model::compute_constraints(traj[k]);
             }
 
-            // 2. Recompute Barrier Gradients (check riccati.h)
-            compute_barrier_derivatives<Knot, Model>(
-                traj[k], mu, config, riccati_workspace, nullptr, nullptr);
-            // 3. Check NaNs
+            // 2. Check NaNs
             for (int i = 0; i < NC; ++i) {
                 if (std::isnan(traj[k].g_val(i)) || std::isnan(traj[k].s(i)))
                     return SolverStatus::NUMERICAL_ERROR;
             }
-            // 4. Collect Metrics
-            double r_norm = MatOps::norm_inf(traj[k].r_bar);
-            if (r_norm > max_dual_inf)
-                max_dual_inf = r_norm;
+
+            // 3. KKT complementarity (including L1-soft secondary pair).
             for (int i = 0; i < NC; ++i) {
                 double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu);
                 if (comp > max_kkt_error)
                     max_kkt_error = comp;
+
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+
+                if (type == 1 && w > 1e-6) {
+                    const double soft_s = traj[k].soft_s(i);
+                    const double soft_dual = (w - traj[k].lam(i));
+                    double comp_soft = std::abs(soft_s * soft_dual - mu);
+                    if (comp_soft > max_kkt_error)
+                        max_kkt_error = comp_soft;
+                }
             }
         }
+
+        // Primal feasibility uses the recomputed constraints/dynamics defects.
         double max_viol = compute_max_violation(traj);
+
+        // Dual infeasibility metric: require a fresh Riccati backward pass so Qu includes
+        // the dynamic multipliers (B^T * pi_{k+1}). Using raw cost+barrier gradients alone
+        // underestimates the true stationarity residual.
+        double max_dual_inf = std::numeric_limits<double>::infinity();
+        bool linear_ok = false;
+        if (linear_solver) {
+            linear_ok = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
+        }
+        if (linear_ok) {
+            max_dual_inf = 0.0;
+            for (int k = 0; k <= N; ++k) {
+                const double r_norm = MatOps::norm_inf(traj[k].r_bar);
+                if (r_norm > max_dual_inf)
+                    max_dual_inf = r_norm;
+            }
+        }
         // [最终评级]
 
         // Level 1: SOLVED (Optimal)
         // 即使 Loop 是因为 Stagnation 退出的，如果此时恰好满足最优性，也给 SOLVED
-        if (check_convergence(max_viol, max_dual_inf, max_kkt_error)) {
+        if (linear_ok && check_convergence(max_viol, max_dual_inf, max_kkt_error)) {
             return SolverStatus::OPTIMAL;
         }
         // Level 2: FEASIBLE (Acceptable)
@@ -1582,7 +1613,6 @@ private:
 
     SolverTimer timer;
 
-    Backend backend;
     SolverConfig config;
     bool components_dirty = false;
 
