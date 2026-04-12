@@ -125,7 +125,20 @@ jobs:
       run: |
         # Use multi-core compilation to speed up
         # Use native build tool parallelism for maximum CMake compatibility.
-        cmake --build build --config ${{ matrix.build_type }} -- -j"$(nproc)"
+        set -o pipefail
+        cmake --build build --config ${{ matrix.build_type }} -- -j"$(nproc)" 2>&1 | tee build.log
+        status=${PIPESTATUS[0]}
+        if [ "$status" -ne 0 ]; then
+          echo "Build failed (exit=$status). Extracting error lines for GitHub annotations..."
+          msg="$(grep -n \"error:\" build.log | head -n 20 || true)"
+          if [ -z \"$msg\" ]; then
+            msg=\"$(tail -n 80 build.log)\"
+          fi
+          # Escape for workflow commands.
+          msg=\"$(printf '%s' \"$msg\" | sed -e 's/%/%25/g' -e 's/\\r/%0D/g' -e 's/\\n/%0A/g')\"
+          echo \"::error::$msg\"
+          exit \"$status\"
+        fi
 
     # 7. Run unit tests
     - name: Run Unit Tests
