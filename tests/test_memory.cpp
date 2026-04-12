@@ -1,6 +1,7 @@
 #include "../examples/01_car_tutorial/generated/car_model.h"
 #include "minisolver/solver/solver.h"
 #include <atomic>
+#include <cstdlib>
 #include <gtest/gtest.h>
 #include <iostream>
 #include <new>
@@ -21,6 +22,19 @@ void* operator new(size_t size)
     return p;
 }
 
+// std::get_temporary_buffer (used by libstdc++/gtest internals) allocates via
+// `::operator new(size, std::nothrow)` but frees via `::operator delete(void*)`.
+// If we override delete to call free(), we must also override the nothrow new
+// variants so allocation goes through malloc/free as well, otherwise ASan will
+// flag alloc-dealloc mismatch.
+void* operator new(size_t size, const std::nothrow_t&) noexcept
+{
+    if (g_memory_check_active) {
+        g_allocation_count++;
+    }
+    return malloc(size);
+}
+
 void* operator new[](size_t size)
 {
     if (g_memory_check_active) {
@@ -32,12 +46,30 @@ void* operator new[](size_t size)
     return p;
 }
 
+void* operator new[](size_t size, const std::nothrow_t&) noexcept
+{
+    if (g_memory_check_active) {
+        g_allocation_count++;
+    }
+    return malloc(size);
+}
+
 void operator delete(void* p) noexcept
 {
     free(p);
 }
 
+void operator delete(void* p, const std::nothrow_t&) noexcept
+{
+    free(p);
+}
+
 void operator delete[](void* p) noexcept
+{
+    free(p);
+}
+
+void operator delete[](void* p, const std::nothrow_t&) noexcept
 {
     free(p);
 }

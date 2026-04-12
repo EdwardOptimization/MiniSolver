@@ -1,6 +1,8 @@
 .idea/
 .cache/
 build/
+.build*/
+build_review*/
 .vscode/
 **__pycache__/
 trajectory.csv
