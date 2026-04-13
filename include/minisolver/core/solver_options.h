@@ -20,7 +20,9 @@ enum class InertiaStrategy {
     // In the future: FACTORIZATION_MODIFY
 };
 
-enum class LineSearchType { MERIT, FILTER };
+// Line search strategy for globalization. For real-time NMPC (SQP-style) it's common to
+// disable backtracking and simply take a fraction-to-boundary step.
+enum class LineSearchType { MERIT, FILTER, NONE };
 
 enum class HessianApproximation {
     EXACT, // Full Hessian (Objective + Constraints)

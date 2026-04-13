@@ -32,6 +32,68 @@ public:
     virtual void reset() { }
 };
 
+// --- No Line Search (Full Step / Fraction-to-Boundary Only) ---
+// This is a common real-time NMPC setting: avoid backtracking and accept the step directly.
+template <typename Model, int MAX_N>
+class NoLineSearch : public LineSearchStrategy<Model, MAX_N> {
+    using Base = LineSearchStrategy<Model, MAX_N>;
+    using typename Base::TrajArray;
+    using typename Base::TrajectoryType;
+
+public:
+    double search(TrajectoryType& trajectory, LinearSolver<TrajArray>& /*linear_solver*/,
+        const std::array<double, MAX_N>& dt_traj, double /*mu*/, double /*reg*/,
+        const SolverConfig& config) override
+    {
+        const int N = trajectory.N;
+        const auto& active = trajectory.active();
+
+        // Keep s/lam (and soft vars for L1) inside the interior.
+        const double alpha =
+            fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
+        if (alpha <= 1e-8) {
+            return 0.0;
+        }
+
+        trajectory.prepare_candidate();
+        auto& candidate = trajectory.candidate();
+
+        if (!config.enable_line_search_rollout) {
+            // Multiple-shooting style trial point: x/u moved by linear step.
+            for (int k = 0; k <= N; ++k) {
+                candidate[k].x = active[k].x + active[k].dx * alpha;
+                candidate[k].u = active[k].u + active[k].du * alpha;
+                candidate[k].s = active[k].s + active[k].ds * alpha;
+                candidate[k].lam = active[k].lam + active[k].dlam * alpha;
+                candidate[k].soft_s = active[k].soft_s + active[k].dsoft_s * alpha;
+                candidate[k].p = active[k].p;
+            }
+        } else {
+            // Single-shooting rollout trial point:
+            // - keep x0 fixed
+            // - apply the step to u/s/lam/soft_s
+            // - propagate x forward via the integrator to maintain dynamic consistency
+            candidate[0].x = active[0].x;
+            for (int k = 0; k <= N; ++k) {
+                candidate[k].u = active[k].u + active[k].du * alpha;
+                candidate[k].s = active[k].s + active[k].ds * alpha;
+                candidate[k].lam = active[k].lam + active[k].dlam * alpha;
+                candidate[k].soft_s = active[k].soft_s + active[k].dsoft_s * alpha;
+                candidate[k].p = active[k].p;
+
+                if (k < N) {
+                    const double current_dt = dt_traj[static_cast<size_t>(k)];
+                    candidate[k + 1].x = Model::integrate(
+                        candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
+                }
+            }
+        }
+
+        trajectory.swap();
+        return alpha;
+    }
+};
+
 // --- Merit Function Strategy ---
 template <typename Model, int MAX_N>
 class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
