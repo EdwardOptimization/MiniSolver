@@ -214,6 +214,10 @@ int main()
     c1.tol_con = 1e-2;
     results.push_back(run_test("ExtBicycle (Adaptive)", c1));
 
+    SolverConfig c1_nols = c1;
+    c1_nols.line_search_type = LineSearchType::NONE;
+    results.push_back(run_test("ExtBicycle (Adaptive NoLS)", c1_nols));
+
     // 2. Monotone + Merit
     SolverConfig c2 = base;
     c2.barrier_strategy = BarrierStrategy::MONOTONE;
@@ -232,6 +236,10 @@ int main()
     c3.inertia_max_retries = 2; // Allow some retries if factorization fails
     c3.filter_gamma_theta = 1e-5; // Relax filter slightly
     results.push_back(run_test("ExtBicycle (Mehrotra)", c3));
+
+    SolverConfig c3_nols = c3;
+    c3_nols.line_search_type = LineSearchType::NONE;
+    results.push_back(run_test("ExtBicycle (Mehrotra NoLS)", c3_nols));
 
     // Print Table
     std::cout << "\n========================================= EXTENDED BICYCLE (NX=6, NU=2) "

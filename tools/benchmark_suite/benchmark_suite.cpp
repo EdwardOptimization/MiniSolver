@@ -185,6 +185,11 @@ int main()
     c3.print_level = PrintLevel::NONE;
     cases.push_back({ "QUALITY_PLANNER", "RK4 + Mehrotra + High Prec", c3 });
 
+    // 3b. QUALITY_PLANNER without line search (fraction-to-boundary full step only)
+    SolverConfig c3_nols = c3;
+    c3_nols.line_search_type = LineSearchType::NONE;
+    cases.push_back({ "QUALITY_NOLS", "RK4 + Mehrotra + NoLineSearch", c3_nols });
+
     // 4. CLASSIC_STABLE
     // Target: Research comparison, older reliable methods.
     // Config: RK4, Monotone Barrier, Merit Function.
