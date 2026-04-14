@@ -89,6 +89,24 @@ public:
             }
         }
 
+        // Important: keep the swapped-in iterate internally consistent.
+        // prepare_candidate() only copies KnotState (including cached cost/g_val/f_resid from the
+        // old iterate). Refresh them once at the accepted point so logging/heuristics and defect
+        // metrics reflect the new (x,u,...) rather than stale values.
+        for (int k = 0; k <= N; ++k) {
+            const double current_dt = (k < N) ? dt_traj[static_cast<size_t>(k)] : 0.0;
+
+            if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+                Model::compute_cost_gn(candidate[k]);
+                Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                Model::compute_constraints(candidate[k]);
+            } else {
+                Model::compute_cost_exact(candidate[k]);
+                Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                Model::compute_constraints(candidate[k]);
+            }
+        }
+
         trajectory.swap();
         return alpha;
     }

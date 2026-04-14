@@ -257,3 +257,144 @@ TEST(LineSearchTest, MeritRolloutProducesConsistentStates)
     double x1_expected = after[0].x(0) + after[0].u(0) * dts[0];
     EXPECT_NEAR(after[1].x(0), x1_expected, 1e-12);
 }
+
+// =============================================================================
+// No Line Search: must refresh accepted-point evaluations (cost/f_resid/...)
+// =============================================================================
+struct NoLineSearchEvalModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        return x + u * dt;
+    }
+
+    template <typename T>
+    static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0) + kp.u(0) * kp.u(0);
+        kp.Q.setZero();
+        kp.R.setIdentity();
+        kp.q(0) = 2.0 * kp.x(0);
+        kp.r(0) = 2.0 * kp.u(0);
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost(kp);
+    }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost(kp);
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+};
+
+template <int MAX_N>
+class NoLineSearchStubLinearSolver
+    : public LinearSolver<typename Trajectory<KnotPoint<double, 1, 1, 0, 0>, MAX_N>::TrajArray> {
+public:
+    using TrajArray = typename Trajectory<KnotPoint<double, 1, 1, 0, 0>, MAX_N>::TrajArray;
+    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        return true;
+    }
+};
+
+TEST(LineSearchTest, NoLineSearchRefreshesAcceptedPointEvaluations)
+{
+    constexpr int N = 1;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::NONE;
+
+    using Model = NoLineSearchEvalModel;
+    NoLineSearch<Model, N> ls;
+    NoLineSearchStubLinearSolver<N> linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, N> trajectory(N);
+
+    std::array<double, N> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    for (int k = 0; k <= N; ++k) {
+        active[k].set_zero();
+        active[k].x(0) = 10.0;
+        active[k].u(0) = 1.0;
+
+        // Stale evaluation fields that should be refreshed for the accepted point.
+        active[k].cost = 12345.0;
+        active[k].f_resid(0) = -999.0;
+
+        // Full step.
+        active[k].dx(0) = -1.0;
+        active[k].du(0) = 0.0;
+    }
+
+    double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    EXPECT_GT(alpha, 0.0);
+
+    const auto& after = trajectory.active();
+    EXPECT_NEAR(after[0].x(0), 9.0, 1e-12);
+    EXPECT_NEAR(after[0].u(0), 1.0, 1e-12);
+    EXPECT_NEAR(after[0].cost, 82.0, 1e-12); // 9^2 + 1^2
+    EXPECT_NEAR(after[0].f_resid(0), 9.1, 1e-12); // x + u*dt
+}
+
+TEST(LineSearchTest, NoLineSearchRolloutProducesConsistentStates)
+{
+    constexpr int N = 2;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::NONE;
+    config.enable_line_search_rollout = true;
+
+    using Model = NoLineSearchEvalModel;
+    NoLineSearch<Model, N> ls;
+    NoLineSearchStubLinearSolver<N> linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, N> trajectory(N);
+
+    std::array<double, N> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    for (int k = 0; k <= N; ++k) {
+        active[k].set_zero();
+        active[k].x(0) = (k == 0) ? 0.0 : 1000.0;
+        active[k].u(0) = 0.0;
+        active[k].dx(0) = 0.0;
+        active[k].du(0) = 0.0;
+    }
+    // Make the linear-step update differ from rollout at stage 1.
+    active[1].dx(0) = -900.0;
+    active[0].du(0) = 1.0;
+
+    double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    EXPECT_GT(alpha, 0.0);
+
+    const auto& after = trajectory.active();
+    double x1_expected = after[0].x(0) + after[0].u(0) * dts[0];
+    EXPECT_NEAR(after[1].x(0), x1_expected, 1e-12);
+}

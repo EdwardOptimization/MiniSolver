@@ -1327,13 +1327,7 @@ private:
 
         // For outer-loop heuristics (e.g. cost stagnation), store feasibility of the *current*
         // iterate, i.e. after line-search has potentially swapped buffers.
-        if (config.line_search_type == LineSearchType::NONE) {
-            // NoLineSearch does not recompute constraints/dynamics at the trial point.
-            // Avoid mixing updated x/u with stale g_val/f_resid (would make the violation meaningless).
-            last_prim_inf = max_prim_inf;
-        } else {
-            last_prim_inf = compute_max_violation(trajectory.active());
-        }
+        last_prim_inf = compute_max_violation(trajectory.active());
         last_dual_inf = max_dual_inf;
         return SolverStatus::UNSOLVED;
     }
