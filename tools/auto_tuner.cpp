@@ -69,7 +69,16 @@ std::string barrier_to_string(BarrierStrategy t)
 
 std::string ls_to_string(LineSearchType t)
 {
-    return (t == LineSearchType::FILTER) ? "FILTER" : "MERIT";
+    switch (t) {
+    case LineSearchType::MERIT:
+        return "MERIT";
+    case LineSearchType::FILTER:
+        return "FILTER";
+    case LineSearchType::NONE:
+        return "NONE";
+    default:
+        return "UNKNOWN";
+    }
 }
 
 std::string inertia_to_string(InertiaStrategy t)
@@ -156,7 +165,13 @@ public:
         else
             p.barrier = BarrierStrategy::ADAPTIVE;
 
-        p.ls_type = (dist_int_2(rng) == 0) ? LineSearchType::MERIT : LineSearchType::FILTER;
+        int r_ls = dist_int_3(rng);
+        if (r_ls == 0)
+            p.ls_type = LineSearchType::MERIT;
+        else if (r_ls == 1)
+            p.ls_type = LineSearchType::FILTER;
+        else
+            p.ls_type = LineSearchType::NONE;
         p.inertia = (dist_int_2(rng) == 0) ? InertiaStrategy::REGULARIZATION
                                            : InertiaStrategy::IGNORE_SINGULAR;
 
