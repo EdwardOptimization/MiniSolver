@@ -280,8 +280,7 @@ struct NoLineSearchEvalModel {
         return x + u * dt;
     }
 
-    template <typename T>
-    static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
     {
         kp.cost = kp.x(0) * kp.x(0) + kp.u(0) * kp.u(0);
         kp.Q.setZero();
@@ -300,7 +299,8 @@ struct NoLineSearchEvalModel {
     }
 
     template <typename T>
-    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
     {
         kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
         kp.A(0, 0) = 1.0;

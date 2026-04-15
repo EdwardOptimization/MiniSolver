@@ -34,8 +34,7 @@ public:
 
 // --- No Line Search (Full Step / Fraction-to-Boundary Only) ---
 // This is a common real-time NMPC setting: avoid backtracking and accept the step directly.
-template <typename Model, int MAX_N>
-class NoLineSearch : public LineSearchStrategy<Model, MAX_N> {
+template <typename Model, int MAX_N> class NoLineSearch : public LineSearchStrategy<Model, MAX_N> {
     using Base = LineSearchStrategy<Model, MAX_N>;
     using typename Base::TrajArray;
     using typename Base::TrajectoryType;
@@ -49,8 +48,8 @@ public:
         const auto& active = trajectory.active();
 
         // Keep s/lam (and soft vars for L1) inside the interior.
-        const double alpha =
-            fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
+        const double alpha
+            = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
         if (alpha <= 1e-8) {
             return 0.0;
         }
@@ -83,8 +82,8 @@ public:
 
                 if (k < N) {
                     const double current_dt = dt_traj[static_cast<size_t>(k)];
-                    candidate[k + 1].x = Model::integrate(
-                        candidate[k].x, candidate[k].u, candidate[k].p, current_dt, config.integrator);
+                    candidate[k + 1].x = Model::integrate(candidate[k].x, candidate[k].u,
+                        candidate[k].p, current_dt, config.integrator);
                 }
             }
         }
