@@ -559,6 +559,26 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                         return false;
                     }
                 }
+
+                // Failure handling C: Saturate sub-floor diagonal entries.
+                // Clamp R_bar(i,i) up to max(reg, reg_min). If the matrix is still
+                // not SPD (off-diagonal-driven indefiniteness), fall back to a
+                // uniform regularization sweep.
+                if (strategy == minisolver::InertiaStrategy::SATURATION) {
+                    const double sat_floor = (reg > config.reg_min) ? reg : config.reg_min;
+                    for (int i = 0; i < Knot::NU; ++i) {
+                        if (kp.R_bar(i, i) < sat_floor)
+                            kp.R_bar(i, i) = sat_floor;
+                    }
+                    ws.llt_solver.compute(kp.R_bar);
+                    if (!MatOps::is_llt_success(ws.llt_solver)) {
+                        for (int i = 0; i < Knot::NU; ++i)
+                            kp.R_bar(i, i) += config.regularization_step;
+                        ws.llt_solver.compute(kp.R_bar);
+                        if (!MatOps::is_llt_success(ws.llt_solver))
+                            return false;
+                    }
+                }
             }
 
             // Here llt_solver has stored the successful factorization result L
@@ -605,6 +625,11 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
         recover_dual_search_directions<Knot, ModelType>(kp, mu, config, soc_kp, aff_kp);
     }
 
+    // The forward sweep above only writes traj[k].du for k=0..N-1; traj[N].du
+    // is whatever the previous solve / setZero left behind. Terminal dual
+    // recovery uses constraint_step = C·dx + D·du and would otherwise propagate
+    // that stale du through D[N] into dlam[N] / ds[N].
+    traj[N].du.setZero();
     const Knot* soc_kp_N = (soc_traj) ? &((*soc_traj)[N]) : nullptr;
     const Knot* aff_kp_N = (affine_traj) ? &((*affine_traj)[N]) : nullptr;
     recover_dual_search_directions<Knot, ModelType>(traj[N], mu, config, soc_kp_N, aff_kp_N);

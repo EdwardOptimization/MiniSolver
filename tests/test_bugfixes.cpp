@@ -1,4 +1,5 @@
 #include "../examples/01_car_tutorial/generated/car_model.h"
+#include "minisolver/algorithms/riccati_solver.h"
 #include "minisolver/solver/solver.h"
 #include <cmath>
 #include <gtest/gtest.h>
@@ -297,4 +298,124 @@ TEST(BugfixTest, NegativeConstraintQueryReturnsZero)
     MiniSolver<BugTestModel, 10> solver(2, Backend::CPU_SERIAL, config);
     EXPECT_DOUBLE_EQ(solver.get_constraint_val(-1, 0), 0.0);
     EXPECT_DOUBLE_EQ(solver.get_constraint_val(0, -1), 0.0);
+}
+
+// =============================================================================
+// Bug: InertiaStrategy::SATURATION enum existed but was not implemented in
+// riccati.h. When LLT factorize fails on R_bar, the code skips both the
+// REGULARIZATION and IGNORE_SINGULAR branches and falls through to
+// solve_llt_inplace on an un-decomposed solver, producing NaN/garbage results.
+// =============================================================================
+TEST(BugfixTest, SaturationStrategyHandlesIndefiniteRbar)
+{
+    using Knot = KnotPoint<double, 1, 1, 1, 0>;
+    using TrajArray = std::array<Knot, 3>; // N=2
+
+    TrajArray traj;
+    const int N = 2;
+
+    for (int k = 0; k <= N; ++k) {
+        traj[k].set_zero();
+        traj[k].Q.setIdentity();
+        // Strongly indefinite: barrier contribution alone cannot make R_bar SPD.
+        traj[k].R(0, 0) = -1000.0;
+        traj[k].A.setIdentity();
+        traj[k].B(0, 0) = 1.0;
+        traj[k].D(0, 0) = 1.0; // Active control coupling so r_bar != 0.
+        traj[k].s(0) = 1.0;
+        traj[k].lam(0) = 1.0;
+    }
+    traj[N].q(0) = 1.0;
+
+    SolverConfig config;
+    config.reg_min = 1e-9;
+    config.min_barrier_slack = 1e-9;
+
+    RiccatiSolver<TrajArray, BugTestModel> solver;
+    bool success = solver.solve(
+        traj, N, /*mu=*/0.01, /*reg=*/1e-2, InertiaStrategy::SATURATION, config);
+
+    EXPECT_TRUE(success) << "SATURATION must fall back via diagonal saturation";
+
+    // After the fix R_bar(0,0) is clamped to max(reg, reg_min)=1e-2, so
+    // d = -r_bar/R_bar_clamped is on the order of -100. On master the LLT
+    // factorization fails silently (info()==NumericalIssue), Eigen leaves the
+    // un-decomposed value -999 in m_matrix, and solve_llt_inplace divides by
+    // -999 twice yielding a numerically tiny d ~ 1e-6 — finite but wrong.
+    for (int k = 0; k < N; ++k) {
+        EXPECT_TRUE(std::isfinite(traj[k].d(0)))
+            << "d(0) is not finite at k=" << k << " (was " << traj[k].d(0) << ")";
+        EXPECT_TRUE(std::isfinite(traj[k].K(0, 0)))
+            << "K(0,0) is not finite at k=" << k;
+        EXPECT_LT(std::abs(traj[k].d(0)), 1e6)
+            << "d(0) too large at k=" << k << " (was " << traj[k].d(0) << ")";
+        // Correctness lower bound: with R_bar_clamped ~ 1e-2 and r_bar ~ 1,
+        // |d| should be on the order of 10-1000. Master will produce |d| ~ 1e-6.
+        EXPECT_GT(std::abs(traj[k].d(0)), 1.0)
+            << "d(0) magnitude too small — SATURATION fallback not active at k="
+            << k << " (was " << traj[k].d(0) << ")";
+    }
+}
+
+// =============================================================================
+// Bug: The Riccati forward sweep updates traj[k].du for k=0..N-1 only.
+// traj[N].du carries over from the previous iteration / setZero(), then
+// recover_dual_search_directions for k=N reads it inside
+// constraint_step = C·dx + D·du. For terminal D != 0, dlam[N] / ds[N] are
+// corrupted by stale du[N].
+// =============================================================================
+TEST(BugfixTest, TerminalDualRecoveryNotPollutedByStaleDu)
+{
+    using Knot = KnotPoint<double, 1, 1, 1, 0>;
+    using TrajArray = std::array<Knot, 3>; // N=2
+
+    auto setup = [](TrajArray& traj, int N) {
+        for (int k = 0; k <= N; ++k) {
+            traj[k].set_zero();
+            traj[k].Q.setIdentity();
+            traj[k].R.setIdentity();
+            traj[k].A.setIdentity();
+            traj[k].B(0, 0) = 1.0;
+            traj[k].s(0) = 1.0;
+            traj[k].lam(0) = 1.0;
+            traj[k].g_val(0) = 0.0;
+            // Terminal D != 0 is what exposes the bug.
+            traj[k].D(0, 0) = 1.0;
+        }
+        traj[N].q(0) = 1.0;
+    };
+
+    SolverConfig config;
+    config.reg_min = 1e-9;
+    config.min_barrier_slack = 1e-9;
+
+    // Run A: clean traj[N].du = 0
+    TrajArray traj_a;
+    setup(traj_a, 2);
+    RiccatiSolver<TrajArray, BugTestModel> solver_a;
+    bool ok_a = solver_a.solve(
+        traj_a, 2, /*mu=*/0.01, /*reg=*/1e-9, InertiaStrategy::REGULARIZATION, config);
+    ASSERT_TRUE(ok_a);
+    const double dlam_clean = traj_a[2].dlam(0);
+    const double ds_clean = traj_a[2].ds(0);
+
+    // Run B: pre-poison traj[N].du with garbage before solve.
+    TrajArray traj_b;
+    setup(traj_b, 2);
+    traj_b[2].du(0) = 1.0e10; // Stale value the bug propagates into dlam[N].
+    RiccatiSolver<TrajArray, BugTestModel> solver_b;
+    bool ok_b = solver_b.solve(
+        traj_b, 2, /*mu=*/0.01, /*reg=*/1e-9, InertiaStrategy::REGULARIZATION, config);
+    ASSERT_TRUE(ok_b);
+    const double dlam_poisoned = traj_b[2].dlam(0);
+    const double ds_poisoned = traj_b[2].ds(0);
+
+    // After fix: terminal dual recovery must be invariant to the pre-existing du[N].
+    // Before fix: dlam_poisoned drifts by ~1e10·D(0,0) from dlam_clean.
+    EXPECT_NEAR(dlam_clean, dlam_poisoned, 1e-6)
+        << "Terminal dlam[N] depends on stale du[N]; clean=" << dlam_clean
+        << " poisoned=" << dlam_poisoned;
+    EXPECT_NEAR(ds_clean, ds_poisoned, 1e-6)
+        << "Terminal ds[N] depends on stale du[N]; clean=" << ds_clean
+        << " poisoned=" << ds_poisoned;
 }
