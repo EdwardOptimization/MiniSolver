@@ -532,3 +532,61 @@ TEST(BugfixTest, MeritLineSearchResetsNuOnBarrierUpdate)
     EXPECT_DOUBLE_EQ(ls.get_merit_nu(), 1000.0)
         << "MeritLineSearch merit_nu not reset to baseline 1000";
 }
+
+// =============================================================================
+// Per-solve line-search α trace. The solver should log every step's α into
+// MiniSolver::get_alpha_log() so the user can inspect convergence behaviour.
+// Trace must be fresh each solve (cleared at entry) and values must be in the
+// fraction-to-boundary range [0, 1].
+// =============================================================================
+TEST(BugfixTest, AlphaLogPopulatedAndClearedPerSolve)
+{
+    constexpr int N = 3;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 10;
+    config.mu_init = 1e-1;
+    config.mu_final = 1e-6;
+    config.integrator = IntegratorType::EULER_EXPLICIT;
+    config.barrier_strategy = BarrierStrategy::MONOTONE;
+
+    MiniSolver<BugTestModel, 10> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+
+    // Non-trivial initial state so the solver actually needs iterations.
+    solver.set_state_guess(0, 0, 2.0);
+
+    // Before solve: log is empty.
+    ASSERT_TRUE(solver.get_alpha_log().empty());
+
+    solver.solve();
+
+    const auto& alpha_log = solver.get_alpha_log();
+
+    // After fix: log contains one entry per step the solver ran, capped at
+    // max_iters. Before fix: accessor returns the default-constructed (empty)
+    // vector, because nothing pushes into it.
+    EXPECT_GT(alpha_log.size(), 0u)
+        << "alpha_log not populated by solve()";
+    EXPECT_LE(alpha_log.size(), static_cast<size_t>(config.max_iters))
+        << "alpha_log has more entries than iterations allowed";
+
+    // Every α must be a valid fraction-to-boundary value.
+    for (size_t i = 0; i < alpha_log.size(); ++i) {
+        const double alpha = alpha_log[i];
+        EXPECT_TRUE(std::isfinite(alpha))
+            << "alpha_log[" << i << "] is not finite: " << alpha;
+        EXPECT_GE(alpha, 0.0) << "alpha_log[" << i << "] < 0: " << alpha;
+        EXPECT_LE(alpha, 1.0 + 1e-12) << "alpha_log[" << i << "] > 1: " << alpha;
+    }
+
+    // Second solve must clear the previous trace, not accumulate.
+    const size_t first_size = alpha_log.size();
+    solver.solve();
+    EXPECT_LE(solver.get_alpha_log().size(), static_cast<size_t>(config.max_iters))
+        << "alpha_log not cleared between solve() calls (carry-over)";
+    // Sanity: size of second run is independent of first run's size — mostly
+    // this guards against "log grew by first_size".
+    EXPECT_LT(solver.get_alpha_log().size(), first_size + config.max_iters + 1)
+        << "alpha_log appears to have carried over entries from previous solve";
+}

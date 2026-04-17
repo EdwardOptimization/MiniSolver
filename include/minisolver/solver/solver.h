@@ -105,6 +105,14 @@ public:
         dt_traj.fill(conf.default_dt);
         rebuild_solver_components();
 
+        // Pre-size the diagnostic line-search trace so solve()'s push_back
+        // stays pointer-bump only (zero-malloc hot path). If the user later
+        // raises config.max_iters via set_config(), solve() will reserve
+        // again once on the first call at the new size.
+        if (conf.max_iters > 0) {
+            alpha_log_.reserve(static_cast<size_t>(conf.max_iters));
+        }
+
         // Initialize Maps
         for (int i = 0; i < NX; ++i)
             state_map[Model::state_names[i]] = i;
@@ -457,6 +465,11 @@ public:
             return 0.0;
         return trajectory[stage].cost;
     }
+
+    // Per-solve line-search α trace. Appended once per accepted/rejected
+    // line-search attempt inside solve(); cleared at solve() entry. Empty
+    // outside of a solve. Purely diagnostic.
+    const std::vector<double>& get_alpha_log() const { return alpha_log_; }
 
     // Helper to get constraint value
     double get_constraint_val(int stage, int idx) const
@@ -833,6 +846,14 @@ public:
         // 1. Presolve: 数据准备、冷热启动处理、内存复位
         presolve();
 
+        // Diagnostic line-search trace — fresh per solve. Reserve once at the
+        // configured max iteration count so the hot-path push_back stays
+        // pointer-bump only.
+        alpha_log_.clear();
+        if (static_cast<int>(alpha_log_.capacity()) < config.max_iters) {
+            alpha_log_.reserve(static_cast<size_t>(config.max_iters));
+        }
+
         SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
         double last_cost = 1e30;
 
@@ -1202,6 +1223,7 @@ private:
 
         timer.start("Line Search");
         double alpha = line_search->search(trajectory, *linear_solver, dt_traj, mu, reg, config);
+        alpha_log_.push_back(alpha);
         // IMPORTANT: line_search may swap trajectory buffers.
         // Do not use references to trajectory.active() taken before this call.
         auto& traj_after_ls = trajectory.active();
@@ -1620,6 +1642,10 @@ private:
     // Pass Model type to RiccatiSolver for static constraint info access
     std::unique_ptr<RiccatiSolver<TrajArray, Model>> linear_solver;
     std::unique_ptr<LineSearchStrategy<Model, MAX_N>> line_search;
+
+    // Per-solve line-search α trace (cleared at solve() entry, appended after
+    // each step's line search). Purely diagnostic — not serialized.
+    std::vector<double> alpha_log_;
 
     TrajectoryType trajectory;
 
