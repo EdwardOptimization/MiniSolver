@@ -30,6 +30,12 @@ public:
         = 0;
 
     virtual void reset() { }
+
+    // IPOPT §3.1: when μ decreases, filter / merit history built under the old μ
+    // is no longer comparable (φ contains -μΣlog(s)). The solver calls this hook
+    // at every μ-decrease — default is a no-op so strategies that don't care
+    // (e.g. NoLineSearch) need no override.
+    virtual void on_barrier_update() { }
 };
 
 // --- No Line Search (Full Step / Fraction-to-Boundary Only) ---
@@ -206,6 +212,15 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
 
 public:
     void reset() override { merit_nu = 1000.0; }
+
+    // After μ↓ the ratcheted merit_nu was calibrated against the old μ's dual
+    // magnitudes and would bias future searches toward over-penalising
+    // constraint violation. Reset to baseline so the next search() re-derives
+    // merit_nu from the current duals.
+    void on_barrier_update() override { merit_nu = 1000.0; }
+
+    // Test / diagnostic accessor.
+    double get_merit_nu() const { return merit_nu; }
 
     double search(TrajectoryType& trajectory, LinearSolver<TrajArray>& /*linear_solver*/,
         const std::array<double, MAX_N>& dt_traj, double mu, double /*reg*/,
@@ -465,6 +480,14 @@ public:
     }
 
     void reset() override { filter.clear(); }
+
+    // IPOPT §3.1: φ = cost − μ·Σ log(s) — filter entries recorded under the
+    // old μ contain stale φ values that are not comparable at the new μ. Clear
+    // the filter so the next search() builds a fresh history under the new μ.
+    void on_barrier_update() override { filter.clear(); }
+
+    // Test / diagnostic accessor.
+    size_t filter_size() const { return filter.size(); }
 
     double search(TrajectoryType& trajectory, LinearSolver<TrajArray>& linear_solver,
         const std::array<double, MAX_N>& dt_traj, double mu, double reg,

@@ -902,6 +902,13 @@ private:
     SolverStatus step()
     {
         current_iter++;
+        // Snapshot μ at the top of the step so we can notify the line search
+        // (IPOPT §3.1: filter/merit history is not comparable across μ changes).
+        // Both the non-Mehrotra update_barrier() path and the Mehrotra
+        // mu = mu_target path mutate mu between here and the line-search call
+        // below; the single comparison covers both.
+        const double mu_before_step = mu;
+
         auto& traj = trajectory.active();
 
         timer.start("Derivatives");
@@ -1186,6 +1193,12 @@ private:
         // The final convergence verdict is always made in postsolve() with fresh data.
         if (current_iter > 1 && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error))
             return SolverStatus::OPTIMAL;
+
+        // Notify the line search if μ decreased during this step so it can
+        // discard barrier-dependent history (filter entries, ratcheted merit_nu).
+        if (line_search && mu < mu_before_step) {
+            line_search->on_barrier_update();
+        }
 
         timer.start("Line Search");
         double alpha = line_search->search(trajectory, *linear_solver, dt_traj, mu, reg, config);

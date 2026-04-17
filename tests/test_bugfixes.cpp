@@ -1,4 +1,5 @@
 #include "../examples/01_car_tutorial/generated/car_model.h"
+#include "minisolver/algorithms/line_search.h"
 #include "minisolver/algorithms/riccati_solver.h"
 #include "minisolver/solver/solver.h"
 #include <cmath>
@@ -418,4 +419,116 @@ TEST(BugfixTest, TerminalDualRecoveryNotPollutedByStaleDu)
     EXPECT_NEAR(ds_clean, ds_poisoned, 1e-6)
         << "Terminal ds[N] depends on stale du[N]; clean=" << ds_clean
         << " poisoned=" << ds_poisoned;
+}
+
+// =============================================================================
+// IPOPT §3.1: when μ decreases, the filter / merit history built under the old
+// μ is no longer comparable (φ contains −μ·Σ log(s)). LineSearchStrategy
+// exposes on_barrier_update() as the hook; the default base implementation is
+// a no-op so strategies that don't carry barrier-dependent state don't have to
+// override. Filter / Merit strategies MUST clear their history.
+// =============================================================================
+
+namespace {
+// Minimal linear solver that just produces a small descent direction.
+class BarrierHookMockSolver
+    : public LinearSolver<Trajectory<KnotPoint<double, 4, 2, 5, 13>, 10>::TrajArray> {
+public:
+    using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 10>::TrajArray;
+
+    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx = -0.1 * traj[k].x;
+            traj[k].du.setZero();
+            traj[k].ds.setZero();
+            traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
+        }
+        return true;
+    }
+};
+} // namespace
+
+TEST(BugfixTest, FilterLineSearchClearsFilterOnBarrierUpdate)
+{
+    // Seed the filter with at least one accepted-step entry, then trigger the
+    // barrier-update hook and verify the filter was cleared.
+    SolverConfig config;
+    config.line_search_type = LineSearchType::FILTER;
+
+    constexpr int N = 10;
+    using Model = CarModel;
+    FilterLineSearch<Model, N> ls;
+    BarrierHookMockSolver linear_solver;
+
+    Trajectory<KnotPoint<double, 4, 2, 5, 13>, N> trajectory(N);
+    std::array<double, N> dts;
+    dts.fill(0.1);
+
+    for (int k = 0; k <= N; ++k) {
+        trajectory.active()[k].set_zero();
+        trajectory.active()[k].x.fill(10.0);
+        trajectory.active()[k].cost = 1000.0;
+    }
+
+    linear_solver.solve(
+        trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
+    const double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    ASSERT_GT(alpha, 0.0);
+    ASSERT_EQ(ls.filter_size(), 1u) << "expected one filter entry after accepted step";
+
+    // After fix: on_barrier_update must clear the filter.
+    // Before fix: base class default no-op leaves the entry behind, so the
+    // next search() under a smaller μ would compare against stale φ values.
+    ls.on_barrier_update();
+    EXPECT_EQ(ls.filter_size(), 0u)
+        << "FilterLineSearch did not clear filter on barrier update";
+}
+
+TEST(BugfixTest, MeritLineSearchResetsNuOnBarrierUpdate)
+{
+    // Ratchet merit_nu up by running a search() with large dual magnitudes,
+    // then trigger the barrier-update hook and verify merit_nu returns to the
+    // baseline so that the next search() under a smaller μ re-derives it.
+    SolverConfig config;
+    config.line_search_type = LineSearchType::MERIT;
+
+    constexpr int N = 10;
+    using Model = CarModel;
+    MeritLineSearch<Model, N> ls;
+    BarrierHookMockSolver linear_solver;
+
+    Trajectory<KnotPoint<double, 4, 2, 5, 13>, N> trajectory(N);
+    std::array<double, N> dts;
+    dts.fill(0.1);
+
+    for (int k = 0; k <= N; ++k) {
+        auto& kp = trajectory.active()[k];
+        kp.set_zero();
+        kp.x.fill(10.0);
+        kp.cost = 1000.0;
+        // Large dual magnitude ratchets merit_nu via max_dual * 1.1 + 1.
+        kp.lam.fill(5000.0);
+        kp.s.fill(1.0);
+    }
+
+    linear_solver.solve(
+        trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
+    ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+
+    const double merit_nu_after_ratchet = ls.get_merit_nu();
+    ASSERT_GT(merit_nu_after_ratchet, 5000.0)
+        << "setup failure: merit_nu did not ratchet past baseline";
+
+    // After fix: on_barrier_update must reset merit_nu to baseline.
+    // Before fix: base class default no-op leaves merit_nu at ratcheted value
+    // derived from the old μ's dual magnitudes.
+    ls.on_barrier_update();
+    EXPECT_LT(ls.get_merit_nu(), merit_nu_after_ratchet)
+        << "MeritLineSearch did not reset merit_nu on barrier update";
+    EXPECT_DOUBLE_EQ(ls.get_merit_nu(), 1000.0)
+        << "MeritLineSearch merit_nu not reset to baseline 1000";
 }
