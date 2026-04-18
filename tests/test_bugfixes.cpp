@@ -333,8 +333,8 @@ TEST(BugfixTest, SaturationStrategyHandlesIndefiniteRbar)
     config.min_barrier_slack = 1e-9;
 
     RiccatiSolver<TrajArray, BugTestModel> solver;
-    bool success = solver.solve(
-        traj, N, /*mu=*/0.01, /*reg=*/1e-2, InertiaStrategy::SATURATION, config);
+    bool success
+        = solver.solve(traj, N, /*mu=*/0.01, /*reg=*/1e-2, InertiaStrategy::SATURATION, config);
 
     EXPECT_TRUE(success) << "SATURATION must fall back via diagonal saturation";
 
@@ -346,15 +346,14 @@ TEST(BugfixTest, SaturationStrategyHandlesIndefiniteRbar)
     for (int k = 0; k < N; ++k) {
         EXPECT_TRUE(std::isfinite(traj[k].d(0)))
             << "d(0) is not finite at k=" << k << " (was " << traj[k].d(0) << ")";
-        EXPECT_TRUE(std::isfinite(traj[k].K(0, 0)))
-            << "K(0,0) is not finite at k=" << k;
+        EXPECT_TRUE(std::isfinite(traj[k].K(0, 0))) << "K(0,0) is not finite at k=" << k;
         EXPECT_LT(std::abs(traj[k].d(0)), 1e6)
             << "d(0) too large at k=" << k << " (was " << traj[k].d(0) << ")";
         // Correctness lower bound: with R_bar_clamped ~ 1e-2 and r_bar ~ 1,
         // |d| should be on the order of 10-1000. Master will produce |d| ~ 1e-6.
         EXPECT_GT(std::abs(traj[k].d(0)), 1.0)
-            << "d(0) magnitude too small — SATURATION fallback not active at k="
-            << k << " (was " << traj[k].d(0) << ")";
+            << "d(0) magnitude too small — SATURATION fallback not active at k=" << k << " (was "
+            << traj[k].d(0) << ")";
     }
 }
 
@@ -436,9 +435,8 @@ class BarrierHookMockSolver
 public:
     using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 10>::TrajArray;
 
-    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
-        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
-        const TrajArray* /*affine_traj*/ = nullptr) override
+    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
     {
         for (int k = 0; k <= N; ++k) {
             traj[k].dx = -0.1 * traj[k].x;
@@ -474,8 +472,7 @@ TEST(BugfixTest, FilterLineSearchClearsFilterOnBarrierUpdate)
         trajectory.active()[k].cost = 1000.0;
     }
 
-    linear_solver.solve(
-        trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
+    linear_solver.solve(trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
     const double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
     ASSERT_GT(alpha, 0.0);
     ASSERT_EQ(ls.filter_size(), 1u) << "expected one filter entry after accepted step";
@@ -484,8 +481,7 @@ TEST(BugfixTest, FilterLineSearchClearsFilterOnBarrierUpdate)
     // Before fix: base class default no-op leaves the entry behind, so the
     // next search() under a smaller μ would compare against stale φ values.
     ls.on_barrier_update();
-    EXPECT_EQ(ls.filter_size(), 0u)
-        << "FilterLineSearch did not clear filter on barrier update";
+    EXPECT_EQ(ls.filter_size(), 0u) << "FilterLineSearch did not clear filter on barrier update";
 }
 
 TEST(BugfixTest, MeritLineSearchResetsNuOnBarrierUpdate)
@@ -515,8 +511,7 @@ TEST(BugfixTest, MeritLineSearchResetsNuOnBarrierUpdate)
         kp.s.fill(1.0);
     }
 
-    linear_solver.solve(
-        trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
+    linear_solver.solve(trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
     ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
 
     const double merit_nu_after_ratchet = ls.get_merit_nu();
@@ -566,16 +561,14 @@ TEST(BugfixTest, AlphaLogPopulatedAndClearedPerSolve)
     // After fix: log contains one entry per step the solver ran, capped at
     // max_iters. Before fix: accessor returns the default-constructed (empty)
     // vector, because nothing pushes into it.
-    EXPECT_GT(alpha_log.size(), 0u)
-        << "alpha_log not populated by solve()";
+    EXPECT_GT(alpha_log.size(), 0u) << "alpha_log not populated by solve()";
     EXPECT_LE(alpha_log.size(), static_cast<size_t>(config.max_iters))
         << "alpha_log has more entries than iterations allowed";
 
     // Every α must be a valid fraction-to-boundary value.
     for (size_t i = 0; i < alpha_log.size(); ++i) {
         const double alpha = alpha_log[i];
-        EXPECT_TRUE(std::isfinite(alpha))
-            << "alpha_log[" << i << "] is not finite: " << alpha;
+        EXPECT_TRUE(std::isfinite(alpha)) << "alpha_log[" << i << "] is not finite: " << alpha;
         EXPECT_GE(alpha, 0.0) << "alpha_log[" << i << "] < 0: " << alpha;
         EXPECT_LE(alpha, 1.0 + 1e-12) << "alpha_log[" << i << "] > 1: " << alpha;
     }
