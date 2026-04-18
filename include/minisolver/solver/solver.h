@@ -856,6 +856,7 @@ public:
 
         SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
         double last_cost = 1e30;
+        double last_mu = mu;
 
         // 2. Solve Loop: 数值迭代
         for (int iter = 0; iter < config.max_iters; ++iter) {
@@ -889,19 +890,23 @@ public:
             }
 
             // C. 停滞检查 (Cost Stagnation)
-            if (mu <= config.mu_final) {
-                // 计算当前 Cost
-                double current_cost = 0.0;
-                for (int k = 0; k <= N; ++k)
-                    current_cost += trajectory.active()[k].cost;
+            // Objective cost is comparable across μ updates (barrier terms are not part of
+            // KnotPoint::cost). However, if μ is actively decreasing we should not stop purely
+            // on objective stagnation, since IPM may still be progressing by reducing μ.
+            // The intended use is to catch "μ frozen above μ_final" style stalls.
+            double current_cost = 0.0;
+            for (int k = 0; k <= N; ++k)
+                current_cost += trajectory.active()[k].cost;
 
-                // 只有在满足一定可行性时，Cost 停滞才有意义
-                // 使用上一步计算的 max_prim_inf (last_prim_inf)
-                double feasible_bound = config.tol_con * config.feasible_tol_scale;
-
-                if (last_prim_inf <= feasible_bound) {
-                    double cost_diff = std::abs(current_cost - last_cost);
-                    if (cost_diff < config.tol_cost) {
+            // 只有在满足一定可行性时，Cost 停滞才有意义
+            // 使用上一步计算的 max_prim_inf (last_prim_inf)
+            double feasible_bound = config.tol_con * config.feasible_tol_scale;
+            if (last_prim_inf <= feasible_bound) {
+                double cost_diff = std::abs(current_cost - last_cost);
+                if (cost_diff < config.tol_cost) {
+                    const bool mu_decreased = (mu < last_mu);
+                    const bool mu_small = (mu <= config.mu_final);
+                    if (mu_small || !mu_decreased) {
                         if (config.print_level >= PrintLevel::INFO) {
                             MLOG_INFO("Cost Stagnation detected. Stopping early.");
                         }
@@ -911,8 +916,9 @@ public:
                         break;
                     }
                 }
-                last_cost = current_cost;
             }
+            last_cost = current_cost;
+            last_mu = mu;
         }
 
         // 3. Postsolve: 扫尾、刷新导数、统一评级

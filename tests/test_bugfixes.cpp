@@ -583,3 +583,44 @@ TEST(BugfixTest, AlphaLogPopulatedAndClearedPerSolve)
     EXPECT_LT(solver.get_alpha_log().size(), first_size + config.max_iters + 1)
         << "alpha_log appears to have carried over entries from previous solve";
 }
+
+// =============================================================================
+// Bug: cost stagnation was incorrectly gated on (mu <= mu_final), so if mu freezes
+// above mu_final the solver can run max_iters without triggering stagnation.
+//
+// This test freezes mu intentionally (barrier_tolerance_factor = 0) and uses a
+// trivially feasible, constant-cost problem. Stagnation must stop the solve
+// early even though mu > mu_final.
+// =============================================================================
+TEST(BugfixTest, CostStagnationNotGatedOnMuFinal)
+{
+    constexpr int N = 5;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 50;
+    config.integrator = IntegratorType::EULER_EXPLICIT;
+    config.line_search_type = LineSearchType::FILTER;
+
+    // Freeze μ above μ_final to reproduce the original gating bug.
+    config.barrier_strategy = BarrierStrategy::MONOTONE;
+    config.mu_init = 1e-2;
+    config.mu_final = 1e-6;
+    config.barrier_tolerance_factor = 0.0; // max_kkt_error < 0 never holds
+
+    MiniSolver<BugTestModel, 20> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+    solver.set_initial_state("x", 0.0);
+    for (int k = 0; k < N; ++k) {
+        solver.set_control_guess(k, "u", 0.0);
+    }
+    solver.rollout_dynamics();
+
+    solver.solve();
+
+    // With the fix, cost stagnation should terminate in a few iterations.
+    // Before the fix, the solver would run max_iters because stagnation was
+    // gated on mu <= mu_final and mu is frozen at mu_init.
+    EXPECT_LT(solver.get_iteration_count(), config.max_iters)
+        << "stagnation did not trigger while mu > mu_final";
+}
