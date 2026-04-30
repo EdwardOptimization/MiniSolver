@@ -340,12 +340,74 @@ class OptimalControlModel:
                          code += f"        }}\n"
         return code
 
+    def _nonzero_pattern(self, mat, rows, cols):
+        pattern = set()
+        for r in range(rows):
+            for c in range(cols):
+                if sp.sympify(mat[r, c]).is_zero is not True:
+                    pattern.add((r, c))
+        return pattern
+
+    def _generate_implicit_riccati_patterns(self, Jx_cont, Ju_cont, nx, nu):
+        """
+        Conservative discrete A/B sparsity for implicit integrators.
+
+        Implicit methods form inverse systems such as (I - dt*Jx)^-1. A sparse
+        Jx can fill in through that inverse, so using the explicit integrator
+        pattern is unsafe. The safe structural rule here is block dense within
+        each connected component of the continuous Jx graph; B is dense for a
+        control inside every component touched by that control's Ju column.
+        """
+        parent = list(range(nx))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i, j):
+            ri = find(i)
+            rj = find(j)
+            if ri != rj:
+                parent[rj] = ri
+
+        for r in range(nx):
+            for c in range(nx):
+                if r == c or sp.sympify(Jx_cont[r, c]).is_zero is not True:
+                    union(r, c)
+
+        components = {}
+        for i in range(nx):
+            components.setdefault(find(i), []).append(i)
+
+        A_pattern = set()
+        for comp in components.values():
+            for r in comp:
+                for c in comp:
+                    A_pattern.add((r, c))
+
+        Ju_pattern = self._nonzero_pattern(Ju_cont, nx, nu)
+        B_pattern = set()
+        for comp in components.values():
+            for c in range(nu):
+                if any((row, c) in Ju_pattern for row in comp):
+                    for r in comp:
+                        B_pattern.add((r, c))
+
+        return A_pattern, B_pattern
+
     def _generate_fused_riccati_step(self, A_expr, B_expr, nx, nu):
+        A_pattern = self._nonzero_pattern(A_expr, nx, nx)
+        B_pattern = self._nonzero_pattern(B_expr, nx, nu)
+        return self._generate_riccati_step_from_patterns(A_pattern, B_pattern, nx, nu)
+
+    def _generate_riccati_step_from_patterns(self, A_pattern, B_pattern, nx, nu, label="Fused"):
         """
         Generates fused Riccati update kernel.
         Updates Qxx, Quu, Qux, qx, ru simultaneously.
         """
-        print(f"Generating Fused Riccati Kernel (NX={nx}, NU={nu})...")
+        print(f"Generating {label} Riccati Kernel (NX={nx}, NU={nu})...")
         
         # 1. Define Symbolic Variables
         
@@ -364,14 +426,14 @@ class OptimalControlModel:
         A_sym = sp.zeros(nx, nx)
         for r in range(nx):
             for c in range(nx):
-                if sp.sympify(A_expr[r, c]).is_zero is not True:
+                if (r, c) in A_pattern:
                     A_sym[r, c] = sp.symbols(f"A_{r}_{c}")
                     
         # B (Sparse Structure)
         B_sym = sp.zeros(nx, nu)
         for r in range(nx):
             for c in range(nu):
-                if sp.sympify(B_expr[r, c]).is_zero is not True:
+                if (r, c) in B_pattern:
                     B_sym[r, c] = sp.symbols(f"B_{r}_{c}")
                     
         # 2. Symbolic Computation
@@ -922,7 +984,16 @@ class OptimalControlModel:
         # [NEW] Generate Fused Riccati Kernel
         code_fused_riccati = ""
         if self.use_fused_riccati:
-            if target_A_expr is not None:
+            implicit_integrators = {'EULER_IMPLICIT', 'RK2_IMPLICIT', 'RK4_IMPLICIT'}
+            if integrator_type in implicit_integrators:
+                try:
+                    A_pattern, B_pattern = self._generate_implicit_riccati_patterns(
+                        Jx_cont, Ju_cont, nx, nu)
+                    code_fused_riccati = self._generate_riccati_step_from_patterns(
+                        A_pattern, B_pattern, nx, nu, label=f"{integrator_type} Sparse")
+                except Exception as e:
+                    print(f"Warning: Failed to generate implicit sparse Riccati kernel: {e}")
+            elif target_A_expr is not None:
                 try:
                     # Use the specified integrator expressions
                     code_fused_riccati = self._generate_fused_riccati_step(target_A_expr, target_B_expr, nx, nu)

@@ -249,6 +249,11 @@ else()
     set(MINISOLVER_PYTHON_EXECUTABLE ${PYTHON_EXECUTABLE})
 endif()
 
+add_test(
+    NAME test_minimodel_generation
+    COMMAND ${MINISOLVER_PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_minimodel_generation.py
+)
+
 set(TEST_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated_tests")
 set(KINEMATIC_BICYCLE_TEST_MODEL "${TEST_GENERATED_DIR}/kinematicbicycleregressionmodel.h")
 set(DOUBLE_INTEGRATOR_3D_TEST_MODEL "${TEST_GENERATED_DIR}/doubleintegrator3dregressionmodel.h")
