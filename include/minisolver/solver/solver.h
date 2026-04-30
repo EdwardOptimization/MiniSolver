@@ -7,7 +7,9 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -25,6 +27,31 @@
 namespace minisolver {
 
 template <typename Model, int MAX_N> class SolverSerializer;
+
+// Test-only friend hook. Defined in tests/; forward-declared here so the
+// private `apply_slack_reset_` helper can be exercised in isolation without
+// growing the public API.
+namespace test {
+    template <typename, int> struct SolverInternalAccess;
+}
+
+// Detection for the optional `static constexpr IntegratorType
+// generated_integrator` marker emitted by MiniModel.py. The marker pins the
+// fused Riccati kernel to the integrator used at code-generation time;
+// runtime `config.integrator` must match to avoid a silently-wrong sweep.
+// Models without the marker (hand-written tests, legacy pre-marker models)
+// opt out of the check.
+namespace detail {
+    template <typename, typename = void>
+    struct has_generated_integrator : std::false_type { };
+
+    template <typename M>
+    struct has_generated_integrator<M, std::void_t<decltype(M::generated_integrator)>>
+        : std::true_type { };
+
+    template <typename M>
+    static constexpr bool has_generated_integrator_v = has_generated_integrator<M>::value;
+}
 
 class SolverTimer {
 public:
@@ -86,6 +113,7 @@ public:
     using TrajArray = typename TrajectoryType::TrajArray;
 
     friend class SolverSerializer<Model, MAX_N>;
+    template <typename, int> friend struct ::minisolver::test::SolverInternalAccess;
 
     MiniSolver(int initial_N, Backend b, SolverConfig conf = SolverConfig())
         : trajectory(std::max(0, std::min(initial_N, MAX_N)))
@@ -101,6 +129,22 @@ public:
 
         // Constructor has an explicit backend argument; keep it as the source of truth.
         config.backend = b;
+
+        // Fused Riccati kernel is CSE'd against a specific integrator's A/B
+        // sparsity at code-gen time. Running with a different runtime
+        // integrator may produce wrong fused-kernel results. Warn at
+        // construction; the Riccati dispatch already skips the fused kernel
+        // when the integrator doesn't match (if is_fused_riccati_integrator_compatible
+        // is defined), so a hard throw here would block legitimate non-fused usage.
+        if constexpr (detail::has_generated_integrator_v<Model>) {
+            if (Model::generated_integrator != config.integrator) {
+                std::cerr << "MiniSolver: Model was generated for "
+                          << static_cast<int>(Model::generated_integrator)
+                          << " but config.integrator is "
+                          << static_cast<int>(config.integrator)
+                          << ". Fused Riccati kernel will be skipped.\n";
+            }
+        }
 
         dt_traj.fill(conf.default_dt);
         rebuild_solver_components();
@@ -195,7 +239,13 @@ public:
     void set_config(const SolverConfig& conf)
     {
         bool line_search_changed = conf.line_search_type != config.line_search_type;
+        // Backend is fixed at construction time (see ctor note: "explicit
+        // backend argument; keep it as the source of truth"). Preserve it
+        // across set_config so a caller passing a default-constructed conf
+        // doesn't silently switch backends.
+        const Backend preserved_backend = config.backend;
         config = conf;
+        config.backend = preserved_backend;
         if (line_search_changed) {
             components_dirty = true;
         }
@@ -1060,7 +1110,8 @@ private:
             }
 
             // Calc max step for affine direction
-            // Re-implement fraction-to-boundary locally since it's simple
+            // Re-implement fraction-to-boundary locally since it's simple.
+            // Must cover hard slack (s, lam) AND L1 soft variables (soft_s, w-lam).
             double alpha_aff = 1.0;
             for (int k = 0; k <= N; ++k) {
                 for (int i = 0; i < NC; ++i) {
@@ -1078,6 +1129,33 @@ private:
                         double a = -lam / dlam;
                         if (a < alpha_aff)
                             alpha_aff = a;
+                    }
+
+                    // L1 soft: soft_s > 0 and (w - lam) > 0
+                    double w = 0.0;
+                    int type = 0;
+                    if constexpr (NC > 0) {
+                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                            type = Model::constraint_types[i];
+                            w = Model::constraint_weights[i];
+                        }
+                    }
+                    if (type == 1 && w > 1e-6) {
+                        double soft_s = affine_traj[k].soft_s(i);
+                        double dsoft_s = affine_traj[k].dsoft_s(i);
+                        if (dsoft_s < 0) {
+                            double a = -soft_s / dsoft_s;
+                            if (a < alpha_aff)
+                                alpha_aff = a;
+                        }
+                        // soft dual: (w - lam) with direction -dlam
+                        double soft_dual = w - lam;
+                        double dsoft_dual = -dlam; // d(w-lam)/dalpha = -dlam
+                        if (dsoft_dual < 0) {
+                            double a = -soft_dual / dsoft_dual;
+                            if (a < alpha_aff)
+                                alpha_aff = a;
+                        }
                     }
                 }
             }
@@ -1097,9 +1175,31 @@ private:
                         lam_new = 1e-8;
                     total_comp += s_new * lam_new;
                     total_dim++;
+
+                    // L1 soft pair: soft_s * (w - lam)
+                    double w = 0.0;
+                    int type = 0;
+                    if constexpr (NC > 0) {
+                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                            type = Model::constraint_types[i];
+                            w = Model::constraint_weights[i];
+                        }
+                    }
+                    if (type == 1 && w > 1e-6) {
+                        double soft_s_new = traj[k].soft_s(i) + alpha_aff * affine_traj[k].dsoft_s(i);
+                        double soft_dual_new = w - lam_new;
+                        if (soft_s_new < 0)
+                            soft_s_new = 1e-8;
+                        if (soft_dual_new < 0)
+                            soft_dual_new = 1e-8;
+                        total_comp += soft_s_new * soft_dual_new;
+                        total_dim++;
+                    }
                 }
             }
             mu_aff = total_comp / std::max(1, total_dim);
+            last_mu_aff_ = mu_aff;
+            last_alpha_aff_ = alpha_aff;
 
             // DEBUG PRINT
             if (config.print_level >= PrintLevel::DEBUG) {
@@ -1294,39 +1394,7 @@ private:
                     MLOG_DEBUG("Triggering Slack Reset (Attempt "
                         << slack_reset_consecutive_count + 1 << ").");
 
-                for (int k = 0; k <= N; ++k) {
-                    auto& kp = traj_after_ls[k];
-                    for (int i = 0; i < NC; ++i) {
-                        double min_s = std::abs(kp.g_val(i)) + std::sqrt(mu);
-                        if (kp.s(i) < min_s) {
-                            kp.s(i) = min_s;
-                            // Maintain consistency of dual variables, prevent aggressive reset
-                            kp.lam(i) = std::max(kp.lam(i), config.mu_init / kp.s(i));
-
-                            // For L1 soft constraints, also keep the implicit soft-dual feasible:
-                            // (w - lam) > 0.
-                            double w = 0.0;
-                            int type = 0;
-                            if constexpr (NC > 0) {
-                                if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                                    type = Model::constraint_types[i];
-                                    w = Model::constraint_weights[i];
-                                }
-                            }
-                            if (type == 1 && w > 1e-6) {
-                                double lam_max = w - config.min_barrier_slack;
-                                if (lam_max < config.min_barrier_slack)
-                                    lam_max = config.min_barrier_slack;
-                                if (kp.lam(i) > lam_max)
-                                    kp.lam(i) = lam_max;
-                                // Keep soft slack on the central path so barrier terms remain
-                                // well-defined.
-                                kp.soft_s(i)
-                                    = std::max(config.min_barrier_slack, mu / (w - kp.lam(i)));
-                            }
-                        }
-                    }
-                }
+                apply_slack_reset_(traj_after_ls);
                 // Try one solve to see if a valid direction can be obtained
                 recovered = linear_solver->solve(
                     traj_after_ls, N, mu, reg, config.inertia_strategy, config);
@@ -1593,6 +1661,50 @@ private:
     }
 
 private:
+    // Slack reset kernel, extracted from step() so unit tests can exercise it
+    // without running the full line-search / linear-solve pipeline.
+    // For every knot/constraint with s(i) < |g_val(i)| + sqrt(mu), raise s to
+    // that floor and pull the matching dual onto the central path. The L1
+    // soft-constraint coupling (lam <= w and soft_s = mu/(w-lam)) is preserved.
+    void apply_slack_reset_(TrajArray& traj)
+    {
+        for (int k = 0; k <= N; ++k) {
+            auto& kp = traj[k];
+            for (int i = 0; i < NC; ++i) {
+                double min_s = std::abs(kp.g_val(i)) + std::sqrt(mu);
+                if (kp.s(i) < min_s) {
+                    kp.s(i) = min_s;
+                    // Pull the dual onto the central path at the CURRENT barrier
+                    // parameter mu. Using config.mu_init here would pump lam up
+                    // to the initial barrier scale after mu has already decayed,
+                    // breaking KKT complementarity (|s*lam - mu| ~ mu_init).
+                    kp.lam(i) = std::max(kp.lam(i), mu / kp.s(i));
+
+                    // For L1 soft constraints, also keep the implicit soft-dual feasible:
+                    // (w - lam) > 0.
+                    double w = 0.0;
+                    int type = 0;
+                    if constexpr (NC > 0) {
+                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                            type = Model::constraint_types[i];
+                            w = Model::constraint_weights[i];
+                        }
+                    }
+                    if (type == 1 && w > 1e-6) {
+                        double lam_max = w - config.min_barrier_slack;
+                        if (lam_max < config.min_barrier_slack)
+                            lam_max = config.min_barrier_slack;
+                        if (kp.lam(i) > lam_max)
+                            kp.lam(i) = lam_max;
+                        // Keep soft slack on the central path so barrier terms remain
+                        // well-defined.
+                        kp.soft_s(i) = std::max(config.min_barrier_slack, mu / (w - kp.lam(i)));
+                    }
+                }
+            }
+        }
+    }
+
     // helper function: calculate the maximum constraint violation of the current trajectory
     // Includes both inequality constraint residuals AND dynamics defects (multiple shooting).
     double compute_max_violation(const TrajArray& traj) const
@@ -1690,6 +1802,11 @@ private:
     int current_iter = 0;
     double last_prim_inf = 0.0;
     double last_dual_inf = 0.0;
+
+    // Mehrotra diagnostics: last affine step's mu and alpha, exposed via
+    // friend for unit testing. Not part of public API.
+    double last_mu_aff_ = 0.0;
+    double last_alpha_aff_ = 0.0;
 
     // Continuous Slack Reset count, prevent infinite loop
     int slack_reset_consecutive_count = 0;

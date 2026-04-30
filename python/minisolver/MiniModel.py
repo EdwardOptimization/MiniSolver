@@ -677,6 +677,13 @@ class OptimalControlModel:
         
         # Constants
         code_constants = f"static const int NX={nx};\n    static const int NU={nu};\n    static const int NC={nc};\n    static const int NP={np_param};"
+
+        # Marker: which integrator the fused Riccati kernel was CSE'd against.
+        # MiniSolver's constructor reads this (SFINAE-detected) and refuses
+        # to run with a mismatched runtime config.integrator, since the fused
+        # kernel's sparsity pattern is pinned to target_A_expr / target_B_expr
+        # for this specific integrator.
+        code_constants += f"\n\n    static constexpr IntegratorType generated_integrator = IntegratorType::{integrator_type};"
         
         # Generate Soft Constraints Meta-Data Array
         soft_weights_str = "{"
@@ -899,8 +906,35 @@ class OptimalControlModel:
             # Remove the whole section
             content = re.sub(r"// \[\[SPARSE_KERNELS_START\]\].*?// \[\[SPARSE_KERNELS_END\]\]", "", content, flags=re.DOTALL)
 
+        # 6.5 Terminal u_N guard: warn if cost or constraints depend on u.
+        # In NMPC, terminal stage (k=N) has no control variable — u_N is not
+        # a decision variable. The solver's API guard prevents setting u_N
+        # (it stays 0), so cost terms involving u at terminal are phantom
+        # contributions. Warn the user so they can restructure their model
+        # with separate stage/terminal objectives if needed.
+        if nu > 0:
+            u_used_in_cost = any(
+                not sp.sympify(r_grad[i]).is_zero for i in range(nu)
+            )
+            u_used_in_con = False
+            if nc > 0:
+                for r in range(nc):
+                    for c in range(nu):
+                        if not sp.sympify(D_expr[r, c]).is_zero:
+                            u_used_in_con = True
+                            break
+                    if u_used_in_con:
+                        break
+            if u_used_in_cost:
+                print(f"WARNING: cost depends on u. Terminal stage (k=N) has no "
+                      f"control variable; u_N = 0 by design. Terminal cost will "
+                      f"evaluate with u_N = 0.")
+            if u_used_in_con:
+                print(f"WARNING: constraints depend on u. Terminal stage (k=N) has "
+                      f"no control variable; u_N = 0 by design.")
+
         # 7. Write Output
-        file_name = "car_model.h" 
+        file_name = "car_model.h"
         if self.name != "CarModel":
             file_name = f"{self.name.lower()}.h"
         

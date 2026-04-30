@@ -15,6 +15,20 @@ struct CarModel {
     static const int NC=5;
     static const int NP=13;
 
+    static constexpr bool is_fused_riccati_integrator_compatible(IntegratorType type) {
+        switch(type) {
+            case IntegratorType::EULER_EXPLICIT:
+            case IntegratorType::EULER_IMPLICIT:
+            case IntegratorType::RK2_EXPLICIT:
+            case IntegratorType::RK2_IMPLICIT:
+            case IntegratorType::RK4_EXPLICIT:
+            case IntegratorType::RK4_IMPLICIT:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     static constexpr std::array<double, NC> constraint_weights = {0.0, 0.0, 0.0, 0.0, 0.0};
     static constexpr std::array<int, NC> constraint_types = {0, 0, 0, 0, 0};
 

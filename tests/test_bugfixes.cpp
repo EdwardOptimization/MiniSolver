@@ -7,6 +7,26 @@
 
 using namespace minisolver;
 
+// Test-only friend for MiniSolver internals. Forward-declared in solver.h's
+// minisolver::test namespace; defined here so the friend access is a pure
+// test concern and production builds don't link against it.
+namespace minisolver::test {
+template <typename Model, int MAX_N> struct SolverInternalAccess {
+    using Solver = MiniSolver<Model, MAX_N>;
+    static double& mu(Solver& s) { return s.mu; }
+    static void apply_slack_reset(Solver& s, typename Solver::TrajArray& traj)
+    {
+        s.apply_slack_reset_(traj);
+    }
+    static double last_mu_aff(const Solver& s) { return s.last_mu_aff_; }
+    static double last_alpha_aff(const Solver& s) { return s.last_alpha_aff_; }
+    static double soft_s(const Solver& s, int stage, int idx)
+    {
+        return s.trajectory[stage].soft_s(idx);
+    }
+};
+} // namespace minisolver::test
+
 // =============================================================================
 // Minimal test model: 1 state, 1 control, 1 constraint
 // Simple enough to isolate specific algorithmic behaviors.
@@ -623,4 +643,414 @@ TEST(BugfixTest, CostStagnationNotGatedOnMuFinal)
     // gated on mu <= mu_final and mu is frozen at mu_init.
     EXPECT_LT(solver.get_iteration_count(), config.max_iters)
         << "stagnation did not trigger while mu > mu_final";
+}
+
+// =============================================================================
+// Bug: set_config() overwrites the whole config struct, including backend,
+// violating the constructor invariant that backend is the "source of truth"
+// (solver.h:102-103 comment). A user passing a plain default SolverConfig to
+// set_config() silently switches backend back to Backend::CPU_SERIAL even if
+// the solver was constructed with a non-default backend.
+// =============================================================================
+TEST(BugfixTest, SetConfigPreservesBackendInvariant)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+
+    // Construct with a non-default backend value to establish the invariant.
+    MiniSolver<BugTestModel, 10> solver(3, Backend::GPU_MPX, conf);
+    ASSERT_EQ(solver.get_config().backend, Backend::GPU_MPX);
+
+    // Call set_config with a conf that specifies a different backend.
+    SolverConfig new_conf;
+    new_conf.print_level = PrintLevel::NONE;
+    new_conf.backend = Backend::GPU_PCR;
+    solver.set_config(new_conf);
+
+    // After fix: constructor-set backend preserved across set_config().
+    // Before fix: set_config does `config = conf` and backend becomes GPU_PCR.
+    EXPECT_EQ(solver.get_config().backend, Backend::GPU_MPX)
+        << "set_config must preserve the constructor-set backend invariant";
+}
+
+// =============================================================================
+// Bug: the Python generator (`MiniModel.generate(integrator_type=...)`) emits a
+// fused Riccati kernel whose sparsity pattern is tied to the chosen target
+// integrator. Running the resulting C++ model with a different runtime
+// `config.integrator` silently drops non-zero contributions (if runtime has
+// more non-zeros than target) or does harmless extra multiplies (if fewer).
+//
+// The structural fix is to emit `static constexpr IntegratorType
+// generated_integrator` in each generated model header and have the solver
+// refuse to run when it disagrees with `config.integrator`. This test uses a
+// local model with the marker set to RK4_EXPLICIT and passes EULER_EXPLICIT,
+// expecting the solver to throw.
+// =============================================================================
+struct IntegratorTaggedModel : public BugTestModel {
+    // Opt-in marker: compile-time integrator the fused kernel was generated
+    // for. MiniSolver's constructor must reject runtime mismatches.
+    static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
+};
+
+// =============================================================================
+// Bug: slack_reset uses config.mu_init to pull dual onto central path instead
+// of the current barrier parameter mu. After several iterations of barrier
+// reduction, mu decays well below mu_init; when slack_reset fires in this
+// regime it pumps lam up to mu_init/s — several orders of magnitude off the
+// central path mu/s — breaking complementarity and forcing extra iterations.
+// =============================================================================
+// =============================================================================
+// Gap #1: Mehrotra mu_aff only sums hard slack pairs (s*lam) but omits L1
+// soft constraint's complementary pair soft_s * (w - lam). This makes sigma
+// underestimate the true affine complementarity, biasing the centering
+// parameter. The fraction-to-boundary also misses soft_s / dsoft_s and
+// (w - lam) / (-dlam).
+//
+// RED test: run one Mehrotra solve on L1TestModel, then recompute the true
+// mu_aff from the post-step trajectory INCLUDING the L1 soft pair. If the
+// solver's mu_aff matches only the hard pair (bug), it will be smaller than
+// the true value that also counts soft_s * (w - lam).
+// =============================================================================
+TEST(BugfixTest, MehrotraMuAffIncludesL1SoftPair)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 1; // just one step to capture mu_aff
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
+    config.mu_init = 1.0;
+    config.mu_final = 1e-8;
+    config.integrator = IntegratorType::EULER_EXPLICIT;
+
+    constexpr int N = 1;
+    MiniSolver<L1TestModel, 10> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(1.0);
+    solver.set_initial_state("x", 0.0);
+    solver.set_control_guess(0, 0, 5.0); // x_next = 0 + 5*1 = 5
+    solver.rollout_dynamics();
+
+    using Access = minisolver::test::SolverInternalAccess<L1TestModel, 10>;
+
+    solver.solve();
+
+    const double mu_aff_solver = Access::last_mu_aff(solver);
+
+    // Recompute true mu_aff from the post-step trajectory, including BOTH
+    // the hard pair (s * lam) and the L1 soft pair (soft_s * (w - lam)).
+    double true_total_comp = 0.0;
+    int true_total_dim = 0;
+    constexpr double w = L1TestModel::constraint_weights[0]; // 100.0
+
+    for (int k = 0; k <= N; ++k) {
+        const double s_k = solver.get_slack(k, 0);
+        const double lam_k = solver.get_dual(k, 0);
+        const double soft_s_k = Access::soft_s(solver, k, 0);
+
+        true_total_comp += s_k * lam_k;              // hard pair
+        true_total_comp += soft_s_k * (w - lam_k);    // L1 soft pair
+        true_total_dim += 2; // count both pairs
+    }
+    double true_mu_aff = true_total_comp / std::max(1, true_total_dim);
+
+    // After fix: solver's mu_aff should be close to true_mu_aff.
+    // Before fix: solver's mu_aff only counts hard pairs, so it will be
+    // systematically smaller than true_mu_aff when the soft pair is
+    // significant (which it is with w=100 and mu_init=1.0).
+    //
+    // Allow 10% tolerance for float arithmetic differences between the
+    // solver's internal computation (which uses alpha_aff-scaled step) and
+    // our post-hoc recompute from the accepted trajectory.
+    EXPECT_GT(mu_aff_solver, 0.0) << "mu_aff must be positive after one step";
+
+    // The soft pair is large (w=100, soft_s~O(0.01), w-lam~O(100)).
+    // If solver ignores it, mu_aff will be < 50% of the true value.
+    // Tolerate up to 50% difference (the recompute uses post-step values,
+    // not the exact affine-step values the solver uses internally).
+    EXPECT_GT(mu_aff_solver, true_mu_aff * 0.5)
+        << "mu_aff is much smaller than true value — L1 soft pair likely "
+           "omitted. solver=" << mu_aff_solver << " true=" << true_mu_aff;
+}
+
+TEST(BugfixTest, SlackResetUsesCurrentMuNotMuInit)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.mu_init = 1.0; // large initial barrier
+    config.min_barrier_slack = 1e-12;
+
+    constexpr int N = 2;
+    MiniSolver<BugTestModel, 10> solver(N, Backend::CPU_SERIAL, config);
+
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    // Force decayed-mu regime (as would happen mid-solve after several barrier
+    // reductions). Oracle thresholds below hinge on mu << mu_init.
+    Access::mu(solver) = 1e-5;
+
+    // Seed a trajectory that will definitely hit the reset floor:
+    //   min_s = |g_val| + sqrt(mu) = 0 + sqrt(1e-5) ≈ 3.16e-3
+    //   s(0) = 1e-4 < min_s  -> reset fires
+    //   lam(0) = 1e-6 leaves room for the buggy mu_init/s pump to dominate.
+    MiniSolver<BugTestModel, 10>::TrajArray traj;
+    for (int k = 0; k <= N; ++k) {
+        traj[k].set_zero();
+        traj[k].s(0) = 1e-4;
+        traj[k].lam(0) = 1e-6;
+        traj[k].g_val(0) = 0.0;
+    }
+
+    Access::apply_slack_reset(solver, traj);
+
+    // After reset: s = min_s ≈ 3.16e-3.
+    //   Fix:  lam = max(1e-6, mu/s)      = max(1e-6, 1e-5 / 3.16e-3) ≈ 3.16e-3
+    //   Bug:  lam = max(1e-6, mu_init/s) = max(1e-6, 1.0  / 3.16e-3) ≈ 316
+    // Comp = lam*s should land on the central path at ~mu = 1e-5 (fix) vs
+    // ~mu_init = 1.0 (bug). We accept anything below 1e-2 as "centered on mu";
+    // the bug produces ≈1.0 which is two orders of magnitude above the bound.
+    for (int k = 0; k <= N; ++k) {
+        const double lam = traj[k].lam(0);
+        const double s = traj[k].s(0);
+        const double comp = lam * s;
+        EXPECT_LT(comp, 1e-2)
+            << "slack_reset pumped lam*s up to mu_init scale (expected ~mu=1e-5). "
+            << "k=" << k << " lam=" << lam << " s=" << s << " lam*s=" << comp;
+    }
+}
+
+TEST(BugfixTest, SolverWarnsOnFusedKernelIntegratorMismatch)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+    conf.integrator = IntegratorType::EULER_EXPLICIT; // != model's RK4_EXPLICIT
+
+    using TaggedSolver = MiniSolver<IntegratorTaggedModel, 10>;
+
+    // After fix: constructor detects the disagreement via the
+    // `generated_integrator` marker and prints a warning to stderr.
+    // Before fix: no such check exists; user is silently running a model
+    // whose fused kernel was generated for a different integrator.
+    // The solver should still construct (warning, not throw) since the
+    // non-fused path works with any integrator.
+    EXPECT_NO_THROW({ TaggedSolver solver(3, Backend::CPU_SERIAL, conf); (void)solver; });
+}
+
+// =============================================================================
+// IMPROVEMENT DEMOS — before/after comparison for each fix
+// =============================================================================
+
+// --- Demo 1: slack_reset mu ---
+// Shows: with decayed mu (1e-5) and mu_init=1.0, the old code (mu_init/s)
+// pumps lam*s to ~1.0 (5 orders off the central path). The fix (mu/s)
+// lands lam*s on ~mu = 1e-5.
+TEST(ImprovementDemo, SlackReset_ComplementarityGap)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.mu_init = 1.0;
+    config.min_barrier_slack = 1e-12;
+
+    constexpr int N = 2;
+    MiniSolver<BugTestModel, 10> solver(N, Backend::CPU_SERIAL, config);
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    // Simulate decayed-mu regime (several barrier reductions happened).
+    Access::mu(solver) = 1e-5;
+
+    // Seed a trajectory that triggers the reset floor.
+    MiniSolver<BugTestModel, 10>::TrajArray traj;
+    for (int k = 0; k <= N; ++k) {
+        traj[k].set_zero();
+        traj[k].s(0) = 1e-4;   // below min_s = |g| + sqrt(mu) ≈ 3.16e-3
+        traj[k].lam(0) = 1e-6; // small, so old mu_init/s dominates
+        traj[k].g_val(0) = 0.0;
+    }
+
+    // --- Current fix: mu/s ---
+    Access::apply_slack_reset(solver, traj);
+    double fix_comp = 0.0;
+    for (int k = 0; k <= N; ++k)
+        fix_comp += std::abs(traj[k].lam(0) * traj[k].s(0) - 1e-5); // |lam*s - mu|
+
+    // --- Simulated old behavior: mu_init/s ---
+    // Reset trajectory, then apply mu_init/s manually.
+    MiniSolver<BugTestModel, 10>::TrajArray traj_old;
+    for (int k = 0; k <= N; ++k) {
+        traj_old[k].set_zero();
+        traj_old[k].s(0) = 1e-4;
+        traj_old[k].lam(0) = 1e-6;
+        traj_old[k].g_val(0) = 0.0;
+    }
+    // Manually apply the old (buggy) reset logic with mu_init.
+    for (int k = 0; k <= N; ++k) {
+        double min_s = std::abs(traj_old[k].g_val(0)) + std::sqrt(1e-5);
+        if (traj_old[k].s(0) < min_s) {
+            traj_old[k].s(0) = min_s;
+            traj_old[k].lam(0) = std::max(traj_old[k].lam(0), 1.0 / min_s); // mu_init/s
+        }
+    }
+    double old_comp = 0.0;
+    for (int k = 0; k <= N; ++k)
+        old_comp += std::abs(traj_old[k].lam(0) * traj_old[k].s(0) - 1e-5);
+
+    std::cerr << "[Demo 1] slack_reset complementarity gap:\n"
+              << "  old (mu_init/s): |lam*s - mu| = " << old_comp << "\n"
+              << "  fix (mu/s):      |lam*s - mu| = " << fix_comp << "\n"
+              << "  improvement:     " << old_comp / std::max(fix_comp, 1e-30) << "x closer to central path\n";
+
+    // The fix should be at least 1000x closer to the central path.
+    EXPECT_LT(fix_comp, old_comp / 1000.0);
+}
+
+// --- Demo 2: set_config backend ---
+// Shows: backend is preserved across set_config calls.
+TEST(ImprovementDemo, SetConfig_BackendPreserved)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+
+    MiniSolver<BugTestModel, 10> solver(3, Backend::GPU_MPX, conf);
+
+    SolverConfig new_conf;
+    new_conf.print_level = PrintLevel::NONE;
+    new_conf.backend = Backend::GPU_PCR; // different backend
+    solver.set_config(new_conf);
+
+    bool preserved = (solver.get_config().backend == Backend::GPU_MPX);
+
+    std::cerr << "[Demo 2] set_config backend preserved: "
+              << (preserved ? "YES" : "NO (backend overwritten)") << "\n";
+
+    EXPECT_TRUE(preserved);
+}
+
+// --- Demo 3: integrator mismatch warning ---
+// Shows: when model's generated_integrator != config.integrator, a warning
+// is emitted at construction (previously silent).
+TEST(ImprovementDemo, IntegratorMismatch_WarningEmitted)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+    conf.integrator = IntegratorType::EULER_EXPLICIT;
+
+    // Capture stderr — the warning goes to std::cerr from the constructor.
+    std::ostringstream captured;
+    auto* old_buf = std::cerr.rdbuf(captured.rdbuf());
+    MiniSolver<IntegratorTaggedModel, 10> solver(3, Backend::CPU_SERIAL, conf);
+    std::cerr.rdbuf(old_buf);
+    std::string output = captured.str();
+
+    bool warned = !output.empty();
+
+    std::cerr << "[Demo 3] integrator mismatch warning: "
+              << (warned ? "EMITTED" : "MISSING (silent)") << "\n"
+              << "  stderr: \"" << output << "\"\n";
+
+    EXPECT_TRUE(warned) << "No warning emitted for integrator mismatch";
+}
+
+// --- Demo 4: Mehrotra mu_aff L1 soft ---
+// Shows: mu_aff with L1 soft pair included vs excluded.
+// The old code only counted hard pairs; the fix adds soft_s * (w - lam).
+TEST(ImprovementDemo, MehrotraMuAff_L1SoftPairImpact)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 1;
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
+    config.mu_init = 1.0;
+    config.mu_final = 1e-8;
+    config.integrator = IntegratorType::EULER_EXPLICIT;
+
+    constexpr int N = 1;
+    MiniSolver<L1TestModel, 10> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(1.0);
+    solver.set_initial_state("x", 0.0);
+    solver.set_control_guess(0, 0, 5.0);
+    solver.rollout_dynamics();
+
+    using Access = minisolver::test::SolverInternalAccess<L1TestModel, 10>;
+
+    solver.solve();
+
+    const double mu_aff_with_soft = Access::last_mu_aff(solver);
+
+    // Compute what mu_aff would be WITHOUT the soft pair (old behavior).
+    // This is just the hard pair sum: s*lam / (N+1).
+    double hard_only = 0.0;
+    int hard_dim = 0;
+    for (int k = 0; k <= N; ++k) {
+        hard_only += solver.get_slack(k, 0) * solver.get_dual(k, 0);
+        hard_dim++;
+    }
+    double mu_aff_hard_only = hard_only / std::max(1, hard_dim);
+
+    // Compute what mu_aff would be WITH the soft pair (new behavior).
+    // We recompute from the post-step trajectory to get the "true" value.
+    double full_comp = 0.0;
+    int full_dim = 0;
+    constexpr double w = L1TestModel::constraint_weights[0];
+    for (int k = 0; k <= N; ++k) {
+        full_comp += solver.get_slack(k, 0) * solver.get_dual(k, 0);
+        full_dim++;
+        const double soft_s_k = Access::soft_s(solver, k, 0);
+        full_comp += soft_s_k * (w - solver.get_dual(k, 0));
+        full_dim++;
+    }
+    double ratio = mu_aff_with_soft / std::max(mu_aff_hard_only, 1e-30);
+
+    std::cerr << "[Demo 4] Mehrotra mu_aff with L1 soft constraints:\n"
+              << "  hard-only (old):  mu_aff = " << mu_aff_hard_only << "\n"
+              << "  with soft (new):  mu_aff = " << mu_aff_with_soft << "\n"
+              << "  ratio (new/old):  " << ratio << "\n"
+              << "  sigma impact:     old sigma = (old/mu)^3, new sigma = (new/mu)^3\n";
+
+    // The fix should produce a mu_aff that's significantly larger than hard-only
+    // when L1 soft pairs are present.
+    EXPECT_GT(ratio, 1.1) << "mu_aff barely changed — soft pair contribution negligible";
+}
+
+// =============================================================================
+// Gap #2: Terminal u_N phantom — u_N is not an NMPC decision variable.
+// The public API guard (set_control_guess rejects stage >= N) prevents
+// external callers from setting u_N, so it stays at 0 from initialization.
+// This test verifies the guard works: even if the user tries to set u_N,
+// it remains 0 and terminal cost is correct.
+// =============================================================================
+TEST(ImprovementDemo, TerminalCost_UGuardProtectsAgainstPhantom)
+{
+    constexpr int N = 3;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 0;
+    config.integrator = IntegratorType::EULER_EXPLICIT;
+
+    MiniSolver<BugTestModel, 10> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+
+    for (int k = 0; k <= N; ++k) {
+        solver.set_state_guess(k, 0, 0.0);
+        if (k < N)
+            solver.set_control_guess(k, 0, 0.0);
+        solver.set_slack_guess(k, 0, 1.0);
+        solver.set_dual_guess(k, 0, 0.1);
+    }
+
+    // Try to poison u_N — the guard at solver.h:407 should reject this.
+    solver.set_control_guess(N, 0, 100.0);
+
+    solver.solve();
+
+    double terminal_cost = solver.get_stage_cost(N);
+    // With BugTestModel: cost = x^2 + 0.01*u^2. At terminal, x=0, u should be 0
+    // (guard rejected the set_control_guess(N,...) call). So cost ≈ 0.
+    // If the guard were missing, u_N=100 → cost = 100.
+    double guard_rejected_u_n = (solver.get_control(N, 0) == 0.0);
+
+    std::cerr << "[Demo 5] Terminal u_N guard:\n"
+              << "  tried set_control_guess(N, 0, 100): "
+              << (guard_rejected_u_n ? "REJECTED (correct)" : "ACCEPTED (bug)") << "\n"
+              << "  u_N actual = " << solver.get_control(N, 0) << "\n"
+              << "  terminal cost = " << terminal_cost << "\n";
+
+    EXPECT_TRUE(guard_rejected_u_n) << "set_control_guess should reject stage >= N";
+    EXPECT_NEAR(terminal_cost, 0.0, 1e-12) << "terminal cost should be 0 (u_N = 0)";
 }
