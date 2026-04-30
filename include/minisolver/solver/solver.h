@@ -853,6 +853,7 @@ public:
         if (static_cast<int>(alpha_log_.capacity()) < config.max_iters) {
             alpha_log_.reserve(static_cast<size_t>(config.max_iters));
         }
+        last_alpha_ = 1.0;
 
         SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
         double last_cost = 1e30;
@@ -1190,7 +1191,23 @@ private:
             }
         }
 
-        if (solve_success && reg > config.reg_min) {
+        // Gate reg decay on step quality. A successful Riccati factorization
+        // only says the linearized KKT was factorizable at the current reg;
+        // it says nothing about whether the resulting step is admissible.
+        // The line search's accepted α is a composite proxy — direction
+        // quality, barrier fraction-to-boundary, and filter/merit acceptance
+        // all feed into it. A small α is necessary (not sufficient) for
+        // distrusting the current reg level; decaying on `solve_success`
+        // alone drives reg through α-collapse regions and pins it to
+        // reg_min. Threshold 0.5 is a small-step heuristic chosen
+        // empirically (see .claude/debug/reg-decay-too-aggressive-on-alpha-collapse
+        // for traces — case resolved two of three failure metrics with
+        // this value; matches informal IPM/SQP tuning convention).
+        // Interaction note: feasibility_restoration() does not touch
+        // last_alpha_, so after a collapse-triggered restoration the gate
+        // stays closed until the next accepted line-search step. That is
+        // the conservative behavior we want post-recovery.
+        if (solve_success && reg > config.reg_min && last_alpha_ > 0.5) {
             reg = std::max(config.reg_min, reg / config.reg_scale_down);
         }
 
@@ -1230,6 +1247,7 @@ private:
         timer.start("Line Search");
         double alpha = line_search->search(trajectory, *linear_solver, dt_traj, mu, reg, config);
         alpha_log_.push_back(alpha);
+        last_alpha_ = alpha;
         // IMPORTANT: line_search may swap trajectory buffers.
         // Do not use references to trajectory.active() taken before this call.
         auto& traj_after_ls = trajectory.active();
@@ -1652,6 +1670,10 @@ private:
     // Per-solve line-search α trace (cleared at solve() entry, appended after
     // each step's line search). Purely diagnostic — not serialized.
     std::vector<double> alpha_log_;
+
+    // Last accepted line-search α; used to gate reg decay on step quality.
+    // Reset to 1.0 at solve() entry so the first iter doesn't block decay.
+    double last_alpha_ = 1.0;
 
     TrajectoryType trajectory;
 

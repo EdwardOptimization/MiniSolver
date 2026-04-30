@@ -8,3 +8,5 @@ build_review*/
 trajectory.csv
 trajectory_plot.png
 .memsearch/
+
+.claude/
