@@ -172,10 +172,14 @@ Production default policy:
   for tiny sizes, unrolls short inner reductions for small sizes, and leaves
   larger sizes as ordinary loops.
 - Users should tune on their own target by rebuilding with threshold overrides
-  such as `-DMINISOLVER_LDLT_FACTOR_UNROLL_OUTER_MAX_N=...`,
+  such as `-DMINISOLVER_MATRIX_STATIC_UNROLL_MAX_WORK=...`,
+  `-DMINISOLVER_LDLT_FACTOR_UNROLL_OUTER_MAX_N=...`,
   `-DMINISOLVER_LDLT_FACTOR_UNROLL_ROW_MAX_N=...`, and
   `-DMINISOLVER_LDLT_FACTOR_UNROLL_INNER_MAX_N=...`, then running
   `matrix_kernel_bench` with the same compiler flags used in deployment.
+- All production thresholds should flow through `MatrixPolicy` in
+  `include/minisolver/matrix/policies.h`; avoid adding one-off unroll decisions
+  directly in kernel code.
 - A tuned setting should be judged by factorization-plus-solve timing, real
   Riccati/solver profiling, compile time, and code size, not by a single
   factorization-only microbenchmark.

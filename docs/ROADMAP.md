@@ -41,6 +41,8 @@ This file tracks **milestones** (not daily progress). The goal is to keep the pr
 - Every new kernel must have:
 - A `vs Eigen` correctness test.
 - A microbenchmark if it is on the hot path.
+- Keep matrix dispatch policy centralized in `MatrixPolicy`; platform-specific
+  threshold overrides are acceptable only when supported by target benchmarks.
 - Embedded readiness:
 - Reduce compile-time/binary-size overhead where possible (especially when Eigen is disabled).
 - Harden determinism and real-time constraints (no hidden allocations, stable iteration behavior under neighboring problems).
@@ -52,6 +54,13 @@ This file tracks **milestones** (not daily progress). The goal is to keep the pr
 - "Correctness-first": always establish a reference solution before tuning heuristics/regularization/line-search behavior.
 
 ## Known Limitations (Informed Defer)
+
+- **Eigen-like automatic matrix tuning table is deferred.**
+  MiniMatrix currently uses conservative compile-time threshold policies instead
+  of an operation/size/platform tuning table. Building a true tuning table would
+  require operation-specific policies, target grouping, benchmark data
+  generation, and selection rules. Reopen only after real deployments show that
+  threshold overrides are not enough.
 
 - **Filter line-search switching condition (IPOPT §2.3 Eqn. 19-20) not implemented.**
   `FilterLineSearch::is_acceptable` uses only the sufficient-decrease / filter rule

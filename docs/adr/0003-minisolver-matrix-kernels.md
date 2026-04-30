@@ -29,7 +29,8 @@ Introduce `include/minisolver/matrix/` as the owner of the custom matrix backend
 - `matrix/matrix_defs.h`: backend selection and `MatOps`;
 - `matrix/kernels.h`: small, statically dispatched dense kernels used by
   `MiniMatrix`;
-- `matrix/policies.h`: conservative compile-time defaults for kernel dispatch;
+- `matrix/policies.h`: `MatrixPolicy`, the centralized compile-time policy for
+  kernel dispatch and platform override thresholds;
 - `matrix/static_for.h`: C++11-compatible static unroll utility.
 
 Remove the old `include/minisolver/core/mini_matrix.h` and
@@ -41,6 +42,10 @@ The kernel layer uses a bounded static-unroll policy: small fixed-size work item
 are unrolled at compile time, larger work falls back to ordinary loops. This
 keeps generated code size under control while targeting MiniSolver's hot small
 matrix workloads.
+
+Policy dispatch is centralized through `minisolver::matrix::MatrixPolicy`.
+Kernel code should depend on `MatrixPolicy` directly; do not add parallel
+policy aliases or one-off thresholds.
 
 Production policies are intentionally generic defaults, not per-platform
 benchmark-winner tables. Users who care about the last few nanoseconds should run

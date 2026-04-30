@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Default is Eigen. If both are enabled, CustomMatrix takes precedence (matches matrix_defs.h).
 option(USE_EIGEN "Use Eigen backend for linear algebra" ON)
 option(USE_CUSTOM_MATRIX "Use custom MiniMatrix backend for linear algebra" OFF)
+set(MINISOLVER_MATRIX_STATIC_UNROLL_MAX_WORK 256 CACHE STRING
+    "Maximum scalar work count for generic MiniMatrix static unrolling")
 set(MINISOLVER_LDLT_FACTOR_UNROLL_OUTER_MAX_N 4 CACHE STRING
     "Maximum fixed LDLT size for static outer-loop unrolling")
 set(MINISOLVER_LDLT_FACTOR_UNROLL_ROW_MAX_N 4 CACHE STRING
@@ -189,6 +191,7 @@ else()
     target_link_libraries(minisolver_lib INTERFACE Eigen3::Eigen)
 endif()
 target_compile_definitions(minisolver_lib INTERFACE
+    MINISOLVER_MATRIX_STATIC_UNROLL_MAX_WORK=${MINISOLVER_MATRIX_STATIC_UNROLL_MAX_WORK}
     MINISOLVER_LDLT_FACTOR_UNROLL_OUTER_MAX_N=${MINISOLVER_LDLT_FACTOR_UNROLL_OUTER_MAX_N}
     MINISOLVER_LDLT_FACTOR_UNROLL_ROW_MAX_N=${MINISOLVER_LDLT_FACTOR_UNROLL_ROW_MAX_N}
     MINISOLVER_LDLT_FACTOR_UNROLL_INNER_MAX_N=${MINISOLVER_LDLT_FACTOR_UNROLL_INNER_MAX_N}
@@ -203,14 +206,16 @@ add_subdirectory(examples/01_car_tutorial)
 add_subdirectory(examples/02_advanced_bicycle)
 
 # --- Tools ---
-add_executable(benchmark_suite tools/benchmark_suite/benchmark_suite.cpp)
-target_link_libraries(benchmark_suite minisolver_lib)
+function(add_minisolver_bench bench_name bench_source)
+    add_executable(${bench_name} EXCLUDE_FROM_ALL ${bench_source})
+    target_link_libraries(${bench_name} minisolver_lib ${ARGN})
+endfunction()
 
-add_executable(fast_inverse_bench tools/fast_inverse_bench/fast_inverse_bench.cpp)
-target_link_libraries(fast_inverse_bench minisolver_lib)
+add_minisolver_bench(benchmark_suite tools/benchmark_suite/benchmark_suite.cpp)
 
-add_executable(matrix_kernel_bench tools/matrix_kernel_bench/matrix_kernel_bench.cpp)
-target_link_libraries(matrix_kernel_bench minisolver_lib Eigen3::Eigen)
+add_minisolver_bench(fast_inverse_bench tools/fast_inverse_bench/fast_inverse_bench.cpp)
+
+add_minisolver_bench(matrix_kernel_bench tools/matrix_kernel_bench/matrix_kernel_bench.cpp Eigen3::Eigen)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(matrix_kernel_bench PRIVATE
         -Wno-array-bounds
@@ -219,14 +224,11 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     )
 endif()
 
-add_executable(barrier_fusion_bench tools/barrier_fusion_bench.cpp)
-target_link_libraries(barrier_fusion_bench minisolver_lib)
+add_minisolver_bench(barrier_fusion_bench tools/barrier_fusion_bench.cpp)
 
-add_executable(implicit_lu_bench tools/implicit_lu_bench.cpp)
-target_link_libraries(implicit_lu_bench minisolver_lib)
+add_minisolver_bench(implicit_lu_bench tools/implicit_lu_bench.cpp)
 
-add_executable(block_copy_bench tools/block_copy_bench.cpp)
-target_link_libraries(block_copy_bench minisolver_lib)
+add_minisolver_bench(block_copy_bench tools/block_copy_bench.cpp)
 
 add_executable(auto_tuner tools/auto_tuner.cpp)
 target_link_libraries(auto_tuner minisolver_lib)

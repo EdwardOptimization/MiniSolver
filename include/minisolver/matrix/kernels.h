@@ -1,5 +1,6 @@
 #pragma once
 
+#include "minisolver/matrix/policies.h"
 #include "minisolver/matrix/static_for.h"
 #include <algorithm>
 #include <cmath>
@@ -56,7 +57,7 @@ namespace matrix {
 
     template <typename Mat, typename T> inline void fill(Mat& m, T value)
     {
-        FillImpl<UseStaticUnroll<Mat::Rows * Mat::Cols>::value>::run(m, value);
+        FillImpl<MatrixPolicy::StaticUnroll<Mat::Rows * Mat::Cols>::value>::run(m, value);
     }
 
     template <bool Unroll> struct ScaleImpl;
@@ -87,7 +88,7 @@ namespace matrix {
     template <typename Out, typename In, typename T>
     inline void scale(Out& out, const In& in, T scale)
     {
-        ScaleImpl<UseStaticUnroll<In::Rows * In::Cols>::value>::run(out, in, scale);
+        ScaleImpl<MatrixPolicy::StaticUnroll<In::Rows * In::Cols>::value>::run(out, in, scale);
     }
 
     template <bool Unroll, int Sign> struct AddSubImpl;
@@ -118,13 +119,13 @@ namespace matrix {
     template <typename Out, typename A, typename B>
     inline void add(Out& out, const A& a, const B& b)
     {
-        AddSubImpl<UseStaticUnroll<A::Rows * A::Cols>::value, 1>::run(out, a, b);
+        AddSubImpl<MatrixPolicy::StaticUnroll<A::Rows * A::Cols>::value, 1>::run(out, a, b);
     }
 
     template <typename Out, typename A, typename B>
     inline void sub(Out& out, const A& a, const B& b)
     {
-        AddSubImpl<UseStaticUnroll<A::Rows * A::Cols>::value, -1>::run(out, a, b);
+        AddSubImpl<MatrixPolicy::StaticUnroll<A::Rows * A::Cols>::value, -1>::run(out, a, b);
     }
 
     template <bool Unroll> struct AddScaledImpl;
@@ -155,7 +156,7 @@ namespace matrix {
     template <typename Out, typename In, typename T>
     inline void add_scaled(Out& out, const In& in, T scale)
     {
-        AddScaledImpl<UseStaticUnroll<In::Rows * In::Cols>::value>::run(out, in, scale);
+        AddScaledImpl<MatrixPolicy::StaticUnroll<In::Rows * In::Cols>::value>::run(out, in, scale);
     }
 
     template <bool Unroll> struct MatMulImpl;
@@ -200,7 +201,8 @@ namespace matrix {
     template <typename Out, typename A, typename B>
     inline void matmul(Out& out, const A& a, const B& b)
     {
-        MatMulImpl<UseStaticUnroll<Out::Rows * Out::Cols * A::Cols>::value>::run(out, a, b);
+        MatMulImpl<MatrixPolicy::StaticUnroll<Out::Rows * Out::Cols * A::Cols>::value>::run(
+            out, a, b);
     }
 
     template <bool Unroll> struct MatMulAddImpl;
@@ -245,7 +247,8 @@ namespace matrix {
     template <typename Out, typename A, typename B>
     inline void matmul_add(Out& out, const A& a, const B& b)
     {
-        MatMulAddImpl<UseStaticUnroll<Out::Rows * Out::Cols * A::Cols>::value>::run(out, a, b);
+        MatMulAddImpl<MatrixPolicy::StaticUnroll<Out::Rows * Out::Cols * A::Cols>::value>::run(
+            out, a, b);
     }
 
     template <bool Unroll> struct TransposeImpl;
@@ -279,7 +282,7 @@ namespace matrix {
 
     template <typename Out, typename In> inline void transpose(Out& out, const In& in)
     {
-        TransposeImpl<UseStaticUnroll<In::Rows * In::Cols>::value>::run(out, in);
+        TransposeImpl<MatrixPolicy::StaticUnroll<In::Rows * In::Cols>::value>::run(out, in);
     }
 
     template <bool Unroll> struct AddAtMulBImpl;
@@ -324,7 +327,8 @@ namespace matrix {
     template <typename Out, typename A, typename B>
     inline void add_At_mul_B(Out& out, const A& a, const B& b)
     {
-        AddAtMulBImpl<UseStaticUnroll<Out::Rows * Out::Cols * A::Rows>::value>::run(out, a, b);
+        AddAtMulBImpl<MatrixPolicy::StaticUnroll<Out::Rows * Out::Cols * A::Rows>::value>::run(
+            out, a, b);
     }
 
     template <bool Unroll> struct WeightedAddAtMulBImpl;
@@ -370,8 +374,9 @@ namespace matrix {
     template <typename Out, typename A, typename Weights, typename B>
     inline void weighted_add_At_mul_B(Out& out, const A& a, const Weights& weights, const B& b)
     {
-        WeightedAddAtMulBImpl<UseStaticUnroll<Out::Rows * Out::Cols * A::Rows>::value>::run(
-            out, a, weights, b);
+        WeightedAddAtMulBImpl<
+            MatrixPolicy::StaticUnroll<Out::Rows * Out::Cols * A::Rows>::value>::run(out, a,
+            weights, b);
     }
 
     template <bool Unroll> struct AddAtMulVImpl;
@@ -412,7 +417,7 @@ namespace matrix {
     template <typename Out, typename A, typename X>
     inline void add_At_mul_v(Out& out, const A& a, const X& x)
     {
-        AddAtMulVImpl<UseStaticUnroll<Out::Rows * A::Rows>::value>::run(out, a, x);
+        AddAtMulVImpl<MatrixPolicy::StaticUnroll<Out::Rows * A::Rows>::value>::run(out, a, x);
     }
 
     template <bool Unroll> struct SymmetrizeImpl;
@@ -452,7 +457,7 @@ namespace matrix {
 
     template <typename Mat> inline void symmetrize(Mat& m)
     {
-        SymmetrizeImpl<UseStaticUnroll<Mat::Rows * Mat::Cols>::value>::run(m);
+        SymmetrizeImpl<MatrixPolicy::StaticUnroll<Mat::Rows * Mat::Cols>::value>::run(m);
     }
 
     template <bool Unroll> struct HasNanImpl;
@@ -483,7 +488,7 @@ namespace matrix {
 
     template <typename Mat> inline bool has_nan(const Mat& m)
     {
-        return HasNanImpl<UseStaticUnroll<Mat::Rows * Mat::Cols>::value>::run(m);
+        return HasNanImpl<MatrixPolicy::StaticUnroll<Mat::Rows * Mat::Cols>::value>::run(m);
     }
 
     template <typename Mat> inline bool all_finite(const Mat& m)

@@ -551,8 +551,9 @@ public:
 
     void compute(const MiniMatrix<T, N, N>& A)
     {
-        compute_impl<matrix::LDLTFactorPolicy<N>::outer, matrix::LDLTFactorPolicy<N>::row,
-            matrix::LDLTFactorPolicy<N>::inner>(A);
+        compute_impl<matrix::MatrixPolicy::LDLTFactor<N>::outer,
+            matrix::MatrixPolicy::LDLTFactor<N>::row, matrix::MatrixPolicy::LDLTFactor<N>::inner>(
+            A);
     }
 
 private:

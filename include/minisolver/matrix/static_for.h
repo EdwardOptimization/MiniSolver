@@ -78,9 +78,5 @@ namespace matrix {
         }
     };
 
-    template <int Work> struct UseStaticUnroll {
-        enum { value = (Work <= 256) };
-    };
-
 }
 }
