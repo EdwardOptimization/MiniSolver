@@ -258,6 +258,14 @@ set(TEST_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated_tests")
 set(KINEMATIC_BICYCLE_TEST_MODEL "${TEST_GENERATED_DIR}/kinematicbicycleregressionmodel.h")
 set(DOUBLE_INTEGRATOR_3D_TEST_MODEL "${TEST_GENERATED_DIR}/doubleintegrator3dregressionmodel.h")
 set(ASSET_REGRESSION_REFERENCE_HEADER "${TEST_GENERATED_DIR}/asset_regression_reference_data.h")
+set(IMPLICIT_SPARSE_RICCATI_TEST_MODELS
+    "${TEST_GENERATED_DIR}/fusedeulerimplicitregressionmodel.h"
+    "${TEST_GENERATED_DIR}/genericeulerimplicitregressionmodel.h"
+    "${TEST_GENERATED_DIR}/fusedmidpointimplicitregressionmodel.h"
+    "${TEST_GENERATED_DIR}/genericmidpointimplicitregressionmodel.h"
+    "${TEST_GENERATED_DIR}/fusedgaussimplicitregressionmodel.h"
+    "${TEST_GENERATED_DIR}/genericgaussimplicitregressionmodel.h"
+)
 
 add_custom_command(
     OUTPUT ${KINEMATIC_BICYCLE_TEST_MODEL}
@@ -290,11 +298,26 @@ add_custom_command(
     COMMENT "Generating asset regression reference data"
 )
 
+add_custom_command(
+    OUTPUT ${IMPLICIT_SPARSE_RICCATI_TEST_MODELS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${TEST_GENERATED_DIR}
+    COMMAND
+        ${MINISOLVER_PYTHON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/models/generate_implicit_sparse_riccati_regression_models.py
+        ${TEST_GENERATED_DIR}
+    DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/models/generate_implicit_sparse_riccati_regression_models.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/python/minisolver/MiniModel.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/python/minisolver/templates/model.h.in
+    COMMENT "Generating implicit sparse Riccati regression test models"
+)
+
 add_custom_target(minisolver_test_models
     DEPENDS
         ${KINEMATIC_BICYCLE_TEST_MODEL}
         ${DOUBLE_INTEGRATOR_3D_TEST_MODEL}
         ${ASSET_REGRESSION_REFERENCE_HEADER}
+        ${IMPLICIT_SPARSE_RICCATI_TEST_MODELS}
 )
 
 function(add_minisolver_test test_name source_file)
@@ -332,6 +355,14 @@ add_minisolver_test(test_serializer tests/test_serializer.cpp)
 # --- Quality & Regression ---
 add_minisolver_test(test_bugfixes tests/test_bugfixes.cpp)
 add_minisolver_test(test_solver_quality tests/test_solver_quality.cpp)
+add_executable(test_implicit_sparse_riccati
+    tests/test_implicit_sparse_riccati.cpp
+    ${IMPLICIT_SPARSE_RICCATI_TEST_MODELS}
+)
+add_dependencies(test_implicit_sparse_riccati minisolver_test_models)
+target_link_libraries(test_implicit_sparse_riccati minisolver_lib gtest_main)
+target_include_directories(test_implicit_sparse_riccati PRIVATE ${TEST_GENERATED_DIR})
+add_test(NAME test_implicit_sparse_riccati COMMAND test_implicit_sparse_riccati)
 add_executable(test_asset_regressions
     tests/test_asset_regressions.cpp
     ${KINEMATIC_BICYCLE_TEST_MODEL}
