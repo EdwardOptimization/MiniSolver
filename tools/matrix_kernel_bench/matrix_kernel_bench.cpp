@@ -311,13 +311,12 @@ double residual_inf_eigen(const EigenMat& a, const EigenRhs& x, const EigenRhs& 
     return (a * x - b).cwiseAbs().maxCoeff();
 }
 
-inline void require_residual_ok(const std::string& kernel, int n, const std::string& variant,
-    double residual, double tol)
+inline void require_residual_ok(
+    const std::string& kernel, int n, const std::string& variant, double residual, double tol)
 {
     if (!(residual <= tol)) {
         std::cerr << "residual check failed: kernel=" << kernel << " n=" << n
-                  << " variant=" << variant << " residual=" << residual << " tol=" << tol
-                  << "\n";
+                  << " variant=" << variant << " residual=" << residual << " tol=" << tol << "\n";
         std::abort();
     }
 }
@@ -1100,7 +1099,8 @@ void bench_decomp_qr_variant(const std::array<MiniMatrix<double, N, N>, 64>& mat
         [&](int i) { sink += minimatrix_qr_mgs_variant_checksum<UO, UR, UI, N>(mats[i & 63]); });
 }
 
-template <int N> void bench_decomp_minimatrix_spd_variants(
+template <int N>
+void bench_decomp_minimatrix_spd_variants(
     const std::array<MiniMatrix<double, N, N>, 64>& mats, int iters)
 {
     bench_decomp_llt_variant<false, false, false, N>(mats, iters);
@@ -1122,7 +1122,8 @@ template <int N> void bench_decomp_minimatrix_spd_variants(
     bench_decomp_ldlt_variant<true, true, true, N>(mats, iters);
 }
 
-template <int N> void bench_decomp_minimatrix_general_variants(
+template <int N>
+void bench_decomp_minimatrix_general_variants(
     const std::array<MiniMatrix<double, N, N>, 64>& mats, int iters)
 {
     bench_decomp_lu_variant<false, false, false, N>(mats, iters);
@@ -1219,8 +1220,8 @@ void validate_minimatrix_vec_solve(const std::string& kernel, const std::string&
     for (int i = 0; i < 64; ++i) {
         MiniMatrix<double, N, 1> x;
         if (!solve(mats[i], rhs[i], x)) {
-            std::cerr << "solve failed: kernel=" << kernel << " n=" << N
-                      << " variant=" << variant << "\n";
+            std::cerr << "solve failed: kernel=" << kernel << " n=" << N << " variant=" << variant
+                      << "\n";
             std::abort();
         }
         require_residual_ok(kernel, N, variant, residual_inf_vec<N>(mats[i], x, rhs[i]), 1e-8);
@@ -1235,8 +1236,8 @@ void validate_minimatrix_mat_solve(const std::string& kernel, const std::string&
     for (int i = 0; i < 64; ++i) {
         MiniMatrix<double, N, N> x;
         if (!solve(mats[i], rhs[i], x)) {
-            std::cerr << "solve failed: kernel=" << kernel << " n=" << N
-                      << " variant=" << variant << "\n";
+            std::cerr << "solve failed: kernel=" << kernel << " n=" << N << " variant=" << variant
+                      << "\n";
             std::abort();
         }
         require_residual_ok(kernel, N, variant, residual_inf_mat<N>(mats[i], x, rhs[i]), 1e-8);
@@ -1251,8 +1252,8 @@ void validate_eigen_vec_solve(const std::string& kernel, const std::string& vari
     for (int i = 0; i < 64; ++i) {
         Eigen::Matrix<double, N, 1> x;
         if (!solve(mats[i], rhs[i], x)) {
-            std::cerr << "solve failed: kernel=" << kernel << " n=" << N
-                      << " variant=" << variant << "\n";
+            std::cerr << "solve failed: kernel=" << kernel << " n=" << N << " variant=" << variant
+                      << "\n";
             std::abort();
         }
         require_residual_ok(kernel, N, variant, residual_inf_eigen(mats[i], x, rhs[i]), 1e-8);
@@ -1267,8 +1268,8 @@ void validate_eigen_mat_solve(const std::string& kernel, const std::string& vari
     for (int i = 0; i < 64; ++i) {
         Eigen::Matrix<double, N, N> x;
         if (!solve(mats[i], rhs[i], x)) {
-            std::cerr << "solve failed: kernel=" << kernel << " n=" << N
-                      << " variant=" << variant << "\n";
+            std::cerr << "solve failed: kernel=" << kernel << " n=" << N << " variant=" << variant
+                      << "\n";
             std::abort();
         }
         require_residual_ok(kernel, N, variant, residual_inf_eigen(mats[i], x, rhs[i]), 1e-8);
@@ -1376,6 +1377,22 @@ template <int N> void bench_solve_spd_all(int iters)
         sink += checksum_minimatrix(x);
     });
 
+    validate_minimatrix_vec_solve<N>("solve_spd_vec", "minimatrix_ldlt_current", mini_mats,
+        mini_rhs_vec,
+        [](const MiniMatrix<double, N, N>& a, const MiniMatrix<double, N, 1>& b,
+            MiniMatrix<double, N, 1>& x) {
+            minisolver::MiniLDLT<double, N> ldlt(a);
+            if (ldlt.info() != 0)
+                return false;
+            x = ldlt.solve(b);
+            return true;
+        });
+    time_ns_per_iter("solve_spd_vec", N, "minimatrix_ldlt_current", iters, [&](int i) {
+        minisolver::MiniLDLT<double, N> ldlt(mini_mats[i & 63]);
+        MiniMatrix<double, N, 1> x = ldlt.solve(mini_rhs_vec[i & 63]);
+        sink += checksum_minimatrix(x);
+    });
+
     validate_minimatrix_mat_solve<N>("solve_spd_mat", "minimatrix_llt_current", mini_mats,
         mini_rhs_mat,
         [](const MiniMatrix<double, N, N>& a, const MiniMatrix<double, N, N>& b,
@@ -1389,6 +1406,22 @@ template <int N> void bench_solve_spd_all(int iters)
     time_ns_per_iter("solve_spd_mat", N, "minimatrix_llt_current", iters, [&](int i) {
         minisolver::MiniLLT<double, N> llt(mini_mats[i & 63]);
         MiniMatrix<double, N, N> x = llt.solve(mini_rhs_mat[i & 63]);
+        sink += checksum_minimatrix(x);
+    });
+
+    validate_minimatrix_mat_solve<N>("solve_spd_mat", "minimatrix_ldlt_current", mini_mats,
+        mini_rhs_mat,
+        [](const MiniMatrix<double, N, N>& a, const MiniMatrix<double, N, N>& b,
+            MiniMatrix<double, N, N>& x) {
+            minisolver::MiniLDLT<double, N> ldlt(a);
+            if (ldlt.info() != 0)
+                return false;
+            x = ldlt.solve(b);
+            return true;
+        });
+    time_ns_per_iter("solve_spd_mat", N, "minimatrix_ldlt_current", iters, [&](int i) {
+        minisolver::MiniLDLT<double, N> ldlt(mini_mats[i & 63]);
+        MiniMatrix<double, N, N> x = ldlt.solve(mini_rhs_mat[i & 63]);
         sink += checksum_minimatrix(x);
     });
 
@@ -1523,8 +1556,7 @@ template <int N> void bench_solve_general_all(int iters)
     });
 
     validate_eigen_vec_solve<N>("solve_general_vec", "eigen_partial_piv_lu", eigen_mats,
-        eigen_rhs_vec,
-        [](const EigenMat& a, const EigenVec& b, EigenVec& x) {
+        eigen_rhs_vec, [](const EigenMat& a, const EigenVec& b, EigenVec& x) {
             Eigen::PartialPivLU<EigenMat> lu(a);
             x = lu.solve(b);
             return true;
@@ -1536,8 +1568,7 @@ template <int N> void bench_solve_general_all(int iters)
     });
 
     validate_eigen_mat_solve<N>("solve_general_mat", "eigen_partial_piv_lu", eigen_mats,
-        eigen_rhs_mat,
-        [](const EigenMat& a, const EigenMat& b, EigenMat& x) {
+        eigen_rhs_mat, [](const EigenMat& a, const EigenMat& b, EigenMat& x) {
             Eigen::PartialPivLU<EigenMat> lu(a);
             x = lu.solve(b);
             return true;
@@ -1549,8 +1580,7 @@ template <int N> void bench_solve_general_all(int iters)
     });
 
     validate_eigen_vec_solve<N>("solve_general_vec", "eigen_householder_qr", eigen_mats,
-        eigen_rhs_vec,
-        [](const EigenMat& a, const EigenVec& b, EigenVec& x) {
+        eigen_rhs_vec, [](const EigenMat& a, const EigenVec& b, EigenVec& x) {
             Eigen::HouseholderQR<EigenMat> qr(a);
             x = qr.solve(b);
             return true;
@@ -1562,8 +1592,7 @@ template <int N> void bench_solve_general_all(int iters)
     });
 
     validate_eigen_mat_solve<N>("solve_general_mat", "eigen_householder_qr", eigen_mats,
-        eigen_rhs_mat,
-        [](const EigenMat& a, const EigenMat& b, EigenMat& x) {
+        eigen_rhs_mat, [](const EigenMat& a, const EigenMat& b, EigenMat& x) {
             Eigen::HouseholderQR<EigenMat> qr(a);
             x = qr.solve(b);
             return true;
@@ -1575,8 +1604,7 @@ template <int N> void bench_solve_general_all(int iters)
     });
 
     validate_eigen_vec_solve<N>("solve_general_vec", "eigen_col_piv_householder_qr", eigen_mats,
-        eigen_rhs_vec,
-        [](const EigenMat& a, const EigenVec& b, EigenVec& x) {
+        eigen_rhs_vec, [](const EigenMat& a, const EigenVec& b, EigenVec& x) {
             Eigen::ColPivHouseholderQR<EigenMat> qr(a);
             x = qr.solve(b);
             return true;
@@ -1588,8 +1616,7 @@ template <int N> void bench_solve_general_all(int iters)
     });
 
     validate_eigen_mat_solve<N>("solve_general_mat", "eigen_col_piv_householder_qr", eigen_mats,
-        eigen_rhs_mat,
-        [](const EigenMat& a, const EigenMat& b, EigenMat& x) {
+        eigen_rhs_mat, [](const EigenMat& a, const EigenMat& b, EigenMat& x) {
             Eigen::ColPivHouseholderQR<EigenMat> qr(a);
             x = qr.solve(b);
             return true;

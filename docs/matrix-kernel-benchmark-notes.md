@@ -164,6 +164,22 @@ Recommended unroll policy:
 - Retest with `-march=native` separately before making desktop-performance
   claims; embedded builds may prefer different thresholds.
 
+Production default policy:
+
+- The default MiniMatrix policy is deliberately conservative and generic. It is
+  not the table of fastest variants from this benchmark run.
+- The current LDLT factorization default unrolls outer and row control flow only
+  for tiny sizes, unrolls short inner reductions for small sizes, and leaves
+  larger sizes as ordinary loops.
+- Users should tune on their own target by rebuilding with threshold overrides
+  such as `-DMINISOLVER_LDLT_FACTOR_UNROLL_OUTER_MAX_N=...`,
+  `-DMINISOLVER_LDLT_FACTOR_UNROLL_ROW_MAX_N=...`, and
+  `-DMINISOLVER_LDLT_FACTOR_UNROLL_INNER_MAX_N=...`, then running
+  `matrix_kernel_bench` with the same compiler flags used in deployment.
+- A tuned setting should be judged by factorization-plus-solve timing, real
+  Riccati/solver profiling, compile time, and code size, not by a single
+  factorization-only microbenchmark.
+
 Required before production use:
 
 - Add factorization correctness tests against Eigen for solve residuals, not just

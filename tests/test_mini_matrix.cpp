@@ -1,8 +1,26 @@
 #include "minisolver/matrix/mini_matrix.h"
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <cmath>
 #include <limits>
 
 using namespace minisolver;
+
+template <int N, int C>
+double residual_inf(const MiniMatrix<double, N, N>& A, const MiniMatrix<double, N, C>& X,
+    const MiniMatrix<double, N, C>& B)
+{
+    double max_abs = 0.0;
+    for (int i = 0; i < N; ++i) {
+        for (int c = 0; c < C; ++c) {
+            double sum = 0.0;
+            for (int j = 0; j < N; ++j)
+                sum += A(i, j) * X(j, c);
+            max_abs = std::max(max_abs, std::abs(sum - B(i, c)));
+        }
+    }
+    return max_abs;
+}
 
 // 1. Core / Matrix: MiniMatrix_Cholesky_EdgeCases
 TEST(MiniMatrixTest, Cholesky_EdgeCases)
@@ -54,6 +72,74 @@ TEST(MiniMatrixTest, Cholesky_EdgeCases)
     auto x = llt_pd.solve(b);
     EXPECT_NEAR(x(0), 1.0, 1e-9);
     EXPECT_NEAR(x(1), 1.0, 1e-9);
+}
+
+TEST(MiniMatrixTest, Cholesky_MatrixRhsSolve)
+{
+    MiniMatrix<double, 2, 2> A;
+    A(0, 0) = 2.0;
+    A(0, 1) = 1.0;
+    A(1, 0) = 1.0;
+    A(1, 1) = 2.0;
+
+    MiniMatrix<double, 2, 2> B;
+    B.setIdentity();
+
+    MiniLLT<double, 2> llt(A);
+    ASSERT_EQ(llt.info(), 0);
+    auto X = llt.solve(B);
+
+    EXPECT_NEAR(X(0, 0), 2.0 / 3.0, 1e-12);
+    EXPECT_NEAR(X(0, 1), -1.0 / 3.0, 1e-12);
+    EXPECT_NEAR(X(1, 0), -1.0 / 3.0, 1e-12);
+    EXPECT_NEAR(X(1, 1), 2.0 / 3.0, 1e-12);
+    EXPECT_NEAR(residual_inf(A, X, B), 0.0, 1e-12);
+}
+
+TEST(MiniMatrixTest, LDLT_EdgeCasesAndSolves)
+{
+    MiniMatrix<double, 2, 2> A_semi;
+    A_semi.setZero();
+    A_semi(0, 0) = 1.0;
+    A_semi(0, 1) = 1.0;
+    A_semi(1, 0) = 1.0;
+    A_semi(1, 1) = 1.0;
+    MiniLDLT<double, 2> ldlt_semi(A_semi);
+    EXPECT_NE(ldlt_semi.info(), 0);
+
+    MiniMatrix<double, 2, 2> A_indef;
+    A_indef.setZero();
+    A_indef(0, 0) = 1.0;
+    A_indef(0, 1) = 2.0;
+    A_indef(1, 0) = 2.0;
+    A_indef(1, 1) = 1.0;
+    MiniLDLT<double, 2> ldlt_indef(A_indef);
+    EXPECT_NE(ldlt_indef.info(), 0);
+
+    MiniMatrix<double, 2, 2> A;
+    A(0, 0) = 2.0;
+    A(0, 1) = 1.0;
+    A(1, 0) = 1.0;
+    A(1, 1) = 2.0;
+    MiniLDLT<double, 2> ldlt(A);
+    ASSERT_EQ(ldlt.info(), 0);
+
+    MiniMatrix<double, 2, 1> b;
+    b(0) = 3.0;
+    b(1) = 3.0;
+    auto x = ldlt.solve(b);
+    EXPECT_NEAR(x(0), 1.0, 1e-12);
+    EXPECT_NEAR(x(1), 1.0, 1e-12);
+    EXPECT_NEAR(residual_inf(A, x, b), 0.0, 1e-12);
+
+    MiniMatrix<double, 2, 2> B;
+    B.setIdentity();
+    auto X = ldlt.solve(B);
+    EXPECT_NEAR(X(0, 0), 2.0 / 3.0, 1e-12);
+    EXPECT_NEAR(X(0, 1), -1.0 / 3.0, 1e-12);
+    EXPECT_NEAR(X(1, 0), -1.0 / 3.0, 1e-12);
+    EXPECT_NEAR(X(1, 1), 2.0 / 3.0, 1e-12);
+    EXPECT_NEAR(residual_inf(A, X, B), 0.0, 1e-12);
 }
 
 // Optimization Correctness: add_At_mul_B

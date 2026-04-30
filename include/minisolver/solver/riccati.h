@@ -22,7 +22,7 @@ template <typename Knot> struct RiccatiWorkspace {
     MSMat<double, Knot::NU, Knot::NU> Quu_inv; // For fast_inverse case
 
     // --- Linear Solver ---
-    MSLLT<MSMat<double, Knot::NU, Knot::NU>> llt_solver;
+    MSSPDSolver<MSMat<double, Knot::NU, Knot::NU>> spd_solver;
 
     RiccatiWorkspace()
     {
@@ -518,10 +518,10 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
 
             // 1. Try to factorize the matrix
             // Use the solver in workspace, do not call is_pos_def
-            ws.llt_solver.compute(kp.R_bar);
+            ws.spd_solver.compute(kp.R_bar);
 
             // 2. Check the factorization result
-            if (!MatOps::is_llt_success(ws.llt_solver)) {
+            if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
 
                 // Failure handling A: Directly return false
                 if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
@@ -529,8 +529,8 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                     for (int i = 0; i < Knot::NU; ++i)
                         kp.R_bar(i, i) += config.regularization_step; // e.g. 1e-6
 
-                    ws.llt_solver.compute(kp.R_bar);
-                    if (!MatOps::is_llt_success(ws.llt_solver))
+                    ws.spd_solver.compute(kp.R_bar);
+                    if (!MatOps::is_spd_solver_success(ws.spd_solver))
                         return false; // Give up
                 }
 
@@ -549,8 +549,8 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                     // re-calculated:
                     if (fixed) {
                         // Re-factorize the corrected matrix (Retry Factorization)
-                        ws.llt_solver.compute(kp.R_bar);
-                        if (!MatOps::is_llt_success(ws.llt_solver))
+                        ws.spd_solver.compute(kp.R_bar);
+                        if (!MatOps::is_spd_solver_success(ws.spd_solver))
                             return false;
                     } else {
                         // The matrix is not positive definite, but the diagonal elements are all
@@ -570,27 +570,27 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                         if (kp.R_bar(i, i) < sat_floor)
                             kp.R_bar(i, i) = sat_floor;
                     }
-                    ws.llt_solver.compute(kp.R_bar);
-                    if (!MatOps::is_llt_success(ws.llt_solver)) {
+                    ws.spd_solver.compute(kp.R_bar);
+                    if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
                         for (int i = 0; i < Knot::NU; ++i)
                             kp.R_bar(i, i) += config.regularization_step;
-                        ws.llt_solver.compute(kp.R_bar);
-                        if (!MatOps::is_llt_success(ws.llt_solver))
+                        ws.spd_solver.compute(kp.R_bar);
+                        if (!MatOps::is_spd_solver_success(ws.spd_solver))
                             return false;
                     }
                 }
             }
 
-            // Here llt_solver has stored the successful factorization result L
+            // Here spd_solver has stored the successful factorization result.
             // Now directly solve, no need to compute again
 
             // 3. Solve Quu * d = -Qu
             kp.d = -kp.r_bar;
-            MatOps::solve_llt_inplace(ws.llt_solver, kp.d);
+            MatOps::solve_spd_inplace(ws.spd_solver, kp.d);
 
             // 4. Solve Quu * K = -Qux
             kp.K = -kp.H_bar;
-            MatOps::solve_llt_inplace(ws.llt_solver, kp.K);
+            MatOps::solve_spd_inplace(ws.spd_solver, kp.K);
         }
 
         Vx = kp.q_bar;

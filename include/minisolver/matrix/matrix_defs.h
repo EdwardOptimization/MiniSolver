@@ -31,6 +31,10 @@ template <typename T, int N> using MSDiag = Eigen::DiagonalMatrix<T, N>;
 
 template <typename MatrixType> using MSLLT = Eigen::LLT<MatrixType>;
 
+template <typename MatrixType> using MSLDLT = Eigen::LDLT<MatrixType>;
+
+template <typename MatrixType> using MSSPDSolver = Eigen::LLT<MatrixType>;
+
 // Operations Abstraction
 struct MatOps {
     template <typename Derived> inline static void setZero(Eigen::MatrixBase<Derived>& m)
@@ -143,10 +147,21 @@ struct MatOps {
         b = llt.solve(b);
     }
 
+    template <typename SolverType, typename Rhs>
+    inline static void solve_spd_inplace(const SolverType& solver, Rhs& b)
+    {
+        b = solver.solve(b);
+    }
+
     // Check LLT success
     template <typename LLTType> inline static bool is_llt_success(const LLTType& llt)
     {
         return llt.info() == Eigen::Success;
+    }
+
+    template <typename SolverType> inline static bool is_spd_solver_success(const SolverType& solver)
+    {
+        return solver.info() == Eigen::Success;
     }
 
     // Bit-level IEEE 754 inspection — works even with -ffast-math.
@@ -220,6 +235,12 @@ template <typename T, int N> using MSDiag = MiniDiagonal<T, N>;
 
 template <typename MatrixType>
 using MSLLT = MiniLLT<typename MatrixType::Scalar, MatrixType::RowsAtCompileTime>;
+
+template <typename MatrixType>
+using MSLDLT = MiniLDLT<typename MatrixType::Scalar, MatrixType::RowsAtCompileTime>;
+
+template <typename MatrixType>
+using MSSPDSolver = MiniLDLT<typename MatrixType::Scalar, MatrixType::RowsAtCompileTime>;
 
 // Operations Abstraction
 struct MatOps {
@@ -372,10 +393,21 @@ struct MatOps {
         llt.solve_in_place(b);
     }
 
+    template <typename SolverType, typename Rhs>
+    inline static void solve_spd_inplace(SolverType& solver, Rhs& b)
+    {
+        solver.solve_in_place(b);
+    }
+
     // Check LLT success
     template <typename LLTType> inline static bool is_llt_success(const LLTType& llt)
     {
         return llt.info() == 0;
+    }
+
+    template <typename SolverType> inline static bool is_spd_solver_success(const SolverType& solver)
+    {
+        return solver.info() == 0;
     }
 
     // Bit-level IEEE 754 inspection — works even with -ffast-math.

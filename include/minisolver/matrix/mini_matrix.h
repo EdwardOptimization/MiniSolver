@@ -9,6 +9,7 @@
 #include <iostream>
 
 #include "minisolver/matrix/kernels.h"
+#include "minisolver/matrix/policies.h"
 
 namespace minisolver {
 
@@ -467,7 +468,7 @@ public:
             T sum = 0;
             for (int k = 0; k < i; ++k)
                 sum += L(i, k) * y(k);
-            y(i) = (b(i) - sum) / L(i, i);
+            y(i) = (b(i) - sum) * inv_diag[i];
         }
 
         // Backward sub L^T x = y
@@ -476,7 +477,7 @@ public:
             T sum = 0;
             for (int k = i + 1; k < N; ++k)
                 sum += L(k, i) * x(k); // L(k,i) is L^T(i,k)
-            x(i) = (y(i) - sum) / L(i, i);
+            x(i) = (y(i) - sum) * inv_diag[i];
         }
         return x;
     }
@@ -489,7 +490,7 @@ public:
             T sum = 0;
             for (int k = 0; k < i; ++k)
                 sum += L(i, k) * b(k);
-            b(i) = (b(i) - sum) / L(i, i);
+            b(i) = (b(i) - sum) * inv_diag[i];
         }
 
         // Backward sub L^T x = y (overwrite b with x)
@@ -497,43 +498,193 @@ public:
             T sum = 0;
             for (int k = i + 1; k < N; ++k)
                 sum += L(k, i) * b(k);
-            b(i) = (b(i) - sum) / L(i, i);
+            b(i) = (b(i) - sum) * inv_diag[i];
         }
     }
 
     // Overload for Matrix RHS
     template <int C> MiniMatrix<T, N, C> solve(const MiniMatrix<T, N, C>& B)
     {
-        MiniMatrix<T, N, C> X;
-        for (int c = 0; c < C; ++c) {
-            // Extract col
-            MiniMatrix<T, N, 1> b_col;
-            for (int i = 0; i < N; ++i)
-                b_col(i) = B(i, c);
-            auto x_col = solve(b_col);
-            for (int i = 0; i < N; ++i)
-                X(i, c) = x_col(i);
-        }
+        MiniMatrix<T, N, C> X = B;
+        solve_in_place(X);
         return X;
     }
 
     // In-place Matrix RHS
     template <int C> void solve_in_place(MiniMatrix<T, N, C>& B)
     {
-        for (int c = 0; c < C; ++c) {
-            // Forward
-            for (int i = 0; i < N; ++i) {
-                T sum = 0;
+        // Forward substitution over all RHS columns: L * Y = B.
+        for (int i = 0; i < N; ++i) {
+            for (int c = 0; c < C; ++c) {
+                T sum = B(i, c);
                 for (int k = 0; k < i; ++k)
-                    sum += L(i, k) * B(k, c);
-                B(i, c) = (B(i, c) - sum) / L(i, i);
+                    sum -= L(i, k) * B(k, c);
+                B(i, c) = sum * inv_diag[i];
             }
-            // Backward
-            for (int i = N - 1; i >= 0; --i) {
-                T sum = 0;
+        }
+
+        // Backward substitution over all RHS columns: L^T * X = Y.
+        for (int i = N - 1; i >= 0; --i) {
+            for (int c = 0; c < C; ++c) {
+                T sum = B(i, c);
                 for (int k = i + 1; k < N; ++k)
-                    sum += L(k, i) * B(k, c);
-                B(i, c) = (B(i, c) - sum) / L(i, i);
+                    sum -= L(k, i) * B(k, c);
+                B(i, c) = sum * inv_diag[i];
+            }
+        }
+    }
+};
+
+// Square-root-free Cholesky decomposition for SPD matrices: A = L * D * L^T.
+template <typename T, int N> class MiniLDLT {
+    MiniMatrix<T, N, N> L;
+    std::array<T, N> D;
+    std::array<T, N> inv_D;
+    bool success;
+
+public:
+    MiniLDLT()
+        : success(false)
+    {
+    }
+    MiniLDLT(const MiniMatrix<T, N, N>& A) { compute(A); }
+
+    void compute(const MiniMatrix<T, N, N>& A)
+    {
+        compute_impl<matrix::LDLTFactorPolicy<N>::outer, matrix::LDLTFactorPolicy<N>::row,
+            matrix::LDLTFactorPolicy<N>::inner>(A);
+    }
+
+private:
+    template <bool UnrollOuter, bool UnrollRow, bool UnrollInner>
+    void compute_impl(const MiniMatrix<T, N, N>& A)
+    {
+        L.setZero();
+        D.fill(T(0));
+        inv_D.fill(T(0));
+        success = true;
+
+        struct OuterBody {
+            MiniLDLT& self;
+            const MiniMatrix<T, N, N>& A;
+            inline void operator()(int j)
+            {
+                self.template compute_column<UnrollRow, UnrollInner>(A, j);
+            }
+        } body = { *this, A };
+        matrix::ForRange<UnrollOuter, N>::run(body);
+    }
+
+    template <bool UnrollRow, bool UnrollInner>
+    void compute_column(const MiniMatrix<T, N, N>& A, int j)
+    {
+        if (!success)
+            return;
+
+        T diag_sum = T(0);
+        struct DiagBody {
+            MiniLDLT& self;
+            int j;
+            T& diag_sum;
+            inline void operator()(int k) { diag_sum += self.L(j, k) * self.L(j, k) * self.D[k]; }
+        } diag_body = { *this, j, diag_sum };
+        matrix::PrefixRange<UnrollInner, N>::run(j, diag_body);
+
+        D[j] = A(j, j) - diag_sum;
+        if (D[j] <= T(0)) {
+            success = false;
+            return;
+        }
+        inv_D[j] = T(1) / D[j];
+        L(j, j) = T(1);
+
+        struct RowBody {
+            MiniLDLT& self;
+            const MiniMatrix<T, N, N>& A;
+            int j;
+            inline void operator()(int i) { self.template compute_row<UnrollInner>(A, j, i); }
+        } row_body = { *this, A, j };
+        matrix::SuffixRange<UnrollRow, N>::run(j + 1, row_body);
+    }
+
+    template <bool UnrollInner> void compute_row(const MiniMatrix<T, N, N>& A, int j, int i)
+    {
+        T sum = T(0);
+        struct InnerBody {
+            MiniLDLT& self;
+            int i;
+            int j;
+            T& sum;
+            inline void operator()(int k) { sum += self.L(i, k) * self.L(j, k) * self.D[k]; }
+        } inner_body = { *this, i, j, sum };
+        matrix::PrefixRange<UnrollInner, N>::run(j, inner_body);
+        L(i, j) = (A(i, j) - sum) * inv_D[j];
+    }
+
+public:
+    int info() const { return success ? 0 : 1; }
+
+    MiniMatrix<T, N, 1> solve(const MiniMatrix<T, N, 1>& b)
+    {
+        MiniMatrix<T, N, 1> x = b;
+        solve_in_place(x);
+        return x;
+    }
+
+    void solve_in_place(MiniMatrix<T, N, 1>& b)
+    {
+        // L * y = b.
+        for (int i = 0; i < N; ++i) {
+            T sum = b(i);
+            for (int k = 0; k < i; ++k)
+                sum -= L(i, k) * b(k);
+            b(i) = sum;
+        }
+
+        // D * z = y.
+        for (int i = 0; i < N; ++i)
+            b(i) *= inv_D[i];
+
+        // L^T * x = z.
+        for (int i = N - 1; i >= 0; --i) {
+            T sum = b(i);
+            for (int k = i + 1; k < N; ++k)
+                sum -= L(k, i) * b(k);
+            b(i) = sum;
+        }
+    }
+
+    template <int C> MiniMatrix<T, N, C> solve(const MiniMatrix<T, N, C>& B)
+    {
+        MiniMatrix<T, N, C> X = B;
+        solve_in_place(X);
+        return X;
+    }
+
+    template <int C> void solve_in_place(MiniMatrix<T, N, C>& B)
+    {
+        // L * Y = B. Process all RHS columns together to keep the Riccati K solve fast.
+        for (int i = 0; i < N; ++i) {
+            for (int c = 0; c < C; ++c) {
+                T sum = B(i, c);
+                for (int k = 0; k < i; ++k)
+                    sum -= L(i, k) * B(k, c);
+                B(i, c) = sum;
+            }
+        }
+
+        // D * Z = Y.
+        for (int i = 0; i < N; ++i)
+            for (int c = 0; c < C; ++c)
+                B(i, c) *= inv_D[i];
+
+        // L^T * X = Z.
+        for (int i = N - 1; i >= 0; --i) {
+            for (int c = 0; c < C; ++c) {
+                T sum = B(i, c);
+                for (int k = i + 1; k < N; ++k)
+                    sum -= L(k, i) * B(k, c);
+                B(i, c) = sum;
             }
         }
     }

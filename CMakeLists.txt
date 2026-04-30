@@ -11,6 +11,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Default is Eigen. If both are enabled, CustomMatrix takes precedence (matches matrix_defs.h).
 option(USE_EIGEN "Use Eigen backend for linear algebra" ON)
 option(USE_CUSTOM_MATRIX "Use custom MiniMatrix backend for linear algebra" OFF)
+set(MINISOLVER_LDLT_FACTOR_UNROLL_OUTER_MAX_N 4 CACHE STRING
+    "Maximum fixed LDLT size for static outer-loop unrolling")
+set(MINISOLVER_LDLT_FACTOR_UNROLL_ROW_MAX_N 4 CACHE STRING
+    "Maximum fixed LDLT size for static row-loop unrolling")
+set(MINISOLVER_LDLT_FACTOR_UNROLL_INNER_MAX_N 8 CACHE STRING
+    "Maximum fixed LDLT size for static inner-reduction unrolling")
 
 if(USE_CUSTOM_MATRIX AND USE_EIGEN)
     message(STATUS "USE_CUSTOM_MATRIX=ON overrides USE_EIGEN=ON")
@@ -182,6 +188,11 @@ else()
     target_compile_definitions(minisolver_lib INTERFACE USE_EIGEN)
     target_link_libraries(minisolver_lib INTERFACE Eigen3::Eigen)
 endif()
+target_compile_definitions(minisolver_lib INTERFACE
+    MINISOLVER_LDLT_FACTOR_UNROLL_OUTER_MAX_N=${MINISOLVER_LDLT_FACTOR_UNROLL_OUTER_MAX_N}
+    MINISOLVER_LDLT_FACTOR_UNROLL_ROW_MAX_N=${MINISOLVER_LDLT_FACTOR_UNROLL_ROW_MAX_N}
+    MINISOLVER_LDLT_FACTOR_UNROLL_INNER_MAX_N=${MINISOLVER_LDLT_FACTOR_UNROLL_INNER_MAX_N}
+)
 
 if(TARGET gpu_backend)
     target_link_libraries(minisolver_lib INTERFACE gpu_backend)
