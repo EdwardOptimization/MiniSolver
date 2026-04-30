@@ -50,3 +50,13 @@ This file tracks **milestones** (not daily progress). The goal is to keep the pr
 - Occam's razor: no new public APIs without a concrete use-case, tests, and a performance/correctness justification.
 - "Benchmark-driven": performance claims must be backed by reproducible benchmark artifacts, not anecdotes.
 - "Correctness-first": always establish a reference solution before tuning heuristics/regularization/line-search behavior.
+
+## Known Limitations (Informed Defer)
+
+- **Filter line-search switching condition (IPOPT §2.3 Eqn. 19-20) not implemented.**
+  `FilterLineSearch::is_acceptable` uses only the sufficient-decrease / filter rule
+  (Wächter-Biegler Eqn. 18). Near-feasible iterates hit OR-degeneracy; IPOPT's
+  solution is a separate Armijo path for f-type steps gated on a switching
+  condition. Gap is documented in [ADR 0002](adr/0002-filter-line-search-switching.md);
+  reopen triggers include race_cars 9.4% failure root-cause and quadrotor_nav
+  precision gap investigation.
