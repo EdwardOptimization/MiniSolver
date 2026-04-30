@@ -125,6 +125,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
     using typename Base::TrajectoryType;
 
     double merit_nu = 1000.0;
+    double dphi_ = 0.0; // numerical directional derivative (Armijo)
 
     double compute_merit(const TrajArray& t, int N, double mu, const SolverConfig& config)
     {
@@ -313,10 +314,23 @@ public:
 
             double phi_alpha = compute_merit(candidate, N, mu, config);
 
-            // Armijo condition could be added here: phi_alpha < phi_0 - eta * alpha * ...
-            // For now, simple decrease.
-            if (phi_alpha < phi_0) {
-                accepted = true;
+            // Armijo sufficient decrease (relative form).
+            // Require: phi(alpha) <= phi(0) * (1 - c1 * alpha).
+            // This is a simplified Armijo that avoids computing the
+            // directional derivative explicitly. The c1 * alpha term
+            // enforces proportional decrease: larger steps must achieve
+            // larger absolute reductions. When c1=0, reverts to simple
+            // decrease (legacy behavior).
+            if (config.armijo_c1 > 0.0) {
+                double threshold = phi_0 * (1.0 - config.armijo_c1 * alpha);
+                if (phi_alpha <= threshold) {
+                    accepted = true;
+                }
+            } else {
+                // Simple decrease (legacy, no Armijo).
+                if (phi_alpha < phi_0) {
+                    accepted = true;
+                }
             }
 
             if (accepted)

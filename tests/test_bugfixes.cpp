@@ -1054,3 +1054,116 @@ TEST(ImprovementDemo, TerminalCost_UGuardProtectsAgainstPhantom)
     EXPECT_TRUE(guard_rejected_u_n) << "set_control_guess should reject stage >= N";
     EXPECT_NEAR(terminal_cost, 0.0, 1e-12) << "terminal cost should be 0 (u_N = 0)";
 }
+
+// =============================================================================
+// Gap #3: Merit line search uses simple decrease (phi_alpha < phi_0) instead
+// of Armijo sufficient decrease. The relative Armijo form requires:
+//   phi(alpha) <= phi(0) * (1 - c1 * alpha)
+// This enforces proportional decrease: larger steps must achieve larger
+// absolute reductions. Simple decrease accepts any epsilon improvement.
+//
+// Demo: compare acceptance thresholds for a tiny merit reduction.
+// =============================================================================
+TEST(ImprovementDemo, MeritLS_ArmijoRejectsTinyImprovement)
+{
+    double phi_0 = 1.0;
+    double c1 = 1e-4;
+
+    // Case 1: alpha = 1.0, phi_alpha = 0.9999999 (tiny decrease)
+    {
+        double alpha = 1.0;
+        double phi_alpha = 0.9999999;
+
+        bool simple = (phi_alpha < phi_0);
+        double armijo_threshold = phi_0 * (1.0 - c1 * alpha); // 0.9999
+        bool armijo = (phi_alpha <= armijo_threshold);
+
+        std::cerr << "[Demo 6a] alpha=1.0, phi_alpha=0.9999999:\n"
+                  << "  simple decrease: " << (simple ? "ACCEPT" : "REJECT") << "\n"
+                  << "  Armijo threshold=" << armijo_threshold
+                  << ": " << (armijo ? "ACCEPT" : "REJECT") << "\n";
+
+        EXPECT_TRUE(simple);
+        EXPECT_FALSE(armijo) << "Armijo should reject tiny improvement at alpha=1";
+    }
+
+    // Case 2: alpha = 0.01, same tiny decrease is now proportionally large
+    {
+        double alpha = 0.01;
+        double phi_alpha = 0.9999; // same absolute decrease, smaller alpha
+
+        bool simple = (phi_alpha < phi_0);
+        double armijo_threshold = phi_0 * (1.0 - c1 * alpha); // 0.999999
+        bool armijo = (phi_alpha <= armijo_threshold);
+
+        std::cerr << "[Demo 6b] alpha=0.01, phi_alpha=0.9999:\n"
+                  << "  simple decrease: " << (simple ? "ACCEPT" : "REJECT") << "\n"
+                  << "  Armijo threshold=" << armijo_threshold
+                  << ": " << (armijo ? "ACCEPT" : "REJECT") << "\n";
+
+        EXPECT_TRUE(simple);
+        EXPECT_TRUE(armijo) << "Armijo should accept when decrease is proportional to alpha";
+    }
+
+    // Case 3: significant decrease — both accept
+    {
+        double alpha = 1.0;
+        double phi_alpha = 0.5; // large decrease
+
+        bool simple = (phi_alpha < phi_0);
+        double armijo_threshold = phi_0 * (1.0 - c1 * alpha);
+        bool armijo = (phi_alpha <= armijo_threshold);
+
+        std::cerr << "[Demo 6c] alpha=1.0, phi_alpha=0.5:\n"
+                  << "  simple decrease: " << (simple ? "ACCEPT" : "REJECT") << "\n"
+                  << "  Armijo threshold=" << armijo_threshold
+                  << ": " << (armijo ? "ACCEPT" : "REJECT") << "\n";
+
+        EXPECT_TRUE(simple);
+        EXPECT_TRUE(armijo);
+    }
+}
+
+// Real solver comparison: MERIT + Armijo vs MERIT + simple decrease.
+// Run the same non-trivial problem twice, measure iterations and final cost.
+TEST(ImprovementDemo, MeritLS_ArmijoVsSimpleDecrease_Iterations)
+{
+    constexpr int N = 5;
+
+    auto run_solver = [](double armijo_c1) -> std::pair<int, double> {
+        SolverConfig config;
+        config.print_level = PrintLevel::NONE;
+        config.max_iters = 100;
+        config.mu_init = 1e-1;
+        config.mu_final = 1e-6;
+        config.integrator = IntegratorType::EULER_EXPLICIT;
+        config.line_search_type = LineSearchType::MERIT;
+        config.barrier_strategy = BarrierStrategy::MONOTONE;
+        config.armijo_c1 = armijo_c1;
+
+        MiniSolver<BugTestModel, 20> solver(N, Backend::CPU_SERIAL, config);
+        solver.set_dt(0.1);
+        // Non-trivial initial state — solver must iterate to converge.
+        solver.set_state_guess(0, 0, 10.0);
+        solver.rollout_dynamics();
+
+        solver.solve();
+        return { solver.get_iteration_count(), solver.get_stage_cost(0) };
+    };
+
+    auto [iters_armijo, cost_armijo] = run_solver(1e-4);     // Armijo on
+    auto [iters_simple, cost_simple] = run_solver(0.0);       // simple decrease
+
+    std::cerr << "[Demo 7] Merit LS: Armijo vs simple decrease\n"
+              << "  simple decrease: " << iters_simple << " iters, cost=" << cost_simple << "\n"
+              << "  Armijo (c1=1e-4): " << iters_armijo << " iters, cost=" << cost_armijo << "\n"
+              << "  iter reduction:   " << (iters_simple - iters_armijo) << " fewer iters\n";
+
+    // Both must converge to similar cost (within 1%).
+    EXPECT_NEAR(cost_armijo, cost_simple, std::abs(cost_simple) * 0.01)
+        << "Armijo changed the solution by more than 1%";
+
+    // Armijo should use same or fewer iterations (rejects micro-steps).
+    EXPECT_LE(iters_armijo, iters_simple)
+        << "Armijo should not increase iteration count";
+}

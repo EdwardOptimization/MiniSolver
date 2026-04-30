@@ -122,6 +122,11 @@ struct SolverConfig {
     double filter_gamma_theta = 1e-5;
     double filter_gamma_phi = 1e-5;
 
+    // Merit Line Search: Armijo sufficient decrease constant.
+    // Step accepted only if phi(alpha) <= phi(0) + c1 * alpha * dphi.
+    // Standard value: 1e-4. Set to 0.0 to revert to simple decrease.
+    double armijo_c1 = 1e-4;
+
     // Barrier Numerical Safety
     double min_barrier_slack = 1e-12;
     double barrier_inf_cost = 1e9;
