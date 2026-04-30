@@ -348,54 +348,122 @@ class OptimalControlModel:
                     pattern.add((r, c))
         return pattern
 
-    def _generate_implicit_riccati_patterns(self, Jx_cont, Ju_cont, nx, nu):
+    def _identity_pattern(self, n):
+        return {(i, i) for i in range(n)}
+
+    def _matmul_pattern(self, lhs, rhs, rows, inner, cols):
+        lhs_by_row = {}
+        rhs_by_row = {}
+        for r, c in lhs:
+            lhs_by_row.setdefault(r, set()).add(c)
+        for r, c in rhs:
+            rhs_by_row.setdefault(r, set()).add(c)
+
+        result = set()
+        for r in range(rows):
+            for k in lhs_by_row.get(r, ()):
+                for c in rhs_by_row.get(k, ()):
+                    result.add((r, c))
+        return result
+
+    def _inverse_pattern(self, pattern, n):
+        reachable = [[False for _ in range(n)] for _ in range(n)]
+        for i in range(n):
+            reachable[i][i] = True
+        for r, c in pattern:
+            reachable[r][c] = True
+
+        for k in range(n):
+            for i in range(n):
+                if not reachable[i][k]:
+                    continue
+                for j in range(n):
+                    if reachable[k][j]:
+                        reachable[i][j] = True
+
+        return {(i, j) for i in range(n) for j in range(n) if reachable[i][j]}
+
+    def _backward_euler_riccati_patterns(self, Jx_pattern, Ju_pattern, nx, nu):
+        m_pattern = self._identity_pattern(nx) | Jx_pattern
+        m_inv_pattern = self._inverse_pattern(m_pattern, nx)
+        A_pattern = m_inv_pattern
+        B_pattern = self._matmul_pattern(m_inv_pattern, Ju_pattern, nx, nx, nu)
+        return A_pattern, B_pattern
+
+    def _implicit_midpoint_riccati_patterns(self, Jx_pattern, Ju_pattern, nx, nu):
+        m_minus_pattern = self._identity_pattern(nx) | Jx_pattern
+        m_plus_pattern = self._identity_pattern(nx) | Jx_pattern
+        m_inv_pattern = self._inverse_pattern(m_minus_pattern, nx)
+        A_pattern = self._matmul_pattern(m_inv_pattern, m_plus_pattern, nx, nx, nx)
+        B_pattern = self._matmul_pattern(m_inv_pattern, Ju_pattern, nx, nx, nu)
+        return A_pattern, B_pattern
+
+    def _gauss_legendre_2_riccati_patterns(self, Jx_pattern, Ju_pattern, nx, nu):
+        n2 = 2 * nx
+        jk_pattern = set()
+
+        # J = [I - a11*dt*Jx,  -a12*dt*Jx]
+        #     [-a21*dt*Jx,      I - a22*dt*Jx]
+        for r in range(nx):
+            jk_pattern.add((r, r))
+            jk_pattern.add((nx + r, nx + r))
+        for r, c in Jx_pattern:
+            jk_pattern.add((r, c))
+            jk_pattern.add((r, nx + c))
+            jk_pattern.add((nx + r, c))
+            jk_pattern.add((nx + r, nx + c))
+
+        jk_inv_pattern = self._inverse_pattern(jk_pattern, n2)
+
+        rhs_x_pattern = set()
+        for r, c in Jx_pattern:
+            rhs_x_pattern.add((r, c))
+            rhs_x_pattern.add((nx + r, c))
+
+        rhs_u_pattern = set()
+        for r, c in Ju_pattern:
+            rhs_u_pattern.add((r, c))
+            rhs_u_pattern.add((nx + r, c))
+
+        dK_dx_pattern = self._matmul_pattern(jk_inv_pattern, rhs_x_pattern, n2, n2, nx)
+        dK_du_pattern = self._matmul_pattern(jk_inv_pattern, rhs_u_pattern, n2, n2, nu)
+
+        A_pattern = self._identity_pattern(nx)
+        for r, c in dK_dx_pattern:
+            if r < nx:
+                A_pattern.add((r, c))
+            else:
+                A_pattern.add((r - nx, c))
+
+        B_pattern = set()
+        for r, c in dK_du_pattern:
+            if r < nx:
+                B_pattern.add((r, c))
+            else:
+                B_pattern.add((r - nx, c))
+
+        return A_pattern, B_pattern
+
+    def _generate_implicit_riccati_patterns(self, integrator_type, Jx_cont, Ju_cont, nx, nu):
         """
         Conservative discrete A/B sparsity for implicit integrators.
 
         Implicit methods form inverse systems such as (I - dt*Jx)^-1. A sparse
         Jx can fill in through that inverse, so using the explicit integrator
-        pattern is unsafe. The safe structural rule here is block dense within
-        each connected component of the continuous Jx graph; B is dense for a
-        control inside every component touched by that control's Ju column.
+        pattern is unsafe. Dispatch by the requested implicit method so future
+        integrator-specific tightening stays local.
         """
-        parent = list(range(nx))
-
-        def find(i):
-            while parent[i] != i:
-                parent[i] = parent[parent[i]]
-                i = parent[i]
-            return i
-
-        def union(i, j):
-            ri = find(i)
-            rj = find(j)
-            if ri != rj:
-                parent[rj] = ri
-
-        for r in range(nx):
-            for c in range(nx):
-                if r == c or sp.sympify(Jx_cont[r, c]).is_zero is not True:
-                    union(r, c)
-
-        components = {}
-        for i in range(nx):
-            components.setdefault(find(i), []).append(i)
-
-        A_pattern = set()
-        for comp in components.values():
-            for r in comp:
-                for c in comp:
-                    A_pattern.add((r, c))
-
+        Jx_pattern = self._nonzero_pattern(Jx_cont, nx, nx)
         Ju_pattern = self._nonzero_pattern(Ju_cont, nx, nu)
-        B_pattern = set()
-        for comp in components.values():
-            for c in range(nu):
-                if any((row, c) in Ju_pattern for row in comp):
-                    for r in comp:
-                        B_pattern.add((r, c))
 
-        return A_pattern, B_pattern
+        if integrator_type == 'EULER_IMPLICIT':
+            return self._backward_euler_riccati_patterns(Jx_pattern, Ju_pattern, nx, nu)
+        if integrator_type == 'RK2_IMPLICIT':
+            return self._implicit_midpoint_riccati_patterns(Jx_pattern, Ju_pattern, nx, nu)
+        if integrator_type == 'RK4_IMPLICIT':
+            return self._gauss_legendre_2_riccati_patterns(Jx_pattern, Ju_pattern, nx, nu)
+
+        raise ValueError(f"Unsupported implicit integrator: {integrator_type}")
 
     def _generate_fused_riccati_step(self, A_expr, B_expr, nx, nu):
         A_pattern = self._nonzero_pattern(A_expr, nx, nx)
@@ -988,7 +1056,7 @@ class OptimalControlModel:
             if integrator_type in implicit_integrators:
                 try:
                     A_pattern, B_pattern = self._generate_implicit_riccati_patterns(
-                        Jx_cont, Ju_cont, nx, nu)
+                        integrator_type, Jx_cont, Ju_cont, nx, nu)
                     code_fused_riccati = self._generate_riccati_step_from_patterns(
                         A_pattern, B_pattern, nx, nu, label=f"{integrator_type} Sparse")
                 except Exception as e:

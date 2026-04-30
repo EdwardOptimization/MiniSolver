@@ -14,7 +14,12 @@ def require(text, needle):
         raise AssertionError(f"missing generated snippet: {needle}")
 
 
-def test_implicit_riccati_pattern_keeps_inverse_fill_in():
+def reject(text, needle):
+    if needle in text:
+        raise AssertionError(f"unexpected generated snippet: {needle}")
+
+
+def generate_chain_model(integrator_type):
     model = OptimalControlModel("ImplicitPatternRegressionModel")
 
     x0, x1, x2 = model.state("x0", "x1", "x2")
@@ -30,14 +35,32 @@ def test_implicit_riccati_pattern_keeps_inverse_fill_in():
     model.minimize(x0**2 + x1**2 + x2**2 + u**2)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        model.generate(tmpdir, use_fused_riccati=True, integrator_type="EULER_IMPLICIT")
+        model.generate(tmpdir, use_fused_riccati=True, integrator_type=integrator_type)
         header_path = os.path.join(tmpdir, "implicitpatternregressionmodel.h")
         with open(header_path, "r", encoding="utf-8") as f:
-            text = f.read()
+            return f.read()
 
-    require(text, "generated_integrator = IntegratorType::EULER_IMPLICIT")
+
+def check_implicit_chain_pattern(integrator_type):
+    text = generate_chain_model(integrator_type)
+
+    require(text, f"generated_integrator = IntegratorType::{integrator_type}")
+
+    # The selected implicit integrator has a solve/inverse in its discrete
+    # Jacobian path, so the lower chain must keep transitive fill-in.
     require(text, "T A_2_0 = kp.A(2,0);")
     require(text, "T B_2_0 = kp.B(2,0);")
+
+    # But the directed chain should not be widened into an undirected dense
+    # component. That would be correct but slower and would hide whether the
+    # integrator-specific pattern path is actually tighter.
+    reject(text, "T A_0_2 = kp.A(0,2);")
+    reject(text, "T A_0_1 = kp.A(0,1);")
+
+
+def test_implicit_riccati_pattern_keeps_inverse_fill_in():
+    for integrator_type in ("EULER_IMPLICIT", "RK2_IMPLICIT", "RK4_IMPLICIT"):
+        check_implicit_chain_pattern(integrator_type)
 
 
 if __name__ == "__main__":
