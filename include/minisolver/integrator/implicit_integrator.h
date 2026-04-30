@@ -164,19 +164,13 @@ private:
         }
     }
 
-    // Compute M^{-1} via column-wise LU solve.
+    // Compute M^{-1} via one LU factorization with matrix RHS.
     // M = I - dt*Jx is not symmetric in general, so LLT is invalid.
     static bool invert_matrix(
         const MSMat<double, NX, NX>& M, MSMat<double, NX, NX>& M_inv)
     {
         MSMat<double, NX, NX> I = MSMat<double, NX, NX>::Identity();
-        for (int j = 0; j < NX; ++j) {
-            MSVec<double, NX> col;
-            if (!MatOps::lu_solve(M, I.col(j), col))
-                return false;
-            M_inv.col(j) = col;
-        }
-        return true;
+        return MatOps::lu_solve_matrix(M, I, M_inv);
     }
 
     // --- Backward Euler ---
@@ -339,20 +333,16 @@ private:
         JK.template block<NX, NX>(NX, 0) = -jac2.Jx * (dt * a21);
         JK.template block<NX, NX>(NX, NX) = I_NX - jac2.Jx * (dt * a22);
 
-        // Solve JK * dK = RHS via LU column-by-column (JK is not symmetric).
+        // Solve JK * dK = RHS via one LU factorization (JK is not symmetric).
         MSMat<double, N2, NX> RHS_x;
         RHS_x.template block<NX, NX>(0, 0) = jac1.Jx;
         RHS_x.template block<NX, NX>(NX, 0) = jac2.Jx;
 
         MSMat<double, N2, NX> dK_dx;
-        for (int j = 0; j < NX; ++j) {
-            MSVec<double, N2> col;
-            if (!MatOps::lu_solve(JK, RHS_x.col(j), col)) {
-                kp.A.setIdentity();
-                kp.B.setZero();
-                return;
-            }
-            dK_dx.col(j) = col;
+        if (!MatOps::lu_solve_matrix(JK, RHS_x, dK_dx)) {
+            kp.A.setIdentity();
+            kp.B.setZero();
+            return;
         }
 
         // A = I + dt*0.5*(dk1/dx + dk2/dx)
@@ -364,13 +354,9 @@ private:
         RHS_u.template block<NX, NU>(NX, 0) = jac2.Ju;
 
         MSMat<double, N2, NU> dK_du;
-        for (int j = 0; j < NU; ++j) {
-            MSVec<double, N2> col;
-            if (!MatOps::lu_solve(JK, RHS_u.col(j), col)) {
-                kp.B.setZero();
-                return;
-            }
-            dK_du.col(j) = col;
+        if (!MatOps::lu_solve_matrix(JK, RHS_u, dK_du)) {
+            kp.B.setZero();
+            return;
         }
 
         kp.B.noalias() = (dK_du.template topRows<NX>() + dK_du.template bottomRows<NX>()) * (dt * 0.5);

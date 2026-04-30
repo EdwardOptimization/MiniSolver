@@ -327,6 +327,53 @@ namespace matrix {
         AddAtMulBImpl<UseStaticUnroll<Out::Rows * Out::Cols * A::Rows>::value>::run(out, a, b);
     }
 
+    template <bool Unroll> struct WeightedAddAtMulBImpl;
+
+    template <> struct WeightedAddAtMulBImpl<true> {
+        template <typename Out, typename A, typename Weights, typename B>
+        static inline void run(Out& out, const A& a, const Weights& weights, const B& b)
+        {
+            struct Body {
+                Out& out;
+                const A& a;
+                const Weights& weights;
+                const B& b;
+                inline void operator()(int index)
+                {
+                    const int i = index / Out::Cols;
+                    const int j = index - i * Out::Cols;
+                    typename Out::Scalar sum = typename Out::Scalar(0);
+                    for (int k = 0; k < A::Rows; ++k)
+                        sum += a(k, i) * weights(k) * b(k, j);
+                    out(i, j) += sum;
+                }
+            } body = { out, a, weights, b };
+            StaticFor<0, Out::Rows * Out::Cols>::run(body);
+        }
+    };
+
+    template <> struct WeightedAddAtMulBImpl<false> {
+        template <typename Out, typename A, typename Weights, typename B>
+        static inline void run(Out& out, const A& a, const Weights& weights, const B& b)
+        {
+            for (int i = 0; i < Out::Rows; ++i) {
+                for (int j = 0; j < Out::Cols; ++j) {
+                    typename Out::Scalar sum = typename Out::Scalar(0);
+                    for (int k = 0; k < A::Rows; ++k)
+                        sum += a(k, i) * weights(k) * b(k, j);
+                    out(i, j) += sum;
+                }
+            }
+        }
+    };
+
+    template <typename Out, typename A, typename Weights, typename B>
+    inline void weighted_add_At_mul_B(Out& out, const A& a, const Weights& weights, const B& b)
+    {
+        WeightedAddAtMulBImpl<UseStaticUnroll<Out::Rows * Out::Cols * A::Rows>::value>::run(
+            out, a, weights, b);
+    }
+
     template <bool Unroll> struct AddAtMulVImpl;
 
     template <> struct AddAtMulVImpl<true> {

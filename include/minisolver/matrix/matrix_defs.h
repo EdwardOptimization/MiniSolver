@@ -13,6 +13,8 @@
 #define USE_EIGEN
 #endif
 
+#include <array>
+
 #ifdef USE_EIGEN
 #include <Eigen/Dense>
 #include <cmath>
@@ -85,6 +87,16 @@ struct MatOps {
         return true;
     }
 
+    template <typename Mat, typename Rhs, typename Res>
+    inline static bool lu_solve_matrix(const Mat& A, const Rhs& B, Res& X)
+    {
+        Eigen::PartialPivLU<Mat> lu(A);
+        if (lu.matrixLU().diagonal().array().abs().minCoeff() < 1e-30)
+            return false;
+        X = lu.solve(B);
+        return true;
+    }
+
     // Check PD
     template <typename Mat> inline static bool is_pos_def(const Mat& A)
     {
@@ -126,6 +138,15 @@ struct MatOps {
         D.noalias() += A.transpose() * B;
     }
 
+    // Accumulate weighted transpose product: D += A^T * diag(weights) * B.
+    template <typename DerivedD, typename DerivedA, typename DerivedW, typename DerivedB>
+    inline static void weighted_mult_add_transA(Eigen::MatrixBase<DerivedD>& D,
+        const Eigen::MatrixBase<DerivedA>& A, const Eigen::MatrixBase<DerivedW>& weights,
+        const Eigen::MatrixBase<DerivedB>& B)
+    {
+        D.noalias() += A.transpose() * weights.asDiagonal() * B;
+    }
+
     // Accumulate Transpose Mult Vector: d += A^T * b
     template <typename DerivedD, typename DerivedA, typename DerivedB>
     inline static void mult_add_transA_v(Eigen::MatrixBase<DerivedD>& d,
@@ -159,7 +180,8 @@ struct MatOps {
         return llt.info() == Eigen::Success;
     }
 
-    template <typename SolverType> inline static bool is_spd_solver_success(const SolverType& solver)
+    template <typename SolverType>
+    inline static bool is_spd_solver_success(const SolverType& solver)
     {
         return solver.info() == Eigen::Success;
     }
@@ -341,6 +363,73 @@ struct MatOps {
         return true;
     }
 
+    template <typename Mat, typename Rhs, typename Res>
+    inline static bool lu_solve_matrix(const Mat& A, const Rhs& B, Res& X)
+    {
+        constexpr int N = Mat::Rows;
+        constexpr int NRHS = Rhs::Cols;
+        static_assert(Mat::Rows == Mat::Cols, "LU solve requires a square matrix");
+        static_assert(Rhs::Rows == N, "LU RHS row count must match matrix size");
+        static_assert(Res::Rows == N && Res::Cols == NRHS, "LU output shape mismatch");
+
+        std::array<double, N * N> lu;
+        for (int i = 0; i < N; ++i)
+            for (int j = 0; j < N; ++j)
+                lu[static_cast<size_t>(i * N + j)] = A(i, j);
+
+        std::array<int, N> perm;
+        for (int i = 0; i < N; ++i)
+            perm[static_cast<size_t>(i)] = i;
+
+        for (int k = 0; k < N; ++k) {
+            int max_row = k;
+            double max_val = std::abs(lu[static_cast<size_t>(k * N + k)]);
+            for (int i = k + 1; i < N; ++i) {
+                double v = std::abs(lu[static_cast<size_t>(i * N + k)]);
+                if (v > max_val) {
+                    max_val = v;
+                    max_row = i;
+                }
+            }
+            if (max_val < 1e-30)
+                return false;
+
+            if (max_row != k) {
+                std::swap(perm[static_cast<size_t>(k)], perm[static_cast<size_t>(max_row)]);
+                for (int j = 0; j < N; ++j)
+                    std::swap(lu[static_cast<size_t>(k * N + j)],
+                        lu[static_cast<size_t>(max_row * N + j)]);
+            }
+
+            for (int i = k + 1; i < N; ++i) {
+                double factor
+                    = lu[static_cast<size_t>(i * N + k)] / lu[static_cast<size_t>(k * N + k)];
+                for (int j = k + 1; j < N; ++j)
+                    lu[static_cast<size_t>(i * N + j)]
+                        -= factor * lu[static_cast<size_t>(k * N + j)];
+                lu[static_cast<size_t>(i * N + k)] = factor;
+            }
+        }
+
+        for (int col = 0; col < NRHS; ++col) {
+            std::array<double, N> y;
+            for (int i = 0; i < N; ++i) {
+                y[static_cast<size_t>(i)] = B(perm[static_cast<size_t>(i)], col);
+                for (int j = 0; j < i; ++j)
+                    y[static_cast<size_t>(i)]
+                        -= lu[static_cast<size_t>(i * N + j)] * y[static_cast<size_t>(j)];
+            }
+
+            for (int i = N - 1; i >= 0; --i) {
+                double value = y[static_cast<size_t>(i)];
+                for (int j = i + 1; j < N; ++j)
+                    value -= lu[static_cast<size_t>(i * N + j)] * X(j, col);
+                X(i, col) = value / lu[static_cast<size_t>(i * N + i)];
+            }
+        }
+        return true;
+    }
+
     template <typename Mat> inline static bool is_pos_def(const Mat& A)
     {
         MiniLLT<double, Mat::Rows> llt(A);
@@ -376,6 +465,14 @@ struct MatOps {
         D.add_At_mul_B(A, B);
     }
 
+    // Accumulate weighted transpose product: D += A^T * diag(weights) * B.
+    template <typename DerivedD, typename DerivedA, typename DerivedW, typename DerivedB>
+    inline static void weighted_mult_add_transA(
+        DerivedD& D, const DerivedA& A, const DerivedW& weights, const DerivedB& B)
+    {
+        matrix::weighted_add_At_mul_B(D, A, weights, B);
+    }
+
     // Accumulate Transpose Mult Vector: d += A^T * b
     template <typename DerivedD, typename DerivedA, typename DerivedB>
     inline static void mult_add_transA_v(DerivedD& d, const DerivedA& A, const DerivedB& b)
@@ -405,7 +502,8 @@ struct MatOps {
         return llt.info() == 0;
     }
 
-    template <typename SolverType> inline static bool is_spd_solver_success(const SolverType& solver)
+    template <typename SolverType>
+    inline static bool is_spd_solver_success(const SolverType& solver)
     {
         return solver.info() == 0;
     }

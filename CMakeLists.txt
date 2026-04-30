@@ -219,6 +219,15 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     )
 endif()
 
+add_executable(barrier_fusion_bench tools/barrier_fusion_bench.cpp)
+target_link_libraries(barrier_fusion_bench minisolver_lib)
+
+add_executable(implicit_lu_bench tools/implicit_lu_bench.cpp)
+target_link_libraries(implicit_lu_bench minisolver_lib)
+
+add_executable(block_copy_bench tools/block_copy_bench.cpp)
+target_link_libraries(block_copy_bench minisolver_lib)
+
 add_executable(auto_tuner tools/auto_tuner.cpp)
 target_link_libraries(auto_tuner minisolver_lib)
 

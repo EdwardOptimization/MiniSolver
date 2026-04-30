@@ -3,9 +3,9 @@
 #ifdef USE_EIGEN
 #include <Eigen/Dense>
 #endif
-#include "minisolver/matrix/matrix_defs.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
+#include "minisolver/matrix/matrix_defs.h"
 
 namespace minisolver {
 
@@ -158,6 +158,22 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
         }
     }
 
+#ifdef USE_CUSTOM_MATRIX
+    kp.Q_bar = kp.Q;
+    MatOps::weighted_mult_add_transA(kp.Q_bar, kp.C, sigma, kp.C);
+
+    kp.R_bar = kp.R;
+    MatOps::weighted_mult_add_transA(kp.R_bar, kp.D, sigma, kp.D);
+
+    kp.H_bar = kp.H;
+    MatOps::weighted_mult_add_transA(kp.H_bar, kp.D, sigma, kp.C);
+
+    kp.q_bar = kp.q;
+    MatOps::mult_add_transA_v(kp.q_bar, kp.C, grad_mod);
+
+    kp.r_bar = kp.r;
+    MatOps::mult_add_transA_v(kp.r_bar, kp.D, grad_mod);
+#else
     MSDiag<double, Knot::NC> SigmaMat(sigma);
 
     MSMat<double, Knot::NC, Knot::NX> tempC = SigmaMat * kp.C;
@@ -169,6 +185,7 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
 
     kp.q_bar.noalias() = kp.q + kp.C.transpose() * grad_mod;
     kp.r_bar.noalias() = kp.r + kp.D.transpose() * grad_mod;
+#endif
 }
 
 template <typename Knot, typename ModelType>

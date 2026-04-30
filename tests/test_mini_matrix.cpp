@@ -1,7 +1,8 @@
+#include "minisolver/matrix/matrix_defs.h"
 #include "minisolver/matrix/mini_matrix.h"
-#include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <gtest/gtest.h>
 #include <limits>
 
 using namespace minisolver;
@@ -9,6 +10,21 @@ using namespace minisolver;
 template <int N, int C>
 double residual_inf(const MiniMatrix<double, N, N>& A, const MiniMatrix<double, N, C>& X,
     const MiniMatrix<double, N, C>& B)
+{
+    double max_abs = 0.0;
+    for (int i = 0; i < N; ++i) {
+        for (int c = 0; c < C; ++c) {
+            double sum = 0.0;
+            for (int j = 0; j < N; ++j)
+                sum += A(i, j) * X(j, c);
+            max_abs = std::max(max_abs, std::abs(sum - B(i, c)));
+        }
+    }
+    return max_abs;
+}
+
+template <int N, int C, typename MatA, typename MatX, typename MatB>
+double residual_inf_static(const MatA& A, const MatX& X, const MatB& B)
 {
     double max_abs = 0.0;
     for (int i = 0; i < N; ++i) {
@@ -94,6 +110,33 @@ TEST(MiniMatrixTest, Cholesky_MatrixRhsSolve)
     EXPECT_NEAR(X(1, 0), -1.0 / 3.0, 1e-12);
     EXPECT_NEAR(X(1, 1), 2.0 / 3.0, 1e-12);
     EXPECT_NEAR(residual_inf(A, X, B), 0.0, 1e-12);
+}
+
+TEST(MiniMatrixTest, MatOps_LuMatrixRhsSolve)
+{
+    MSMat<double, 3, 3> A;
+    A(0, 0) = 3.0;
+    A(0, 1) = 1.0;
+    A(0, 2) = -1.0;
+    A(1, 0) = 2.0;
+    A(1, 1) = 4.0;
+    A(1, 2) = 1.0;
+    A(2, 0) = -1.0;
+    A(2, 1) = 2.0;
+    A(2, 2) = 5.0;
+
+    MSMat<double, 3, 2> B;
+    B(0, 0) = 1.0;
+    B(1, 0) = 2.0;
+    B(2, 0) = 3.0;
+    B(0, 1) = -2.0;
+    B(1, 1) = 0.5;
+    B(2, 1) = 4.0;
+
+    MSMat<double, 3, 2> X;
+    ASSERT_TRUE(MatOps::lu_solve_matrix(A, B, X));
+    const double residual = residual_inf_static<3, 2>(A, X, B);
+    EXPECT_NEAR(residual, 0.0, 1e-12);
 }
 
 TEST(MiniMatrixTest, LDLT_EdgeCasesAndSolves)
@@ -188,6 +231,46 @@ TEST(MiniMatrixTest, Optimization_AddAtMulB)
         else
             EXPECT_NEAR(C_opt.data[i], 7.0, 1e-9);
     }
+}
+
+TEST(MiniMatrixTest, Kernel_WeightedAddAtMulB)
+{
+    MiniMatrix<double, 3, 2> A;
+    A(0, 0) = 1.0;
+    A(0, 1) = -2.0;
+    A(1, 0) = 3.0;
+    A(1, 1) = 4.0;
+    A(2, 0) = -5.0;
+    A(2, 1) = 6.0;
+
+    MiniMatrix<double, 3, 2> B;
+    B(0, 0) = 0.5;
+    B(0, 1) = 1.5;
+    B(1, 0) = -2.0;
+    B(1, 1) = 2.5;
+    B(2, 0) = 3.0;
+    B(2, 1) = -3.5;
+
+    MiniMatrix<double, 3, 1> weights;
+    weights(0) = 2.0;
+    weights(1) = 0.25;
+    weights(2) = 1.5;
+
+    MiniMatrix<double, 2, 2> ref;
+    ref.setZero();
+    for (int i = 0; i < 2; ++i) {
+        for (int j = 0; j < 2; ++j) {
+            for (int k = 0; k < 3; ++k)
+                ref(i, j) += A(k, i) * weights(k) * B(k, j);
+        }
+    }
+
+    MiniMatrix<double, 2, 2> opt;
+    opt.setZero();
+    matrix::weighted_add_At_mul_B(opt, A, weights, B);
+
+    for (int i = 0; i < 4; ++i)
+        EXPECT_NEAR(ref.data[i], opt.data[i], 1e-12);
 }
 
 TEST(MiniMatrixTest, Kernel_MatMulAndMultAdd)
