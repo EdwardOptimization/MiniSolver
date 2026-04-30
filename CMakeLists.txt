@@ -199,7 +199,14 @@ add_executable(fast_inverse_bench tools/fast_inverse_bench/fast_inverse_bench.cp
 target_link_libraries(fast_inverse_bench minisolver_lib)
 
 add_executable(matrix_kernel_bench tools/matrix_kernel_bench/matrix_kernel_bench.cpp)
-target_link_libraries(matrix_kernel_bench minisolver_lib)
+target_link_libraries(matrix_kernel_bench minisolver_lib Eigen3::Eigen)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(matrix_kernel_bench PRIVATE
+        -Wno-array-bounds
+        -Wno-aggressive-loop-optimizations
+        -Wno-maybe-uninitialized
+    )
+endif()
 
 add_executable(auto_tuner tools/auto_tuner.cpp)
 target_link_libraries(auto_tuner minisolver_lib)
