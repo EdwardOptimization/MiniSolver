@@ -8,6 +8,7 @@
 #include "minisolver/core/logger.h" // [NEW] Needed for MLOG_DEBUG
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/trajectory.h"
+#include "minisolver/integrator/implicit_integrator.h"
 #include "minisolver/core/types.h"
 #include "minisolver/solver/line_search_utils.h" // [NEW] Needed for fraction_to_boundary_rule
 
@@ -88,8 +89,8 @@ public:
 
                 if (k < N) {
                     const double current_dt = dt_traj[static_cast<size_t>(k)];
-                    candidate[k + 1].x = Model::integrate(candidate[k].x, candidate[k].u,
-                        candidate[k].p, current_dt, config.integrator);
+                    candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
+                        candidate[k].p, current_dt, config.integrator, config.newton_config);
                 }
             }
         }
@@ -273,11 +274,11 @@ public:
                     // Compute Residuals
                     if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
                         Model::compute_cost_gn(candidate[k]);
-                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                         Model::compute_constraints(candidate[k]);
                     } else {
                         Model::compute_cost_exact(candidate[k]);
-                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                         Model::compute_constraints(candidate[k]);
                     }
                 }
@@ -297,11 +298,11 @@ public:
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
                     if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
                         Model::compute_cost_gn(candidate[k]);
-                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                         Model::compute_constraints(candidate[k]);
                     } else {
                         Model::compute_cost_exact(candidate[k]);
-                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                         Model::compute_constraints(candidate[k]);
                     }
 
@@ -540,11 +541,11 @@ public:
                     // Compute Residuals
                     if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
                         Model::compute_cost_gn(candidate[k]);
-                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                         Model::compute_constraints(candidate[k]);
                     } else {
                         Model::compute_cost_exact(candidate[k]);
-                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                         Model::compute_constraints(candidate[k]);
                     }
                 }
@@ -562,11 +563,11 @@ public:
                     // Compute Residuals
                     if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
                         Model::compute_cost_gn(candidate[k]);
-                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                         Model::compute_constraints(candidate[k]);
                     } else {
                         Model::compute_cost_exact(candidate[k]);
-                        Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                         Model::compute_constraints(candidate[k]);
                     }
 
@@ -631,11 +632,11 @@ public:
                         // Compute Residuals
                         if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
                             Model::compute_cost_gn(candidate[k]);
-                            Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                            detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                             Model::compute_constraints(candidate[k]);
                         } else {
                             Model::compute_cost_exact(candidate[k]);
-                            Model::compute_dynamics(candidate[k], config.integrator, current_dt);
+                            detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
                             Model::compute_constraints(candidate[k]);
                         }
                     }

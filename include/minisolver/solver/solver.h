@@ -21,6 +21,7 @@
 #include "minisolver/algorithms/line_search.h"
 #include "minisolver/algorithms/linear_solver.h"
 #include "minisolver/algorithms/riccati_solver.h"
+#include "minisolver/integrator/implicit_integrator.h"
 
 #include "minisolver/backend/backend_interface.h"
 
@@ -552,7 +553,7 @@ public:
         for (int k = 0; k < N; ++k) {
             double current_dt = dt_traj[k];
             traj[k + 1].x
-                = Model::integrate(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator);
+                = detail::dispatch_integrate<Model>(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator, config.newton_config);
         }
     }
 
@@ -741,7 +742,7 @@ private:
         for (int r_iter = 0; r_iter < config.max_restoration_iters; ++r_iter) {
             for (int k = 0; k <= N; ++k) {
                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
                 Model::compute_constraints(traj[k]);
 
                 traj[k].Q.setIdentity();
@@ -1002,11 +1003,11 @@ private:
             // Conditionally use GN or Exact compute
             if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
                 Model::compute_cost_gn(traj[k]);
-                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
                 Model::compute_constraints(traj[k]);
             } else {
                 Model::compute_cost_exact(traj[k]);
-                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
                 Model::compute_constraints(traj[k]);
             }
 
@@ -1488,6 +1489,9 @@ private:
             auto& traj = trajectory.active();
             for (int k = 0; k <= N; ++k) {
                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
+                // Presolve: evaluate initial guess. Use Model::compute() which
+                // combines dynamics+constraints+cost. Implicit dispatch is only
+                // needed in the hot iteration loop (step(), line search).
                 Model::compute(traj[k], config.integrator, current_dt);
 
                 for (int i = 0; i < NC; ++i) {
@@ -1579,11 +1583,11 @@ private:
             // 1. Recompute Primal/Dual properties
             if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
                 Model::compute_cost_gn(traj[k]);
-                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
                 Model::compute_constraints(traj[k]);
             } else {
                 Model::compute_cost_exact(traj[k]);
-                Model::compute_dynamics(traj[k], config.integrator, current_dt);
+                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
                 Model::compute_constraints(traj[k]);
             }
 

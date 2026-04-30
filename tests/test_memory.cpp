@@ -1,5 +1,6 @@
 #include "../examples/01_car_tutorial/generated/car_model.h"
 #include "minisolver/algorithms/line_search.h"
+#include "minisolver/integrator/implicit_integrator.h"
 #include "minisolver/solver/solver.h"
 #include <atomic>
 #include <cstdlib>
@@ -270,4 +271,67 @@ TEST(MemoryTest, ZeroMalloc_FilterSOC_Path)
     EXPECT_DOUBLE_EQ(alpha, 0.0);
     EXPECT_EQ(g_allocation_count, 0) << "Detected " << g_allocation_count
                                      << " heap allocations inside FilterLineSearch SOC path!";
+}
+
+// --- Implicit Integrator Zero-Malloc ---
+namespace {
+struct MemTestImplicitModel {
+    static const int NX = 2;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x", "y" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> dynamics_continuous(
+        const MSVec<T, NX>& x_in, const MSVec<T, NU>& u_in, const MSVec<T, NP>&)
+    {
+        MSVec<T, NX> xdot;
+        xdot(0) = -x_in(0) + u_in(0);
+        xdot(1) = -2.0 * x_in(1);
+        return xdot;
+    }
+};
+} // namespace
+
+TEST(MemoryTest, ZeroMalloc_ImplicitIntegrator)
+{
+    using Knot = KnotPoint<double, 2, 1, 0, 0>;
+
+    NewtonConfig nc;
+    nc.max_iters = 10;
+
+    Knot kp;
+    kp.set_zero();
+    kp.x(0) = 1.0;
+    kp.x(1) = 2.0;
+
+    g_allocation_count = 0;
+    g_memory_check_active = true;
+
+    // Backward Euler
+    for (int i = 0; i < 100; ++i)
+        ImplicitIntegrator<MemTestImplicitModel>::compute_dynamics(
+            kp, IntegratorType::EULER_IMPLICIT, 0.1, nc);
+
+    // Implicit Midpoint
+    for (int i = 0; i < 100; ++i)
+        ImplicitIntegrator<MemTestImplicitModel>::compute_dynamics(
+            kp, IntegratorType::RK2_IMPLICIT, 0.1, nc);
+
+    // Gauss-Legendre (2-stage, 2*NX=4 coupled Newton)
+    for (int i = 0; i < 100; ++i)
+        ImplicitIntegrator<MemTestImplicitModel>::compute_dynamics(
+            kp, IntegratorType::RK4_IMPLICIT, 0.1, nc);
+
+    g_memory_check_active = false;
+
+    EXPECT_EQ(g_allocation_count, 0)
+        << "Detected " << g_allocation_count
+        << " heap allocations in implicit integrator (Euler+Midpoint+GaussLegendre)!";
 }

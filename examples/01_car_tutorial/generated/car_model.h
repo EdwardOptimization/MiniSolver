@@ -2,6 +2,7 @@
 #include "minisolver/core/types.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/matrix_defs.h"
+#include "minisolver/integrator/numerical_jacobian.h"
 #include <cmath>
 #include <string>
 #include <array>
@@ -15,19 +16,7 @@ struct CarModel {
     static const int NC=5;
     static const int NP=13;
 
-    static constexpr bool is_fused_riccati_integrator_compatible(IntegratorType type) {
-        switch(type) {
-            case IntegratorType::EULER_EXPLICIT:
-            case IntegratorType::EULER_IMPLICIT:
-            case IntegratorType::RK2_EXPLICIT:
-            case IntegratorType::RK2_IMPLICIT:
-            case IntegratorType::RK4_EXPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
-                return true;
-            default:
-                return false;
-        }
-    }
+    static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
 
     static constexpr std::array<double, NC> constraint_weights = {0.0, 0.0, 0.0, 0.0, 0.0};
     static constexpr std::array<int, NC> constraint_types = {0, 0, 0, 0, 0};
@@ -82,6 +71,56 @@ struct CarModel {
         xdot(2) = v*tan(steer)/L;
         xdot(3) = acc;
         return xdot;
+
+    }
+
+    // --- Continuous Dynamics Jacobians (for implicit integrators) ---
+    template<typename T>
+    static ContinuousJacobians<T, NX, NU> jacobian_continuous(
+        const MSVec<T, NX>& x_in,
+        const MSVec<T, NU>& u_in,
+        const MSVec<T, NP>& p_in)
+    {
+        T theta = x_in(2);
+        T v = x_in(3);
+        T steer = u_in(1);
+        T L = p_in(6);
+
+        ContinuousJacobians<T, NX, NU> jac;
+        T tmp_jc0 = sin(theta);
+        T tmp_jc1 = cos(theta);
+        T tmp_jc2 = tan(steer);
+        T tmp_jc3 = 1.0/L;
+
+        // Jx = df/dx
+        jac.Jx(0,0) = 0;
+        jac.Jx(0,1) = 0;
+        jac.Jx(0,2) = -tmp_jc0*v;
+        jac.Jx(0,3) = tmp_jc1;
+        jac.Jx(1,0) = 0;
+        jac.Jx(1,1) = 0;
+        jac.Jx(1,2) = tmp_jc1*v;
+        jac.Jx(1,3) = tmp_jc0;
+        jac.Jx(2,0) = 0;
+        jac.Jx(2,1) = 0;
+        jac.Jx(2,2) = 0;
+        jac.Jx(2,3) = tmp_jc2*tmp_jc3;
+        jac.Jx(3,0) = 0;
+        jac.Jx(3,1) = 0;
+        jac.Jx(3,2) = 0;
+        jac.Jx(3,3) = 0;
+
+        // Ju = df/du
+        jac.Ju(0,0) = 0;
+        jac.Ju(0,1) = 0;
+        jac.Ju(1,0) = 0;
+        jac.Ju(1,1) = 0;
+        jac.Ju(2,0) = 0;
+        jac.Ju(2,1) = tmp_jc3*v*(pow(tmp_jc2, 2) + 1);
+        jac.Ju(3,0) = 1;
+        jac.Ju(3,1) = 0;
+
+        return jac;
 
     }
 

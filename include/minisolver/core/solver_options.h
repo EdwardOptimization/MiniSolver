@@ -13,6 +13,13 @@ enum class IntegratorType {
 
 enum class BarrierStrategy { MONOTONE, ADAPTIVE, MEHROTRA };
 
+// Newton solver parameters for implicit integrators.
+struct NewtonConfig {
+    int max_iters = 20;
+    double tol = 1e-10;
+    double regularization = 1e-12; // Levenberg-Marquardt damping
+};
+
 enum class InertiaStrategy {
     REGULARIZATION,
     SATURATION,
@@ -75,6 +82,7 @@ struct SolverConfig {
     // RK4 is a good balance for general nonlinear problems
     IntegratorType integrator = IntegratorType::RK4_EXPLICIT;
     double default_dt = 0.1;
+    NewtonConfig newton_config; // Implicit integrator Newton solver parameters
 
     // --- Barrier Strategy ---
     // ADAPTIVE is generally the most robust and fast for general nonlinear problems

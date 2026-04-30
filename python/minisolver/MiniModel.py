@@ -504,16 +504,18 @@ class OptimalControlModel:
             return f_cont.subs(repl)
 
         # --- Discrete Integrators (Explicit) ---
+        # Note: Implicit integrators (EULER_IMPLICIT, RK2_IMPLICIT, RK4_IMPLICIT)
+        # are handled at runtime by ImplicitIntegrator<Model> in
+        # include/minisolver/integrator/implicit_integrator.h. The generated
+        # model only needs dynamics_continuous() — the Newton solve and
+        # discrete Jacobian computation happen in the integrator module.
         integrators = {}
-        
+
         # Euler Explicit
         x_next_euler = x_vec + dt_sym * f_cont
         integrators['EULER_EXPLICIT'] = x_next_euler
-        
+
         # RK2 Explicit (Heun's / Midpoint)
-        # k1 = f(x)
-        # k2 = f(x + 0.5*dt*k1)
-        # x_next = x + dt*k2
         k1_rk2 = f_cont
         k2_rk2 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk2, u_vec)
         x_next_rk2 = x_vec + dt_sym * k2_rk2
@@ -527,8 +529,9 @@ class OptimalControlModel:
         x_next_rk4 = x_vec + (dt_sym / 6.0) * (k1_rk4 + 2*k2_rk4 + 2*k3_rk4 + k4_rk4)
         integrators['RK4_EXPLICIT'] = x_next_rk4
 
-        # Map Implicit to Explicit for Jacobian approximation (or generate same code)
-        integrators['EULER_IMPLICIT'] = x_next_euler 
+        # Map implicit to explicit for the generated switch cases.
+        # The runtime ImplicitIntegrator handles the actual implicit solve.
+        integrators['EULER_IMPLICIT'] = x_next_euler
         integrators['RK2_IMPLICIT'] = x_next_rk2
         integrators['RK4_IMPLICIT'] = x_next_rk4
 
@@ -617,6 +620,50 @@ class OptimalControlModel:
             code_compute_dyn_body += "            }\n"
 
         code_compute_dyn_body += "        }"
+
+        # 3.2 Continuous Jacobians for implicit integrators
+        # Compute Jx = df/dx and Ju = df/du symbolically from f_cont.
+        print("Generating continuous Jacobians for implicit integrators...")
+        Jx_cont = f_cont.jacobian(x_vec)  # NX x NX
+        Ju_cont = f_cont.jacobian(u_vec)  # NX x NU
+
+        # CSE for continuous Jacobians
+        repl_jac, reduced_jac = sp.cse(
+            [Jx_cont, Ju_cont],
+            symbols=sp.numbered_symbols("tmp_jc"))
+
+        # Generate jacobian_continuous() body
+        jac_exprs = [Jx_cont, Ju_cont]
+        code_jac_body = self._generate_unpack_block(source_kp=False, expressions=jac_exprs)
+        code_jac_body += "\n        ContinuousJacobians<T, NX, NU> jac;\n"
+
+        # CSE intermediates
+        for name, val in repl_jac:
+            code_jac_body += f"        T {name} = {sp.ccode(val)};\n"
+
+        # Assign Jx (NX x NX)
+        code_jac_body += "\n        // Jx = df/dx\n"
+        mat_jx = reduced_jac[0]
+        for r in range(nx):
+            for c in range(nx):
+                val = mat_jx[r, c]
+                if sp.sympify(val).is_zero is True:
+                    code_jac_body += f"        jac.Jx({r},{c}) = 0;\n"
+                else:
+                    code_jac_body += f"        jac.Jx({r},{c}) = {sp.ccode(val)};\n"
+
+        # Assign Ju (NX x NU)
+        code_jac_body += "\n        // Ju = df/du\n"
+        mat_ju = reduced_jac[1]
+        for r in range(nx):
+            for c in range(nu):
+                val = mat_ju[r, c]
+                if sp.sympify(val).is_zero is True:
+                    code_jac_body += f"        jac.Ju({r},{c}) = 0;\n"
+                else:
+                    code_jac_body += f"        jac.Ju({r},{c}) = {sp.ccode(val)};\n"
+
+        code_jac_body += "\n        return jac;\n"
 
         # 3.5 Derivatives for Cost & Constraints (Independent of Integrator)
         xu_vec = sp.Matrix.vstack(x_vec, u_vec)
@@ -893,6 +940,7 @@ class OptimalControlModel:
         content = content.replace("{{CONSTANTS}}", code_constants)
         content = content.replace("{{NAME_ARRAYS}}", code_names)
         content = content.replace("{{DYNAMICS_CONTINUOUS_BODY}}", code_dyn_cont)
+        content = content.replace("{{JACOBIAN_CONTINUOUS_BODY}}", code_jac_body)
         content = content.replace("{{COMPUTE_DYNAMICS_BODY}}", code_compute_dyn)
         content = content.replace("{{COMPUTE_CONSTRAINTS_BODY}}", code_compute_con)
         content = content.replace("{{COMPUTE_COST_SECTION}}", code_compute_cost)

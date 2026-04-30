@@ -2,6 +2,7 @@
 #include "minisolver/core/types.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/matrix_defs.h"
+#include "minisolver/integrator/numerical_jacobian.h"
 #include <cmath>
 #include <string>
 #include <array>
@@ -23,6 +24,16 @@ struct {{MODEL_NAME}} {
         const MSVec<T, NP>& p_in) 
     {
 {{DYNAMICS_CONTINUOUS_BODY}}
+    }
+
+    // --- Continuous Dynamics Jacobians (for implicit integrators) ---
+    template<typename T>
+    static ContinuousJacobians<T, NX, NU> jacobian_continuous(
+        const MSVec<T, NX>& x_in,
+        const MSVec<T, NU>& u_in,
+        const MSVec<T, NP>& p_in)
+    {
+{{JACOBIAN_CONTINUOUS_BODY}}
     }
 
     // --- Integrator Interface ---
