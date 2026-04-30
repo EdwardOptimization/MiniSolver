@@ -1,5 +1,5 @@
 #pragma once
-#include "minisolver/core/matrix_defs.h"
+#include "minisolver/matrix/matrix_defs.h"
 #include "minisolver/core/solver_options.h"
 
 namespace minisolver {

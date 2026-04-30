@@ -191,8 +191,7 @@ struct MatOps {
         return (bits & 0x7FF0000000000000ULL) != 0x7FF0000000000000ULL;
     }
 
-    template <typename Derived>
-    inline static bool has_nan(const Eigen::MatrixBase<Derived>& m)
+    template <typename Derived> inline static bool has_nan(const Eigen::MatrixBase<Derived>& m)
     {
         // Iterate element-wise. For fixed-size matrices this is unrolled.
         for (int i = 0; i < m.rows(); ++i) {
@@ -209,7 +208,7 @@ struct MatOps {
 
 #else
 // Custom Matrix Library
-#include "minisolver/core/mini_matrix.h"
+#include "minisolver/matrix/mini_matrix.h"
 
 namespace minisolver {
 // Type Aliases
@@ -406,8 +405,7 @@ struct MatOps {
         return (bits & 0x7FF0000000000000ULL) != 0x7FF0000000000000ULL;
     }
 
-    template <typename Derived>
-    inline static bool has_nan(const Derived& m)
+    template <typename Derived> inline static bool has_nan(const Derived& m)
     {
         for (int i = 0; i < Derived::Rows; ++i) {
             for (int j = 0; j < Derived::Cols; ++j) {

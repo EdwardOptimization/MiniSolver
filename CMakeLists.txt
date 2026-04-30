@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # =============================================================
 # Linear Algebra Backend Selection
 # =============================================================
-# These options control preprocessor macros used in include/minisolver/core/matrix_defs.h.
+# These options control preprocessor macros used in include/minisolver/matrix/matrix_defs.h.
 # Default is Eigen. If both are enabled, CustomMatrix takes precedence (matches matrix_defs.h).
 option(USE_EIGEN "Use Eigen backend for linear algebra" ON)
 option(USE_CUSTOM_MATRIX "Use custom MiniMatrix backend for linear algebra" OFF)
@@ -198,6 +198,9 @@ target_link_libraries(benchmark_suite minisolver_lib)
 add_executable(fast_inverse_bench tools/fast_inverse_bench/fast_inverse_bench.cpp)
 target_link_libraries(fast_inverse_bench minisolver_lib)
 
+add_executable(matrix_kernel_bench tools/matrix_kernel_bench/matrix_kernel_bench.cpp)
+target_link_libraries(matrix_kernel_bench minisolver_lib)
+
 add_executable(auto_tuner tools/auto_tuner.cpp)
 target_link_libraries(auto_tuner minisolver_lib)
 
@@ -229,6 +232,7 @@ add_custom_command(
     DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/models/generate_kinematic_bicycle_regression_model.py
         ${CMAKE_CURRENT_SOURCE_DIR}/python/minisolver/MiniModel.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/python/minisolver/templates/model.h.in
     COMMENT "Generating kinematic bicycle regression test model"
 )
 
@@ -239,6 +243,7 @@ add_custom_command(
     DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/models/generate_double_integrator_3d_regression_model.py
         ${CMAKE_CURRENT_SOURCE_DIR}/python/minisolver/MiniModel.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/python/minisolver/templates/model.h.in
     COMMENT "Generating double integrator 3D regression test model"
 )
 

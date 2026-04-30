@@ -3,7 +3,7 @@
 #ifdef USE_EIGEN
 #include <Eigen/Dense>
 #endif
-#include "minisolver/core/matrix_defs.h"
+#include "minisolver/matrix/matrix_defs.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 

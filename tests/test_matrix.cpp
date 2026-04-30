@@ -1,4 +1,4 @@
-#include "minisolver/core/matrix_defs.h"
+#include "minisolver/matrix/matrix_defs.h"
 #include <cmath>
 #include <gtest/gtest.h>
 

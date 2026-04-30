@@ -1,5 +1,6 @@
-#include "minisolver/core/mini_matrix.h"
+#include "minisolver/matrix/mini_matrix.h"
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace minisolver;
 
@@ -101,4 +102,121 @@ TEST(MiniMatrixTest, Optimization_AddAtMulB)
         else
             EXPECT_NEAR(C_opt.data[i], 7.0, 1e-9);
     }
+}
+
+TEST(MiniMatrixTest, Kernel_MatMulAndMultAdd)
+{
+    MiniMatrix<double, 2, 3> A;
+    MiniMatrix<double, 3, 2> B;
+    for (int i = 0; i < 6; ++i)
+        A.data[i] = static_cast<double>(i + 1);
+    for (int i = 0; i < 6; ++i)
+        B.data[i] = static_cast<double>(10 + i);
+
+    auto C = A * B;
+    EXPECT_NEAR(C(0, 0), 76.0, 1e-12);
+    EXPECT_NEAR(C(0, 1), 82.0, 1e-12);
+    EXPECT_NEAR(C(1, 0), 184.0, 1e-12);
+    EXPECT_NEAR(C(1, 1), 199.0, 1e-12);
+
+    MiniMatrix<double, 2, 2> Accum;
+    Accum.setOnes();
+    Accum.mult_add(A, B);
+    EXPECT_NEAR(Accum(0, 0), 77.0, 1e-12);
+    EXPECT_NEAR(Accum(0, 1), 83.0, 1e-12);
+    EXPECT_NEAR(Accum(1, 0), 185.0, 1e-12);
+    EXPECT_NEAR(Accum(1, 1), 200.0, 1e-12);
+}
+
+TEST(MiniMatrixTest, Kernel_AddAtMulV)
+{
+    MiniMatrix<double, 3, 2> A;
+    A(0, 0) = 1.0;
+    A(0, 1) = 2.0;
+    A(1, 0) = 3.0;
+    A(1, 1) = 4.0;
+    A(2, 0) = 5.0;
+    A(2, 1) = 6.0;
+
+    MiniMatrix<double, 3, 1> x;
+    x(0) = 10.0;
+    x(1) = 20.0;
+    x(2) = 30.0;
+
+    MiniMatrix<double, 2, 1> y;
+    y.setOnes();
+    y.add_At_mul_v(A, x);
+
+    EXPECT_NEAR(y(0), 221.0, 1e-12);
+    EXPECT_NEAR(y(1), 281.0, 1e-12);
+}
+
+TEST(MiniMatrixTest, Kernel_SymmetrizeAndFiniteChecks)
+{
+    MiniMatrix<double, 3, 3> A;
+    for (int i = 0; i < 9; ++i)
+        A.data[i] = static_cast<double>(i);
+
+    A.symmetrize();
+    EXPECT_NEAR(A(0, 1), 2.0, 1e-12);
+    EXPECT_NEAR(A(1, 0), 2.0, 1e-12);
+    EXPECT_NEAR(A(0, 2), 4.0, 1e-12);
+    EXPECT_NEAR(A(2, 0), 4.0, 1e-12);
+    EXPECT_TRUE(A.allFinite());
+
+    A(2, 2) = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(A.allFinite());
+    EXPECT_TRUE(matrix::has_nan(A));
+}
+
+TEST(MiniMatrixTest, EigenLikeBlocksForIntegratorCompatibility)
+{
+    MiniMatrix<double, 4, 1> v;
+    MiniMatrix<double, 2, 1> head;
+    head(0) = 1.0;
+    head(1) = 2.0;
+    MiniMatrix<double, 2, 1> tail;
+    tail(0) = 3.0;
+    tail(1) = 4.0;
+
+    v.template head<2>() = head;
+    v.template tail<2>() = tail;
+
+    auto h = v.template head<2>();
+    auto t = v.template tail<2>();
+    auto sum = h + t;
+    EXPECT_NEAR(sum(0), 4.0, 1e-12);
+    EXPECT_NEAR(sum(1), 6.0, 1e-12);
+
+    MiniMatrix<double, 4, 4> M;
+    M.setZero();
+    MiniMatrix<double, 2, 2> I = MiniMatrix<double, 2, 2>::Identity();
+    M.template block<2, 2>(0, 0) = I;
+    M.template block<2, 2>(2, 2) = I * 2.0;
+
+    EXPECT_NEAR(M(0, 0), 1.0, 1e-12);
+    EXPECT_NEAR(M(1, 1), 1.0, 1e-12);
+    EXPECT_NEAR(M(2, 2), 2.0, 1e-12);
+    EXPECT_NEAR(M(3, 3), 2.0, 1e-12);
+
+    MiniMatrix<double, 4, 1> col;
+    col(0) = 5.0;
+    col(1) = 6.0;
+    col(2) = 7.0;
+    col(3) = 8.0;
+    M.col(1) = col;
+    EXPECT_NEAR(M(0, 1), 5.0, 1e-12);
+    EXPECT_NEAR(M(3, 1), 8.0, 1e-12);
+
+    auto rows = M.template topRows<2>() + M.template bottomRows<2>();
+    EXPECT_NEAR(rows(0, 0), 1.0, 1e-12);
+    EXPECT_NEAR(rows(0, 1), 12.0, 1e-12);
+    EXPECT_NEAR(rows(1, 1), 14.0, 1e-12);
+
+    MiniMatrix<double, 2, 1> delta;
+    delta(0) = 0.5;
+    delta(1) = 1.5;
+    head -= delta;
+    EXPECT_NEAR(head(0), 0.5, 1e-12);
+    EXPECT_NEAR(head(1), 0.5, 1e-12);
 }
