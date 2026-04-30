@@ -135,8 +135,8 @@ public:
         // sparsity at code-gen time. Running with a different runtime
         // integrator may produce wrong fused-kernel results. Warn at
         // construction; the Riccati dispatch already skips the fused kernel
-        // when the integrator doesn't match (if is_fused_riccati_integrator_compatible
-        // is defined), so a hard throw here would block legitimate non-fused usage.
+        // when the integrator doesn't match, so a hard throw here would block
+        // legitimate non-fused usage.
         if constexpr (detail::has_generated_integrator_v<Model>) {
             if (Model::generated_integrator != config.integrator) {
                 std::cerr << "MiniSolver: Model was generated for "

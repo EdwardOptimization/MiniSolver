@@ -38,6 +38,25 @@ namespace internal {
     struct has_fused_riccati_step<T,
         std::void_t<decltype(&T::template compute_fused_riccati_step<double>)>> : std::true_type {
     };
+
+    // Optional marker emitted by MiniModel.py. Fused Riccati kernels are generated
+    // against one discrete integrator's A/B expressions; using them with a different
+    // runtime integrator can silently produce the wrong backward pass.
+    template <typename T, typename = void> struct has_generated_integrator : std::false_type { };
+
+    template <typename T>
+    struct has_generated_integrator<T, std::void_t<decltype(T::generated_integrator)>>
+        : std::true_type { };
+
+    template <typename ModelType>
+    bool is_fused_riccati_integrator_compatible(IntegratorType integrator)
+    {
+        if constexpr (has_generated_integrator<ModelType>::value) {
+            return ModelType::generated_integrator == integrator;
+        } else {
+            return true;
+        }
+    }
 }
 
 template <typename Knot, typename ModelType>
@@ -351,29 +370,35 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
 
     for (int k = N - 1; k >= 0; --k) {
         auto& kp = traj[k];
+        bool used_fused_kernel = false;
 
         // [FUSED KERNEL OPTIMIZATION]
         if constexpr (internal::has_fused_riccati_step<ModelType>::value) {
-            // One-shot update of Qxx, Quu, Qux, qx, ru using fused kernel
-            ModelType::compute_fused_riccati_step(Vxx, Vx, kp);
+            if (internal::is_fused_riccati_integrator_compatible<ModelType>(config.integrator)) {
+                // One-shot update of Qxx, Quu, Qux, qx, ru using fused kernel
+                ModelType::compute_fused_riccati_step(Vxx, Vx, kp);
+                used_fused_kernel = true;
 
-            // If defect correction is enabled, apply the additional defect term
-            if (config.enable_defect_correction) {
-                MSVec<double, Knot::NX> defect;
-                if (soc_traj) {
-                    defect = (*soc_traj)[k].f_resid - (*soc_traj)[k + 1].x;
-                } else {
-                    defect = kp.f_resid - traj[k + 1].x;
+                // If defect correction is enabled, apply the additional defect term
+                if (config.enable_defect_correction) {
+                    MSVec<double, Knot::NX> defect;
+                    if (soc_traj) {
+                        defect = (*soc_traj)[k].f_resid - (*soc_traj)[k + 1].x;
+                    } else {
+                        defect = kp.f_resid - traj[k + 1].x;
+                    }
+
+                    // Vxx * defect
+                    MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
+
+                    // Add A^T * Vxx_d and B^T * Vxx_d to gradients
+                    MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vxx_d);
+                    MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vxx_d);
                 }
-
-                // Vxx * defect
-                MSVec<double, Knot::NX> Vxx_d = Vxx * defect;
-
-                // Add A^T * Vxx_d and B^T * Vxx_d to gradients
-                MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vxx_d);
-                MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vxx_d);
             }
-        } else {
+        }
+
+        if (!used_fused_kernel) {
             // [LEGACY / SEPARATE KERNEL PATH]
             // In-place updates for Riccati backward pass
             // Use kp.Q_bar as accumulator for Qxx

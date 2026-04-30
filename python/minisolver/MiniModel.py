@@ -726,10 +726,10 @@ class OptimalControlModel:
         code_constants = f"static const int NX={nx};\n    static const int NU={nu};\n    static const int NC={nc};\n    static const int NP={np_param};"
 
         # Marker: which integrator the fused Riccati kernel was CSE'd against.
-        # MiniSolver's constructor reads this (SFINAE-detected) and refuses
-        # to run with a mismatched runtime config.integrator, since the fused
-        # kernel's sparsity pattern is pinned to target_A_expr / target_B_expr
-        # for this specific integrator.
+        # MiniSolver's constructor reads this (SFINAE-detected) and warns on a
+        # mismatched runtime config.integrator. Riccati dispatch then skips the
+        # fused kernel because its sparsity pattern is pinned to target_A_expr /
+        # target_B_expr for this specific integrator.
         code_constants += f"\n\n    static constexpr IntegratorType generated_integrator = IntegratorType::{integrator_type};"
         
         # Generate Soft Constraints Meta-Data Array

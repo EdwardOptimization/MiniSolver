@@ -689,16 +689,53 @@ TEST(BugfixTest, SetConfigPreservesBackendInvariant)
 // more non-zeros than target) or does harmless extra multiplies (if fewer).
 //
 // The structural fix is to emit `static constexpr IntegratorType
-// generated_integrator` in each generated model header and have the solver
-// refuse to run when it disagrees with `config.integrator`. This test uses a
-// local model with the marker set to RK4_EXPLICIT and passes EULER_EXPLICIT,
-// expecting the solver to throw.
+// generated_integrator` in each generated model header, warn when it disagrees
+// with `config.integrator`, and have Riccati skip the mismatched fused kernel.
+// Non-fused Riccati remains valid for any integrator.
 // =============================================================================
 struct IntegratorTaggedModel : public BugTestModel {
     // Opt-in marker: compile-time integrator the fused kernel was generated
-    // for. MiniSolver's constructor must reject runtime mismatches.
+    // for. MiniSolver's constructor warns on runtime mismatches.
     static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
 };
+
+struct IntegratorTaggedFusedModel : public BugTestModel {
+    static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
+    inline static int fused_calls = 0;
+
+    template <typename T>
+    static void compute_fused_riccati_step(
+        const MSMat<T, NX, NX>& Vxx, const MSVec<T, NX>& Vx, KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        ++fused_calls;
+
+        // Same 1D Riccati contribution as the generic path. The counter is
+        // the observable used by the test; keeping the math valid lets the
+        // solver finish normally when the fused path is intentionally enabled.
+        kp.q_bar(0) += kp.A(0, 0) * Vx(0);
+        kp.r_bar(0) += kp.B(0, 0) * Vx(0);
+        kp.Q_bar(0, 0) += kp.A(0, 0) * Vxx(0, 0) * kp.A(0, 0);
+        kp.R_bar(0, 0) += kp.B(0, 0) * Vxx(0, 0) * kp.B(0, 0);
+        kp.H_bar(0, 0) += kp.B(0, 0) * Vxx(0, 0) * kp.A(0, 0);
+    }
+};
+
+template <typename Model>
+static void initialize_riccati_smoke_traj(
+    std::array<KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>, 2>& traj)
+{
+    for (auto& kp : traj) {
+        kp.set_zero();
+        kp.Q.setIdentity();
+        kp.R.setIdentity();
+        kp.A.setIdentity();
+        kp.B(0, 0) = 1.0;
+        if constexpr (Model::NC > 0) {
+            kp.s(0) = 1.0;
+            kp.lam(0) = 1.0;
+        }
+    }
+}
 
 // =============================================================================
 // Bug: slack_reset uses config.mu_init to pull dual onto central path instead
@@ -839,6 +876,53 @@ TEST(BugfixTest, SolverWarnsOnFusedKernelIntegratorMismatch)
     // The solver should still construct (warning, not throw) since the
     // non-fused path works with any integrator.
     EXPECT_NO_THROW({ TaggedSolver solver(3, Backend::CPU_SERIAL, conf); (void)solver; });
+}
+
+TEST(BugfixTest, RiccatiSkipsFusedKernelOnIntegratorMismatch)
+{
+    using Model = IntegratorTaggedFusedModel;
+    using Knot = KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>;
+
+    std::array<Knot, 2> traj;
+    initialize_riccati_smoke_traj<Model>(traj);
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.integrator = IntegratorType::EULER_IMPLICIT; // != generated RK4_EXPLICIT
+    config.enable_defect_correction = false;
+
+    RiccatiWorkspace<Knot> ws;
+    Model::fused_calls = 0;
+
+    const bool ok = cpu_serial_solve<decltype(traj), Model>(
+        traj, 1, config.mu_init, config.reg_init, config.inertia_strategy, config, ws);
+
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(Model::fused_calls, 0)
+        << "Riccati must not call a fused kernel generated for a different integrator";
+}
+
+TEST(BugfixTest, RiccatiUsesFusedKernelWhenIntegratorMatches)
+{
+    using Model = IntegratorTaggedFusedModel;
+    using Knot = KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>;
+
+    std::array<Knot, 2> traj;
+    initialize_riccati_smoke_traj<Model>(traj);
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.integrator = IntegratorType::RK4_EXPLICIT; // matches generated_integrator
+    config.enable_defect_correction = false;
+
+    RiccatiWorkspace<Knot> ws;
+    Model::fused_calls = 0;
+
+    const bool ok = cpu_serial_solve<decltype(traj), Model>(
+        traj, 1, config.mu_init, config.reg_init, config.inertia_strategy, config, ws);
+
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(Model::fused_calls, 1);
 }
 
 // =============================================================================
