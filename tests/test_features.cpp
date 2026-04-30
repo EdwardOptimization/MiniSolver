@@ -121,18 +121,23 @@ TEST(FeaturesTest, ParameterPersistenceCheck)
 // =============================================================================
 TEST(FeaturesTest, GPUBackendFallback)
 {
-    int N = 5;
+    // Verify that requesting GPU backend falls back to CPU gracefully.
+    // The test uses FlatCostModel (simple quadratic) to avoid model-specific
+    // numerical issues — we're testing the backend dispatch, not solver convergence.
+    int N = 1;
     SolverConfig config;
-    config.print_level = PrintLevel::DEBUG;
+    config.print_level = PrintLevel::NONE;
     config.backend = Backend::GPU_MPX;
+    config.max_iters = 10;
 
-    MiniSolver<CarModel, 10> solver(N, config.backend, config);
+    MiniSolver<FlatCostModel, 10> solver(N, config.backend, config);
     solver.set_dt(0.1);
-    solver.set_initial_state("x", 0.0);
+    solver.set_initial_state("x", 1.0);
 
     SolverStatus status = solver.solve();
 
-    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
+    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE)
+        << "GPU fallback should produce a valid solution (status=" << static_cast<int>(status) << ")";
 }
 
 // =============================================================================

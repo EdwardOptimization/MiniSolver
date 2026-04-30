@@ -307,8 +307,8 @@ public:
                     }
 
                     if (k < N) {
-                        candidate[k + 1].x = Model::integrate(candidate[k].x, candidate[k].u,
-                            candidate[k].p, current_dt, config.integrator);
+                        candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
+                            candidate[k].p, current_dt, config.integrator, config.newton_config);
                     }
                 }
             }
@@ -572,8 +572,8 @@ public:
                     }
 
                     if (k < N) {
-                        candidate[k + 1].x = Model::integrate(candidate[k].x, candidate[k].u,
-                            candidate[k].p, current_dt, config.integrator);
+                        candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
+                            candidate[k].p, current_dt, config.integrator, config.newton_config);
                     }
                 }
             }
@@ -625,8 +625,8 @@ public:
                             // u/s/lam/soft_s.
                             if (k == 0)
                                 candidate[0].x = active[0].x;
-                            candidate[k + 1].x = Model::integrate(candidate[k].x, candidate[k].u,
-                                candidate[k].p, current_dt, config.integrator);
+                            candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
+                                candidate[k].p, current_dt, config.integrator, config.newton_config);
                         }
 
                         // Compute Residuals

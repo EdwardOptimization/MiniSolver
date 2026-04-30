@@ -40,7 +40,7 @@ public:
             for (int i = 0; i < N; ++i)
                 J_reg(i, i) += config.regularization;
 
-            if (!MatOps::cholesky_solve(J_reg, F_, delta_))
+            if (!MatOps::lu_solve(J_reg, F_, delta_))
                 return false;
 
             x -= delta_;

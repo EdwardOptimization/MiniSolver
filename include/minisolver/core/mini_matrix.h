@@ -3,6 +3,8 @@
 #include <array>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <iostream>
 

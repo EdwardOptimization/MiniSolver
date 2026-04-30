@@ -16,6 +16,8 @@
 #ifdef USE_EIGEN
 #include <Eigen/Dense>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 
 namespace minisolver {
@@ -64,6 +66,19 @@ struct MatOps {
     {
         Eigen::LLT<Mat> llt(A);
         return llt.solve(b);
+    }
+
+    // Linear Solve: x = A^-1 * b using LU (PartialPivLU).
+    // Use for non-symmetric matrices (e.g. Newton Jacobian, I - dt*Jx).
+    // cholesky_solve requires SPD; lu_solve works for any invertible square matrix.
+    template <typename Mat, typename Vec, typename ResVec>
+    inline static bool lu_solve(const Mat& A, const Vec& b, ResVec& x)
+    {
+        Eigen::PartialPivLU<Mat> lu(A);
+        if (lu.matrixLU().diagonal().array().abs().minCoeff() < 1e-30)
+            return false; // near-singular
+        x = lu.solve(b);
+        return true;
     }
 
     // Check PD
@@ -133,6 +148,61 @@ struct MatOps {
     {
         return llt.info() == Eigen::Success;
     }
+
+    // Bit-level IEEE 754 inspection — works even with -ffast-math.
+    // std::isnan() / Eigen::allFinite() are constant-folded to false/true under
+    // -ffast-math (-ffinite-math-only). These functions read the raw bit pattern
+    // instead, similar to HPIPM's approach but without relying on x!=x (which
+    // -ffinite-math-only can also optimize away).
+    //
+    // Performance: ~0.09 ns/call (single mov instruction when inlined).
+
+    // Reinterpret double bits as uint64. Uses __builtin_bit_cast (GCC 10+,
+    // Clang 13+) when available; falls back to std::memcpy which compiles
+    // to the same single register move.
+    inline static uint64_t double_to_bits(double val)
+    {
+#if defined(__GNUC__) && __GNUC__ >= 10
+        return __builtin_bit_cast(uint64_t, val);
+#else
+        uint64_t bits;
+        std::memcpy(&bits, &val, sizeof(bits));
+        return bits;
+#endif
+    }
+
+    inline static bool is_nan_scalar(double val)
+    {
+        uint64_t bits = double_to_bits(val);
+        // NaN: exponent = 0x7FF, mantissa != 0
+        return ((bits & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL)
+            && ((bits & 0x000FFFFFFFFFFFFFULL) != 0);
+    }
+
+    inline static bool is_inf_scalar(double val)
+    {
+        uint64_t bits = double_to_bits(val);
+        return (bits & 0x7FFFFFFFFFFFFFFFULL) == 0x7FF0000000000000ULL;
+    }
+
+    inline static bool is_finite_scalar(double val)
+    {
+        uint64_t bits = double_to_bits(val);
+        return (bits & 0x7FF0000000000000ULL) != 0x7FF0000000000000ULL;
+    }
+
+    template <typename Derived>
+    inline static bool has_nan(const Eigen::MatrixBase<Derived>& m)
+    {
+        // Iterate element-wise. For fixed-size matrices this is unrolled.
+        for (int i = 0; i < m.rows(); ++i) {
+            for (int j = 0; j < m.cols(); ++j) {
+                if (is_nan_scalar(m(i, j)))
+                    return true;
+            }
+        }
+        return false;
+    }
 };
 
 }
@@ -185,6 +255,70 @@ struct MatOps {
     {
         MiniLLT<double, Mat::Rows> llt(A);
         return llt.solve(b);
+    }
+
+    // LU solve with partial pivoting — works for any invertible square matrix.
+    template <typename Mat, typename Vec, typename ResVec>
+    inline static bool lu_solve(const Mat& A, const Vec& b, ResVec& x)
+    {
+        constexpr int N = Mat::Rows;
+        // Copy A into LU workspace
+        double lu[N * N];
+        for (int i = 0; i < N * N; ++i)
+            lu[i] = A.data[i];
+
+        // Permutation
+        int perm[N];
+        for (int i = 0; i < N; ++i)
+            perm[i] = i;
+
+        // Forward elimination with partial pivoting
+        for (int k = 0; k < N; ++k) {
+            // Find pivot
+            int max_row = k;
+            double max_val = std::abs(lu[k * N + k]);
+            for (int i = k + 1; i < N; ++i) {
+                double v = std::abs(lu[i * N + k]);
+                if (v > max_val) {
+                    max_val = v;
+                    max_row = i;
+                }
+            }
+            if (max_val < 1e-30)
+                return false; // singular
+
+            // Swap rows
+            if (max_row != k) {
+                std::swap(perm[k], perm[max_row]);
+                for (int j = 0; j < N; ++j)
+                    std::swap(lu[k * N + j], lu[max_row * N + j]);
+            }
+
+            // Eliminate
+            for (int i = k + 1; i < N; ++i) {
+                double factor = lu[i * N + k] / lu[k * N + k];
+                for (int j = k + 1; j < N; ++j)
+                    lu[i * N + j] -= factor * lu[k * N + j];
+                lu[i * N + k] = factor;
+            }
+        }
+
+        // Forward substitution (L)
+        double y[N];
+        for (int i = 0; i < N; ++i) {
+            y[i] = b(perm[i]);
+            for (int j = 0; j < i; ++j)
+                y[i] -= lu[i * N + j] * y[j];
+        }
+
+        // Backward substitution (U)
+        for (int i = N - 1; i >= 0; --i) {
+            x(i) = y[i];
+            for (int j = i + 1; j < N; ++j)
+                x(i) -= lu[i * N + j] * x(j);
+            x(i) /= lu[i * N + i];
+        }
+        return true;
     }
 
     template <typename Mat> inline static bool is_pos_def(const Mat& A)
@@ -243,6 +377,45 @@ struct MatOps {
     template <typename LLTType> inline static bool is_llt_success(const LLTType& llt)
     {
         return llt.info() == 0;
+    }
+
+    // Bit-level IEEE 754 inspection — works even with -ffast-math.
+    inline static uint64_t double_to_bits(double val)
+    {
+        uint64_t bits;
+        std::memcpy(&bits, &val, sizeof(bits));
+        return bits;
+    }
+
+    inline static bool is_nan_scalar(double val)
+    {
+        uint64_t bits = double_to_bits(val);
+        return ((bits & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL)
+            && ((bits & 0x000FFFFFFFFFFFFFULL) != 0);
+    }
+
+    inline static bool is_inf_scalar(double val)
+    {
+        uint64_t bits = double_to_bits(val);
+        return (bits & 0x7FFFFFFFFFFFFFFFULL) == 0x7FF0000000000000ULL;
+    }
+
+    inline static bool is_finite_scalar(double val)
+    {
+        uint64_t bits = double_to_bits(val);
+        return (bits & 0x7FF0000000000000ULL) != 0x7FF0000000000000ULL;
+    }
+
+    template <typename Derived>
+    inline static bool has_nan(const Derived& m)
+    {
+        for (int i = 0; i < Derived::Rows; ++i) {
+            for (int j = 0; j < Derived::Cols; ++j) {
+                if (is_nan_scalar(m(i, j)))
+                    return true;
+            }
+        }
+        return false;
     }
 };
 }

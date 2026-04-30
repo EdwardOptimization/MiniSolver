@@ -672,23 +672,17 @@ private:
 
     bool has_nans(const typename TrajectoryType::TrajArray& t) const
     {
-        // Checking all variables is expensive (O(N * (NX+NU+NC))).
-        // Instead, we only check the updates (dx, du, ds, dlam) and cost/constraints
-        // which are the sources of NaNs.
+        // Bit-level NaN detection (MatOps::has_nan) — works even under -ffast-math.
+        // Only checks fields that are sources of NaN: search directions, cost, Jacobians.
         for (int k = 0; k <= N; ++k) {
             const auto& kp = t[k];
-            // Check Search Directions (Most likely place for NaN from Linear Solve)
-            if (!kp.dx.allFinite())
+            if (MatOps::has_nan(kp.dx) || MatOps::has_nan(kp.du)
+                || MatOps::has_nan(kp.ds) || MatOps::has_nan(kp.dlam))
                 return true;
-            if (!kp.du.allFinite())
+            if (!MatOps::is_finite_scalar(kp.cost))
                 return true;
-            if (!kp.ds.allFinite())
-                return true;
-            if (!kp.dlam.allFinite())
-                return true;
-
-            // Check key scalar values
-            if (!std::isfinite(kp.cost))
+            // Dynamics Jacobians — NaN here propagates into Riccati
+            if (MatOps::has_nan(kp.A) || MatOps::has_nan(kp.B))
                 return true;
         }
         return false;
@@ -698,9 +692,9 @@ private:
     {
         for (int k = 0; k <= N; ++k) {
             const auto& kp = t[k];
-            if (!kp.x.allFinite() || !kp.u.allFinite() || !kp.p.allFinite())
+            if (MatOps::has_nan(kp.x) || MatOps::has_nan(kp.u) || MatOps::has_nan(kp.p))
                 return false;
-            if (!kp.s.allFinite() || !kp.lam.allFinite())
+            if (MatOps::has_nan(kp.s) || MatOps::has_nan(kp.lam))
                 return false;
 
             for (int i = 0; i < NC; ++i) {
@@ -717,7 +711,7 @@ private:
                 }
 
                 if (type == 1 && w > 1e-6) {
-                    if (!std::isfinite(kp.soft_s(i)) || kp.soft_s(i) <= 0.0)
+                    if (!MatOps::is_finite_scalar(kp.soft_s(i)) || kp.soft_s(i) <= 0.0)
                         return false;
                     if (w - kp.lam(i) <= config.min_barrier_slack)
                         return false;
@@ -1049,13 +1043,6 @@ private:
 
         timer.stop();
 
-        // Check for Numerical Instability (NaN/Inf)
-        if (has_nans(traj)) {
-            if (config.print_level >= PrintLevel::INFO)
-                MLOG_ERROR("Numerical Error: NaNs detected in derivatives or state.");
-            return SolverStatus::NUMERICAL_ERROR;
-        }
-
         double avg_gap = (total_gap_dim > 0) ? (total_gap / total_gap_dim) : 0.0;
 
         // In Mehrotra mode, mu is updated dynamically inside the step via predictor-corrector
@@ -1324,6 +1311,16 @@ private:
         if (!solve_success)
             return SolverStatus::NUMERICAL_ERROR;
 
+        // Quick NaN check on search directions — catches Riccati producing NaN.
+        // Single-element check: if NaN appears, it propagates to all elements
+        // within 1-2 iterations, so checking dx[0]/du[0] is sufficient.
+        // This replaces the old full has_nans() scan that ran before Riccati.
+        if (MatOps::is_nan_scalar(traj[0].dx(0)) || MatOps::is_nan_scalar(traj[0].du(0))) {
+            if (config.print_level >= PrintLevel::INFO)
+                MLOG_ERROR("Numerical Error: NaN detected in search direction.");
+            return SolverStatus::NUMERICAL_ERROR;
+        }
+
         // Dual infeasibility metric: use Qu (stored in r_bar after the Riccati backward pass).
         // This is only valid after a successful linear solve (r_bar is stale right after
         // line-search swaps).
@@ -1591,9 +1588,9 @@ private:
                 Model::compute_constraints(traj[k]);
             }
 
-            // 2. Check NaNs
+            // 2. Check NaNs (bit-level, works under -ffast-math)
             for (int i = 0; i < NC; ++i) {
-                if (std::isnan(traj[k].g_val(i)) || std::isnan(traj[k].s(i)))
+                if (MatOps::is_nan_scalar(traj[k].g_val(i)) || MatOps::is_nan_scalar(traj[k].s(i)))
                     return SolverStatus::NUMERICAL_ERROR;
             }
 

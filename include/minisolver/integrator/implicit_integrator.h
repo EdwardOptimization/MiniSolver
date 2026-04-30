@@ -164,15 +164,18 @@ private:
         }
     }
 
-    // Compute M^{-1} via column-wise Cholesky solve.
+    // Compute M^{-1} via column-wise LU solve.
+    // M = I - dt*Jx is not symmetric in general, so LLT is invalid.
     static bool invert_matrix(
         const MSMat<double, NX, NX>& M, MSMat<double, NX, NX>& M_inv)
     {
         MSMat<double, NX, NX> I = MSMat<double, NX, NX>::Identity();
-        MSLLT<MSMat<double, NX, NX>> llt(M);
-        if (!MatOps::is_llt_success(llt))
-            return false;
-        M_inv = llt.solve(I);
+        for (int j = 0; j < NX; ++j) {
+            MSVec<double, NX> col;
+            if (!MatOps::lu_solve(M, I.col(j), col))
+                return false;
+            M_inv.col(j) = col;
+        }
         return true;
     }
 
@@ -336,28 +339,39 @@ private:
         JK.template block<NX, NX>(NX, 0) = -jac2.Jx * (dt * a21);
         JK.template block<NX, NX>(NX, NX) = I_NX - jac2.Jx * (dt * a22);
 
-        // Factor JK once
-        MSLLT<MSMat<double, N2, N2>> llt(JK);
-        if (!MatOps::is_llt_success(llt)) {
-            kp.A.setIdentity();
-            kp.B.setZero();
-            return;
-        }
-
-        // Solve for dK/dx: RHS = [Jx1; Jx2]
+        // Solve JK * dK = RHS via LU column-by-column (JK is not symmetric).
         MSMat<double, N2, NX> RHS_x;
         RHS_x.template block<NX, NX>(0, 0) = jac1.Jx;
         RHS_x.template block<NX, NX>(NX, 0) = jac2.Jx;
-        MSMat<double, N2, NX> dK_dx = llt.solve(RHS_x);
+
+        MSMat<double, N2, NX> dK_dx;
+        for (int j = 0; j < NX; ++j) {
+            MSVec<double, N2> col;
+            if (!MatOps::lu_solve(JK, RHS_x.col(j), col)) {
+                kp.A.setIdentity();
+                kp.B.setZero();
+                return;
+            }
+            dK_dx.col(j) = col;
+        }
 
         // A = I + dt*0.5*(dk1/dx + dk2/dx)
         kp.A = I_NX + (dK_dx.template topRows<NX>() + dK_dx.template bottomRows<NX>()) * (dt * 0.5);
 
-        // Solve for dK/du: RHS = [Ju1; Ju2]
+        // Solve for dK/du
         MSMat<double, N2, NU> RHS_u;
         RHS_u.template block<NX, NU>(0, 0) = jac1.Ju;
         RHS_u.template block<NX, NU>(NX, 0) = jac2.Ju;
-        MSMat<double, N2, NU> dK_du = llt.solve(RHS_u);
+
+        MSMat<double, N2, NU> dK_du;
+        for (int j = 0; j < NU; ++j) {
+            MSVec<double, N2> col;
+            if (!MatOps::lu_solve(JK, RHS_u.col(j), col)) {
+                kp.B.setZero();
+                return;
+            }
+            dK_du.col(j) = col;
+        }
 
         kp.B.noalias() = (dK_du.template topRows<NX>() + dK_du.template bottomRows<NX>()) * (dt * 0.5);
     }

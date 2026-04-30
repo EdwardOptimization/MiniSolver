@@ -24,6 +24,14 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         return s.trajectory[stage].soft_s(idx);
     }
+    static bool has_nans(Solver& s, const typename Solver::TrajArray& t)
+    {
+        return s.has_nans(t);
+    }
+    static typename Solver::TrajArray& get_trajectory(Solver& s)
+    {
+        return s.trajectory.active();
+    }
 };
 } // namespace minisolver::test
 
@@ -1166,4 +1174,121 @@ TEST(ImprovementDemo, MeritLS_ArmijoVsSimpleDecrease_Iterations)
     // Armijo should use same or fewer iterations (rejects micro-steps).
     EXPECT_LE(iters_armijo, iters_simple)
         << "Armijo should not increase iteration count";
+}
+
+// =============================================================================
+// Gap #6: NaN check doesn't cover dynamics Jacobian A/B.
+// has_nans() checks dx, du, ds, dlam, cost but NOT kp.A or kp.B.
+// A NaN in A/B flows silently into Riccati, producing garbage directions
+// that are only caught later with a misleading error message.
+// =============================================================================
+
+namespace {
+struct NanJacobianModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + u(0) * dt;
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = std::numeric_limits<T>::quiet_NaN(); // Inject NaN
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T>
+    static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0) + kp.u(0) * kp.u(0);
+        kp.q(0) = 2.0 * kp.x(0);
+        kp.r(0) = 2.0 * kp.u(0);
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2.0;
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
+    }
+};
+} // namespace
+
+TEST(BugfixTest, HasNansDetectsJacobianNaN)
+{
+    // RED test for gap #6: has_nans() must detect NaN in A/B matrices.
+    // Before fix: has_nans only checks dx, du, ds, dlam, cost — misses A/B.
+    // After fix: has_nans also checks kp.A.allFinite() and kp.B.allFinite().
+    constexpr int N = 5;
+    using Solver = MiniSolver<NanJacobianModel, N>;
+    using Access = minisolver::test::SolverInternalAccess<NanJacobianModel, N>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 1;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+
+    // Inject NaN directly into A
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].A(0, 0) = std::numeric_limits<double>::quiet_NaN();
+
+    // has_nans MUST detect the NaN in A(0,0)
+    EXPECT_TRUE(Access::has_nans(solver, traj))
+        << "has_nans() failed to detect NaN in dynamics Jacobian A";
+}
+
+TEST(BugfixTest, NanJacobianReturnsNumericalError)
+{
+    // Functional test: solver with NaN-producing Jacobian must return
+    // NUMERICAL_ERROR, not crash or produce garbage.
+    constexpr int N = 5;
+    using Solver = MiniSolver<NanJacobianModel, N>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 5;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+
+    auto status = solver.solve();
+
+    // Must detect numerical error (either from NaN in A or downstream NaN in dx)
+    EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR)
+        << "Solver did not detect NaN in dynamics Jacobian";
 }
