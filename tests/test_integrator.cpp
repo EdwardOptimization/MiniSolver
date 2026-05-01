@@ -92,6 +92,58 @@ struct NonlinearDecayModel {
     }
 };
 
+struct ExplicitOnlyDispatchModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> out;
+        out(0) = x(0) + u(0) * dt;
+        return out;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        kp.f_resid = integrate(kp.x, kp.u, kp.p, dt, type);
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+};
+
+TEST(ImplicitIntegratorTest, DispatchRejectsImplicitWithoutContinuousDynamics)
+{
+    KnotPoint<double, ExplicitOnlyDispatchModel::NX, ExplicitOnlyDispatchModel::NU,
+        ExplicitOnlyDispatchModel::NC, ExplicitOnlyDispatchModel::NP>
+        kp;
+    kp.set_zero();
+    kp.u(0) = 1.0;
+
+    EXPECT_THROW(detail::dispatch_compute_dynamics<ExplicitOnlyDispatchModel>(
+                     kp, IntegratorType::EULER_IMPLICIT, 0.1),
+        std::invalid_argument);
+
+    MSVec<double, 1> x;
+    x(0) = 0.0;
+    MSVec<double, 1> u;
+    u(0) = 1.0;
+    MSVec<double, 0> p;
+    EXPECT_THROW(detail::dispatch_integrate<ExplicitOnlyDispatchModel>(
+                     x, u, p, 0.1, IntegratorType::RK2_IMPLICIT),
+        std::invalid_argument);
+}
+
 struct LargeScaleLinearJacobianModel {
     static const int NX = 1;
     static const int NU = 1;

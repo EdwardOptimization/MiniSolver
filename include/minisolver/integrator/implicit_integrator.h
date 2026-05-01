@@ -403,18 +403,20 @@ private:
 };
 
 // Dispatch: route to implicit or explicit integrator based on type.
-// If the model doesn't provide dynamics_continuous(), implicit types
-// fall back to the model's compute_dynamics (which may be explicit or
-// a generated approximation).
+// Implicit integration requires continuous dynamics; silently falling back to
+// a model's explicit discrete map gives the wrong method while looking valid.
 namespace detail {
     template <typename Model, typename Knot>
     void dispatch_compute_dynamics(
         Knot& kp, IntegratorType type, double dt, const NewtonConfig& newton_config = {})
     {
-        if constexpr (has_dynamics_continuous_v<Model, double>) {
-            if (is_implicit_integrator(type)) {
+        if (is_implicit_integrator(type)) {
+            if constexpr (has_dynamics_continuous_v<Model, double>) {
                 ImplicitIntegrator<Model>::compute_dynamics(kp, type, dt, newton_config);
                 return;
+            } else {
+                throw std::invalid_argument(
+                    "Implicit integrator requires Model::dynamics_continuous()");
             }
         }
         Model::compute_dynamics(kp, type, dt);
@@ -425,9 +427,12 @@ namespace detail {
         const MSVec<double, Model::NU>& u, const MSVec<double, Model::NP>& p, double dt,
         IntegratorType type, const NewtonConfig& newton_config = {})
     {
-        if constexpr (has_dynamics_continuous_v<Model, double>) {
-            if (is_implicit_integrator(type)) {
+        if (is_implicit_integrator(type)) {
+            if constexpr (has_dynamics_continuous_v<Model, double>) {
                 return ImplicitIntegrator<Model>::integrate(x, u, p, dt, type, newton_config);
+            } else {
+                throw std::invalid_argument(
+                    "Implicit integrator requires Model::dynamics_continuous()");
             }
         }
         return Model::integrate(x, u, p, dt, type);
