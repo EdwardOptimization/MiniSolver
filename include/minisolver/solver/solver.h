@@ -15,6 +15,7 @@
 
 #include "minisolver/core/logger.h"
 #include "minisolver/core/model_traits.h"
+#include "minisolver/core/solver_context.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/trajectory.h"
 #include "minisolver/core/types.h"
@@ -164,8 +165,7 @@ public:
         mu = config.mu_init;
         reg = config.reg_init;
         current_iter = 0;
-        last_prim_inf = 0.0;
-        last_dual_inf = 0.0;
+        metrics_.reset_algorithmic();
         slack_reset_consecutive_count = 0;
         // 2. Reset Components
         if (line_search) {
@@ -614,6 +614,574 @@ private:
         return mu_converged && primal_ok && dual_ok && kkt_ok;
     }
 
+    double compute_objective_cost_(const TrajArray& traj) const
+    {
+        double total_cost = 0.0;
+        for (int k = 0; k <= N; ++k) {
+            total_cost += traj[k].cost;
+        }
+        return total_cost;
+    }
+
+    bool should_stop_for_cost_stagnation_(
+        double current_cost, double last_cost, double last_mu) const
+    {
+        // 只有在满足一定可行性时，Cost 停滞才有意义。
+        const double feasible_bound = config.tol_con * config.feasible_tol_scale;
+        if (metrics_.last_prim_inf > feasible_bound) {
+            return false;
+        }
+
+        const double cost_diff = std::abs(current_cost - last_cost);
+        if (cost_diff >= config.tol_cost) {
+            return false;
+        }
+
+        const bool mu_decreased = (mu < last_mu);
+        const bool mu_small = (mu <= config.mu_final);
+        return mu_small || !mu_decreased;
+    }
+
+    StepResidualSummary evaluate_step_model_(TrajArray& traj)
+    {
+        StepResidualSummary summary;
+        double total_gap = 0.0;
+        int total_gap_dim = 0;
+
+        for (int k = 0; k <= N; ++k) {
+            double current_dt = (k < N) ? dt_traj[k] : 0.0;
+
+            detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
+
+            for (int i = 0; i < NC; ++i) {
+                const double s = traj[k].s(i);
+                const double lam = traj[k].lam(i);
+                double comp = std::abs(s * lam - mu);
+                if (comp > summary.max_kkt_error) {
+                    summary.max_kkt_error = comp;
+                }
+
+                total_gap += s * lam;
+                total_gap_dim += 1;
+
+                // L1 soft constraint has an additional complementarity pair:
+                //   soft_s * (w - lam) = mu, with implicit soft-dual (w - lam) > 0.
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+                if (type == 1 && w > 1e-6) {
+                    const double soft_s = traj[k].soft_s(i);
+                    const double soft_dual = (w - lam);
+                    double comp_soft = std::abs(soft_s * soft_dual - mu);
+                    if (comp_soft > summary.max_kkt_error) {
+                        summary.max_kkt_error = comp_soft;
+                    }
+
+                    total_gap += soft_s * soft_dual;
+                    total_gap_dim += 1;
+                }
+            }
+        }
+
+        summary.max_prim_inf = compute_max_violation(traj);
+        summary.avg_gap = (total_gap_dim > 0) ? (total_gap / total_gap_dim) : 0.0;
+        return summary;
+    }
+
+    StepResidualSummary evaluate_derivatives_phase_(TrajArray& traj)
+    {
+        timer.start("Derivatives");
+        StepResidualSummary residuals = evaluate_step_model_(traj);
+        timer.stop();
+        return residuals;
+    }
+
+    void update_barrier_for_step_(const StepResidualSummary& residuals)
+    {
+        // In Mehrotra mode, mu is updated dynamically inside the step via predictor-corrector
+        // logic. We only use update_barrier for Monotone/Adaptive strategies or as a fallback.
+        if (config.barrier_strategy != BarrierStrategy::MEHROTRA) {
+            update_barrier(residuals.max_kkt_error, residuals.avg_gap);
+        }
+    }
+
+    double compute_dual_infeasibility_(const TrajArray& traj) const
+    {
+        double max_dual_inf = 0.0;
+        for (int k = 0; k <= N; ++k) {
+            double r_norm = MatOps::norm_inf(traj[k].r_bar);
+            if (r_norm > max_dual_inf) {
+                max_dual_inf = r_norm;
+            }
+        }
+        return max_dual_inf;
+    }
+
+    void increase_regularization_after_failed_solve_(bool clamp_to_min)
+    {
+        if (clamp_to_min && reg < config.reg_min) {
+            reg = config.reg_min;
+        }
+        reg *= config.reg_scale_up;
+        if (reg > config.reg_max) {
+            reg = config.reg_max;
+        }
+    }
+
+    bool solve_linear_system_with_retries_(
+        TrajArray& traj, double target_mu, const TrajArray* affine_traj, bool clamp_reg_to_min)
+    {
+        bool success = false;
+        for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
+            success = linear_solver->solve(
+                traj, N, target_mu, reg, config.inertia_strategy, config, affine_traj);
+            if (success) {
+                break;
+            }
+            increase_regularization_after_failed_solve_(clamp_reg_to_min);
+        }
+        return success;
+    }
+
+    void prepare_direction_workspace_()
+    {
+        // Candidate buffer preparation (shared by Mehrotra predictor and IR backup).
+        // Both features need a full copy of the current linearized system (A, B, Q, R).
+        // - Mehrotra: uses it as the affine solve workspace
+        // - IR: uses it to access original A, B matrices after Riccati overwrites active
+        // Note: The Mehrotra affine solve only modifies solver workspace (Q_bar, R_bar, K, dx...)
+        //        but NOT model derivatives (A, B, C, D, Q, R, f_resid, x), so the IR backup
+        //        remains valid even after the affine solve.
+        bool need_candidate_backup = (config.barrier_strategy == BarrierStrategy::MEHROTRA)
+            || config.enable_iterative_refinement;
+        if (need_candidate_backup) {
+            trajectory.prepare_candidate_full();
+        }
+    }
+
+    double compute_fraction_to_boundary_(const TrajArray& direction_traj) const
+    {
+        double alpha = 1.0;
+        for (int k = 0; k <= N; ++k) {
+            for (int i = 0; i < NC; ++i) {
+                double s = direction_traj[k].s(i);
+                double ds = direction_traj[k].ds(i);
+                double lam = direction_traj[k].lam(i);
+                double dlam = direction_traj[k].dlam(i);
+
+                if (ds < 0) {
+                    double a = -s / ds;
+                    if (a < alpha) {
+                        alpha = a;
+                    }
+                }
+                if (dlam < 0) {
+                    double a = -lam / dlam;
+                    if (a < alpha) {
+                        alpha = a;
+                    }
+                }
+
+                // L1 soft: soft_s > 0 and (w - lam) > 0.
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+                if (type == 1 && w > 1e-6) {
+                    double soft_s = direction_traj[k].soft_s(i);
+                    double dsoft_s = direction_traj[k].dsoft_s(i);
+                    if (dsoft_s < 0) {
+                        double a = -soft_s / dsoft_s;
+                        if (a < alpha) {
+                            alpha = a;
+                        }
+                    }
+                    // soft dual: (w - lam) with direction -dlam.
+                    double soft_dual = w - lam;
+                    double dsoft_dual = -dlam; // d(w-lam)/dalpha = -dlam
+                    if (dsoft_dual < 0) {
+                        double a = -soft_dual / dsoft_dual;
+                        if (a < alpha) {
+                            alpha = a;
+                        }
+                    }
+                }
+            }
+        }
+        return alpha;
+    }
+
+    double compute_affine_barrier_mu_(
+        const TrajArray& base_traj, const TrajArray& affine_traj, double alpha_aff) const
+    {
+        double total_comp = 0.0;
+        int total_dim = 0;
+
+        for (int k = 0; k <= N; ++k) {
+            for (int i = 0; i < NC; ++i) {
+                double s_new = base_traj[k].s(i) + alpha_aff * affine_traj[k].ds(i);
+                double lam_new = base_traj[k].lam(i) + alpha_aff * affine_traj[k].dlam(i);
+                if (s_new < 0) {
+                    s_new = 1e-8; // Should not happen with fraction_to_boundary.
+                }
+                if (lam_new < 0) {
+                    lam_new = 1e-8;
+                }
+                total_comp += s_new * lam_new;
+                total_dim++;
+
+                // L1 soft pair: soft_s * (w - lam).
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+                if (type == 1 && w > 1e-6) {
+                    double soft_s_new
+                        = base_traj[k].soft_s(i) + alpha_aff * affine_traj[k].dsoft_s(i);
+                    double soft_dual_new = w - lam_new;
+                    if (soft_s_new < 0) {
+                        soft_s_new = 1e-8;
+                    }
+                    if (soft_dual_new < 0) {
+                        soft_dual_new = 1e-8;
+                    }
+                    total_comp += soft_s_new * soft_dual_new;
+                    total_dim++;
+                }
+            }
+        }
+
+        return total_comp / std::max(1, total_dim);
+    }
+
+    void maybe_decay_regularization_after_solve_(bool solve_success)
+    {
+        // A successful Riccati factorization only says the linearized KKT was factorizable at
+        // the current reg; it says nothing about whether the resulting step is admissible.
+        // The last accepted line-search α is a composite proxy for step quality.
+        if (solve_success && reg > config.reg_min && metrics_.last_alpha > 0.5) {
+            reg = std::max(config.reg_min, reg / config.reg_scale_down);
+        }
+    }
+
+    void refine_direction_if_enabled_(TrajArray& traj, bool solve_success)
+    {
+        if (!solve_success || !config.enable_iterative_refinement) {
+            return;
+        }
+        // Pass 'traj' (which contains solution dx, du) and 'candidate' (which contains original
+        // system).
+        linear_solver->refine(traj, trajectory.candidate(), N, mu, reg, config);
+    }
+
+    bool should_stop_after_line_search_(
+        const TrajArray& traj, double alpha, double max_prim_inf, double max_dual_inf) const
+    {
+        bool is_feasible = (max_prim_inf < config.tol_con);
+        bool is_dual_feasible = (max_dual_inf < config.tol_dual);
+
+        if (mu > config.mu_final || alpha <= 1e-5) {
+            return false;
+        }
+
+        double max_dx = 0.0;
+        for (int k = 0; k <= N; ++k) {
+            // Use MatOps::norm_inf to support both Eigen and MiniMatrix.
+            double dx_norm = MatOps::norm_inf(traj[k].dx);
+            if (dx_norm > max_dx) {
+                max_dx = dx_norm;
+            }
+        }
+
+        // Use unscaled Newton step (max_dx) to check stationarity.
+        // Using (alpha * max_dx) is dangerous because small alpha (blocked step)
+        // can look like convergence.
+        return max_dx < config.tol_grad && is_feasible && is_dual_feasible;
+    }
+
+    void update_metrics_after_globalization_(double max_dual_inf)
+    {
+        // For outer-loop heuristics (e.g. cost stagnation), store feasibility of the *current*
+        // iterate, i.e. after line-search has potentially swapped buffers.
+        metrics_.last_prim_inf = compute_max_violation(trajectory.active());
+        metrics_.last_dual_inf = max_dual_inf;
+    }
+
+    SolverStatus classify_tiny_step_stagnation_(
+        double max_prim_inf, double max_dual_inf) const
+    {
+        if (max_prim_inf > config.tol_con) {
+            return SolverStatus::UNSOLVED;
+        }
+        if (max_dual_inf <= config.tol_dual) {
+            return SolverStatus::OPTIMAL;
+        }
+        return SolverStatus::FEASIBLE;
+    }
+
+    bool attempt_tiny_step_recovery_(TrajArray& traj_after_ls, double alpha)
+    {
+        bool recovered = false;
+
+        // Step 1: Slack Reset (With counter protection)
+        // Only allow attempt when slack_reset_consecutive_count < 1.
+        // This means if SlackReset was used in the last iteration but Alpha=0 still (dead
+        // loop), this time we force skipping Step 1 and go directly to Step 2 (Restoration).
+        if (config.enable_slack_reset && alpha < config.slack_reset_trigger
+            && slack_reset_consecutive_count < 1) {
+            if (config.print_level >= PrintLevel::DEBUG) {
+                MLOG_DEBUG(
+                    "Triggering Slack Reset (Attempt " << slack_reset_consecutive_count + 1 << ").");
+            }
+
+            apply_slack_reset_(traj_after_ls);
+            // Try one solve to see if a valid direction can be obtained
+            recovered
+                = linear_solver->solve(traj_after_ls, N, mu, reg, config.inertia_strategy, config);
+
+            if (recovered) {
+                // Mark: If this Reset failed to get us out of trouble, disallow it next time
+                slack_reset_consecutive_count++;
+            }
+        } else if (config.enable_slack_reset && slack_reset_consecutive_count >= 1) {
+            if (config.print_level >= PrintLevel::DEBUG) {
+                MLOG_DEBUG("Skipping Slack Reset to prevent cycle. Forcing Restoration.");
+            }
+        }
+
+        // Step 2: Feasibility Restoration (If Step 1 failed or was skipped)
+        if (!recovered && config.enable_feasibility_restoration) {
+            recovered = feasibility_restoration();
+            // If restoration succeeded (state x moved), we can reset the counter, allowing
+            // SlackReset to be used again in the future
+            if (recovered) {
+                slack_reset_consecutive_count = 0;
+            }
+        }
+
+        return recovered;
+    }
+
+    SolverStatus globalize_step_(
+        double mu_before_step, double max_prim_inf, double max_dual_inf, double& alpha)
+    {
+        // Notify the line search if μ decreased during this step so it can
+        // discard barrier-dependent history (filter entries, ratcheted merit_nu).
+        if (line_search && mu < mu_before_step) {
+            line_search->on_barrier_update();
+        }
+
+        timer.start("Line Search");
+        alpha = line_search->search(trajectory, *linear_solver, dt_traj, mu, reg, config);
+        alpha_log_.push_back(alpha);
+        metrics_.last_alpha = alpha;
+        // IMPORTANT: line_search may swap trajectory buffers.
+        // Do not use references to trajectory.active() taken before this call.
+        auto& traj_after_ls = trajectory.active();
+
+        // If step size is valid, reset the counter.
+        if (alpha > 1e-8) {
+            slack_reset_consecutive_count = 0;
+        } else {
+            SolverStatus stagnation_status
+                = classify_tiny_step_stagnation_(max_prim_inf, max_dual_inf);
+            if (stagnation_status == SolverStatus::OPTIMAL) {
+                if (config.print_level >= PrintLevel::INFO) {
+                    MLOG_INFO("Line search stagnated at optimal point (PrimInf: "
+                        << max_prim_inf << ", DualInf: " << max_dual_inf
+                        << "). Terminating as SOLVED.");
+                }
+                timer.stop();
+                return SolverStatus::OPTIMAL;
+            }
+            if (stagnation_status == SolverStatus::FEASIBLE) {
+                if (config.print_level >= PrintLevel::INFO) {
+                    MLOG_INFO("Line search stagnated at feasible point (PrimInf: "
+                        << max_prim_inf << "). Terminating as FEASIBLE.");
+                }
+                timer.stop();
+                return SolverStatus::FEASIBLE;
+            }
+
+            bool recovered = attempt_tiny_step_recovery_(traj_after_ls, alpha);
+
+            if (!recovered) {
+                // Both Slack Reset and Feasibility Restoration failed (or were disabled).
+                timer.stop();
+                print_iteration_log(alpha);
+                return SolverStatus::INFEASIBLE;
+            }
+        }
+
+        timer.stop();
+
+        print_iteration_log(alpha);
+        return SolverStatus::UNSOLVED;
+    }
+
+    double compute_mehrotra_target_mu_(double mu_curr, double mu_aff, double alpha_aff) const
+    {
+        // Aggressive Update: Use sigma^k with k >= 1
+        // Heuristic: If affine step is good (large alpha_aff), be aggressive.
+        // If alpha_aff is small, be conservative.
+        double sigma_base = std::pow(mu_aff / mu_curr, 3);
+        double sigma = sigma_base;
+
+        // Aggressive Strategy
+        // If alpha_aff close to 1, we can reduce mu significantly.
+        if (config.enable_aggressive_barrier) {
+            if (alpha_aff > 0.9) {
+                sigma = std::min(
+                    sigma, 0.01); // [AGGRESSIVE] Force 100x reduction if direction is good.
+            }
+            // If we are far from solution (large gap), allow faster drop.
+            if (mu_curr > 1.0) {
+                sigma = std::min(sigma, 0.1);
+            }
+        } else {
+            // Mehrotra Centering Parameter Heuristic
+            // Limit sigma to avoid aggressive reduction when affine step is bad.
+            if (alpha_aff < 0.1) {
+                // If affine direction is blocked quickly, we are close to boundary.
+                // Be conservative to allow centering.
+                sigma = std::max(sigma, 0.5);
+            } else if (alpha_aff > 0.9) {
+                // If affine direction is good, we can reduce mu significantly.
+                sigma = std::min(sigma, 0.1);
+            }
+        }
+
+        if (sigma > 1.0) {
+            sigma = 1.0;
+        }
+        if (sigma < 1e-4) {
+            sigma = 1e-4; // Prevent too small sigma.
+        }
+
+        double mu_target = sigma * mu_curr;
+        if (mu_target < config.mu_final) {
+            mu_target = config.mu_final; // Enforce lower bound.
+        }
+        return mu_target;
+    }
+
+    bool compute_mehrotra_direction_(TrajArray& traj)
+    {
+        // 1. Affine Step (Predictor)
+        // Candidate already prepared by prepare_direction_workspace_().
+        auto& affine_traj = trajectory.candidate();
+
+        bool aff_success = solve_linear_system_with_retries_(affine_traj, 0.0, nullptr, true);
+        if (!aff_success) {
+            return false;
+        }
+
+        // Calc max step for affine direction.
+        // Must cover hard slack (s, lam) AND L1 soft variables (soft_s, w-lam).
+        double alpha_aff = compute_fraction_to_boundary_(affine_traj);
+
+        double mu_curr = mu;
+        double mu_aff = compute_affine_barrier_mu_(traj, affine_traj, alpha_aff);
+        metrics_.last_mu_aff = mu_aff;
+        metrics_.last_alpha_aff = alpha_aff;
+
+        if (config.print_level >= PrintLevel::DEBUG) {
+            MLOG_INFO("Mehrotra Debug: mu_curr=" << mu_curr << ", mu_aff=" << mu_aff
+                                                 << ", alpha_aff=" << alpha_aff);
+        }
+
+        double mu_target = compute_mehrotra_target_mu_(mu_curr, mu_aff, alpha_aff);
+
+        // 2. Corrector Step
+        // Solve with mu_target and affine correction term.
+        bool solve_success = false;
+        if (config.enable_corrector) {
+            solve_success = solve_linear_system_with_retries_(traj, mu_target, &affine_traj, false);
+        } else {
+            // Predictor only: update mu target but do not add correction term.
+            solve_success = solve_linear_system_with_retries_(traj, mu_target, nullptr, false);
+        }
+
+        if (solve_success) {
+            mu = mu_target;
+        }
+        return solve_success;
+    }
+
+    bool compute_direction_linear_solve_(TrajArray& traj)
+    {
+        if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
+            return compute_mehrotra_direction_(traj);
+        }
+        return solve_linear_system_with_retries_(traj, mu, nullptr, true);
+    }
+
+    SolverStatus validate_search_direction_(
+        const TrajArray& traj, bool solve_success, double& max_dual_inf)
+    {
+        if (!solve_success) {
+            return SolverStatus::NUMERICAL_ERROR;
+        }
+
+        // Direction check after Riccati: scan the whole valid horizon so a
+        // later-stage slack/dual/state NaN cannot hide behind a finite dx0/du0.
+        if (has_invalid_search_direction(traj)) {
+            if (config.print_level >= PrintLevel::INFO) {
+                MLOG_ERROR("Numerical Error: invalid search direction detected.");
+            }
+            return SolverStatus::NUMERICAL_ERROR;
+        }
+
+        // Dual infeasibility metric: use Qu (stored in r_bar after the Riccati backward pass).
+        // This is only valid after a successful linear solve (r_bar is stale right after
+        // line-search swaps).
+        max_dual_inf = compute_dual_infeasibility_(traj);
+        return SolverStatus::UNSOLVED;
+    }
+
+    SolverStatus compute_search_direction_(TrajArray& traj, double& max_dual_inf)
+    {
+        timer.start("Linear Solve");
+        prepare_direction_workspace_();
+
+        bool solve_success = compute_direction_linear_solve_(traj);
+
+        // Gate reg decay on step quality.
+        // The line search's accepted α is a composite proxy — direction
+        // quality, barrier fraction-to-boundary, and filter/merit acceptance
+        // all feed into it. A small α is necessary (not sufficient) for
+        // distrusting the current reg level; decaying on `solve_success`
+        // alone drives reg through α-collapse regions and pins it to
+        // reg_min. Threshold 0.5 is a small-step heuristic chosen
+        // empirically (see .claude/debug/reg-decay-too-aggressive-on-alpha-collapse
+        // for traces — case resolved two of three failure metrics with
+        // this value; matches informal IPM/SQP tuning convention).
+        // Interaction note: feasibility_restoration() does not touch
+        // metrics_.last_alpha, so after a collapse-triggered restoration the gate
+        // stays closed until the next accepted line-search step. That is
+        // the conservative behavior we want post-recovery.
+        maybe_decay_regularization_after_solve_(solve_success);
+
+        refine_direction_if_enabled_(traj, solve_success);
+
+        timer.stop();
+
+        return validate_search_direction_(traj, solve_success, max_dual_inf);
+    }
+
     void update_barrier(double max_kkt_error, double avg_gap)
     {
         switch (config.barrier_strategy) {
@@ -972,6 +1540,16 @@ private:
 public:
     SolverStatus solve()
     {
+        begin_solve_();
+        SolverStatus loop_exit_status = run_solve_loop_();
+
+        // 3. Postsolve: 扫尾、刷新导数、统一评级
+        return postsolve(loop_exit_status);
+    }
+
+private:
+    void begin_solve_()
+    {
         ensure_solver_components_ready();
         // 1. Presolve: 数据准备、冷热启动处理、内存复位
         presolve();
@@ -980,8 +1558,67 @@ public:
         // configured max iteration count so the hot-path push_back stays
         // pointer-bump only.
         alpha_log_.clear();
-        last_alpha_ = 1.0;
+        metrics_.reset_solve();
+    }
 
+    bool should_exit_after_step_status_(
+        SolverStatus step_stat, int iter, SolverStatus& loop_exit_status) const
+    {
+        // SQP-RTI 模式：做一步即走，状态由 postsolve 判定。
+        // Preserve the existing priority: RTI exits before inspecting step_stat.
+        if (config.enable_rti) {
+            loop_exit_status = SolverStatus::UNSOLVED;
+            return true;
+        }
+
+        // 完美收敛 -> 记录状态并跳出，交给 postsolve 复核。
+        if (step_stat == SolverStatus::OPTIMAL) {
+            loop_exit_status = SolverStatus::OPTIMAL;
+            if (config.print_level >= PrintLevel::INFO) {
+                MLOG_INFO("Converged in " << iter + 1 << " iterations.");
+            }
+            return true;
+        }
+
+        if (step_stat == SolverStatus::FEASIBLE || step_stat == SolverStatus::INFEASIBLE) {
+            loop_exit_status = step_stat;
+            return true;
+        }
+
+        // 数值错误 -> 立即中止。
+        if (step_stat == SolverStatus::NUMERICAL_ERROR) {
+            loop_exit_status = SolverStatus::NUMERICAL_ERROR;
+            return true;
+        }
+
+        return false;
+    }
+
+    bool should_exit_for_cost_stagnation_(
+        double& last_cost, double& last_mu, SolverStatus& loop_exit_status)
+    {
+        // Objective cost is comparable across μ updates (barrier terms are not part of
+        // KnotPoint::cost). However, if μ is actively decreasing we should not stop purely
+        // on objective stagnation, since IPM may still be progressing by reducing μ.
+        // The intended use is to catch "μ frozen above μ_final" style stalls.
+        double current_cost = compute_objective_cost_(trajectory.active());
+
+        if (should_stop_for_cost_stagnation_(current_cost, last_cost, last_mu)) {
+            if (config.print_level >= PrintLevel::INFO) {
+                MLOG_INFO("Cost Stagnation detected. Stopping early.");
+            }
+            // 标记为 UNSOLVED，表示非自然收敛，交给 postsolve 判定是 Feasible 还是 Optimal。
+            loop_exit_status = SolverStatus::UNSOLVED;
+            return true;
+        }
+
+        last_cost = current_cost;
+        last_mu = mu;
+        return false;
+    }
+
+    SolverStatus run_solve_loop_()
+    {
         SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
         double last_cost = 1e30;
         double last_mu = mu;
@@ -989,74 +1626,22 @@ public:
         // 2. Solve Loop: 数值迭代
         for (int iter = 0; iter < config.max_iters; ++iter) {
             timer.start("Total Step");
-            SolverStatus step_stat = step();
+            SolverStatus step_stat = execute_solve_iteration_();
             timer.stop();
 
-            // SQP-RTI 模式：做一步即走，状态由 postsolve 判定
-            if (config.enable_rti) {
-                loop_exit_status = SolverStatus::UNSOLVED;
+            if (should_exit_after_step_status_(step_stat, iter, loop_exit_status)) {
                 break;
             }
 
-            // A. 完美收敛 -> 记录状态并跳出，交给 postsolve 复核
-            if (step_stat == SolverStatus::OPTIMAL) {
-                loop_exit_status = SolverStatus::OPTIMAL;
-                if (config.print_level >= PrintLevel::INFO) {
-                    MLOG_INFO("Converged in " << iter + 1 << " iterations.");
-                }
+            if (should_exit_for_cost_stagnation_(last_cost, last_mu, loop_exit_status)) {
                 break;
             }
-
-            if (step_stat == SolverStatus::FEASIBLE || step_stat == SolverStatus::INFEASIBLE) {
-                loop_exit_status = step_stat;
-                break;
-            }
-
-            // B. 数值错误 -> 立即中止
-            if (step_stat == SolverStatus::NUMERICAL_ERROR) {
-                loop_exit_status = SolverStatus::NUMERICAL_ERROR;
-                break;
-            }
-
-            // C. 停滞检查 (Cost Stagnation)
-            // Objective cost is comparable across μ updates (barrier terms are not part of
-            // KnotPoint::cost). However, if μ is actively decreasing we should not stop purely
-            // on objective stagnation, since IPM may still be progressing by reducing μ.
-            // The intended use is to catch "μ frozen above μ_final" style stalls.
-            double current_cost = 0.0;
-            for (int k = 0; k <= N; ++k) {
-                current_cost += trajectory.active()[k].cost;
-            }
-
-            // 只有在满足一定可行性时，Cost 停滞才有意义
-            // 使用上一步计算的 max_prim_inf (last_prim_inf)
-            double feasible_bound = config.tol_con * config.feasible_tol_scale;
-            if (last_prim_inf <= feasible_bound) {
-                double cost_diff = std::abs(current_cost - last_cost);
-                if (cost_diff < config.tol_cost) {
-                    const bool mu_decreased = (mu < last_mu);
-                    const bool mu_small = (mu <= config.mu_final);
-                    if (mu_small || !mu_decreased) {
-                        if (config.print_level >= PrintLevel::INFO) {
-                            MLOG_INFO("Cost Stagnation detected. Stopping early.");
-                        }
-                        // 标记为 UNSOLVED，表示非自然收敛，交给 postsolve 判定是 Feasible 还是
-                        // Optimal
-                        loop_exit_status = SolverStatus::UNSOLVED;
-                        break;
-                    }
-                }
-            }
-            last_cost = current_cost;
-            last_mu = mu;
         }
 
-        // 3. Postsolve: 扫尾、刷新导数、统一评级
-        return postsolve(loop_exit_status);
+        return loop_exit_status;
     }
 
-private:
-    SolverStatus step()
+    SolverStatus execute_solve_iteration_()
     {
         current_iter++;
         // Snapshot μ at the top of the step so we can notify the line search
@@ -1068,369 +1653,15 @@ private:
 
         auto& traj = trajectory.active();
 
-        timer.start("Derivatives");
-        double max_kkt_error = 0.0;
-        double max_prim_inf = 0.0;
+        StepResidualSummary residuals = evaluate_derivatives_phase_(traj);
+        double max_kkt_error = residuals.max_kkt_error;
+        double max_prim_inf = residuals.max_prim_inf;
         double max_dual_inf = 0.0;
-        double total_gap = 0.0;
-        int total_gap_dim = 0;
+        update_barrier_for_step_(residuals);
 
-        for (int k = 0; k <= N; ++k) {
-            double current_dt = (k < N) ? dt_traj[k] : 0.0;
-
-            detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
-
-            for (int i = 0; i < NC; ++i) {
-                const double s = traj[k].s(i);
-                const double lam = traj[k].lam(i);
-                double comp = std::abs(s * lam - mu);
-                if (comp > max_kkt_error) {
-                    max_kkt_error = comp;
-                }
-
-                total_gap += s * lam;
-                total_gap_dim += 1;
-
-                // L1 soft constraint has an additional complementarity pair:
-                //   soft_s * (w - lam) = mu, with implicit soft-dual (w - lam) > 0.
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
-                if (type == 1 && w > 1e-6) {
-                    const double soft_s = traj[k].soft_s(i);
-                    const double soft_dual = (w - lam);
-                    double comp_soft = std::abs(soft_s * soft_dual - mu);
-                    if (comp_soft > max_kkt_error) {
-                        max_kkt_error = comp_soft;
-                    }
-
-                    total_gap += soft_s * soft_dual;
-                    total_gap_dim += 1;
-                }
-            }
-        }
-
-        // Use helper for Primal Inf
-        max_prim_inf = compute_max_violation(traj);
-
-        timer.stop();
-
-        double avg_gap = (total_gap_dim > 0) ? (total_gap / total_gap_dim) : 0.0;
-
-        // In Mehrotra mode, mu is updated dynamically inside the step via predictor-corrector
-        // logic. We only use update_barrier for Monotone/Adaptive strategies or as a fallback.
-        if (config.barrier_strategy != BarrierStrategy::MEHROTRA) {
-            update_barrier(max_kkt_error, avg_gap);
-        }
-
-        if (config.line_search_type == LineSearchType::MERIT) {
-            // line_search->prepare_step(traj); // If needed
-        }
-
-        timer.start("Linear Solve");
-        bool solve_success = false;
-
-        // Candidate buffer preparation (shared by Mehrotra predictor and IR backup).
-        // Both features need a full copy of the current linearized system (A, B, Q, R).
-        // - Mehrotra: uses it as the affine solve workspace
-        // - IR: uses it to access original A, B matrices after Riccati overwrites active
-        // Note: The Mehrotra affine solve only modifies solver workspace (Q_bar, R_bar, K, dx...)
-        //        but NOT model derivatives (A, B, C, D, Q, R, f_resid, x), so the IR backup
-        //        remains valid even after the affine solve.
-        bool need_candidate_backup = (config.barrier_strategy == BarrierStrategy::MEHROTRA)
-            || config.enable_iterative_refinement;
-        if (need_candidate_backup) {
-            trajectory.prepare_candidate_full();
-        }
-
-        // Mehrotra Predictor-Corrector Logic
-        if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
-            // 1. Affine Step (Predictor)
-            // Candidate already prepared above with full copy
-            auto& affine_traj = trajectory.candidate();
-
-            bool aff_success = false;
-            // Solve with mu = 0
-            for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
-                // Use new enum for exact/GN
-                aff_success = linear_solver->solve(
-                    affine_traj, N, 0.0, reg, config.inertia_strategy, config);
-                if (aff_success) {
-                    break;
-                }
-                if (reg < config.reg_min) {
-                    reg = config.reg_min;
-                }
-                reg *= config.reg_scale_up;
-                if (reg > config.reg_max) {
-                    reg = config.reg_max;
-                }
-            }
-
-            if (!aff_success) {
-                timer.stop();
-                return SolverStatus::NUMERICAL_ERROR;
-            }
-
-            // Calc max step for affine direction
-            // Re-implement fraction-to-boundary locally since it's simple.
-            // Must cover hard slack (s, lam) AND L1 soft variables (soft_s, w-lam).
-            double alpha_aff = 1.0;
-            for (int k = 0; k <= N; ++k) {
-                for (int i = 0; i < NC; ++i) {
-                    double s = affine_traj[k].s(i);
-                    double ds = affine_traj[k].ds(i);
-                    double lam = affine_traj[k].lam(i);
-                    double dlam = affine_traj[k].dlam(i);
-
-                    if (ds < 0) {
-                        double a = -s / ds;
-                        if (a < alpha_aff) {
-                            alpha_aff = a;
-                        }
-                    }
-                    if (dlam < 0) {
-                        double a = -lam / dlam;
-                        if (a < alpha_aff) {
-                            alpha_aff = a;
-                        }
-                    }
-
-                    // L1 soft: soft_s > 0 and (w - lam) > 0
-                    double w = 0.0;
-                    int type = 0;
-                    if constexpr (NC > 0) {
-                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                            type = Model::constraint_types[i];
-                            w = Model::constraint_weights[i];
-                        }
-                    }
-                    if (type == 1 && w > 1e-6) {
-                        double soft_s = affine_traj[k].soft_s(i);
-                        double dsoft_s = affine_traj[k].dsoft_s(i);
-                        if (dsoft_s < 0) {
-                            double a = -soft_s / dsoft_s;
-                            if (a < alpha_aff) {
-                                alpha_aff = a;
-                            }
-                        }
-                        // soft dual: (w - lam) with direction -dlam
-                        double soft_dual = w - lam;
-                        double dsoft_dual = -dlam; // d(w-lam)/dalpha = -dlam
-                        if (dsoft_dual < 0) {
-                            double a = -soft_dual / dsoft_dual;
-                            if (a < alpha_aff) {
-                                alpha_aff = a;
-                            }
-                        }
-                    }
-                }
-            }
-
-            double mu_curr = mu;
-            double mu_aff = 0.0;
-            double total_comp = 0.0;
-            int total_dim = 0;
-
-            for (int k = 0; k <= N; ++k) {
-                for (int i = 0; i < NC; ++i) {
-                    double s_new = traj[k].s(i) + alpha_aff * affine_traj[k].ds(i);
-                    double lam_new = traj[k].lam(i) + alpha_aff * affine_traj[k].dlam(i);
-                    if (s_new < 0) {
-                        s_new = 1e-8; // Should not happen with fraction_to_boundary
-                    }
-                    if (lam_new < 0) {
-                        lam_new = 1e-8;
-                    }
-                    total_comp += s_new * lam_new;
-                    total_dim++;
-
-                    // L1 soft pair: soft_s * (w - lam)
-                    double w = 0.0;
-                    int type = 0;
-                    if constexpr (NC > 0) {
-                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                            type = Model::constraint_types[i];
-                            w = Model::constraint_weights[i];
-                        }
-                    }
-                    if (type == 1 && w > 1e-6) {
-                        double soft_s_new
-                            = traj[k].soft_s(i) + alpha_aff * affine_traj[k].dsoft_s(i);
-                        double soft_dual_new = w - lam_new;
-                        if (soft_s_new < 0) {
-                            soft_s_new = 1e-8;
-                        }
-                        if (soft_dual_new < 0) {
-                            soft_dual_new = 1e-8;
-                        }
-                        total_comp += soft_s_new * soft_dual_new;
-                        total_dim++;
-                    }
-                }
-            }
-            mu_aff = total_comp / std::max(1, total_dim);
-            last_mu_aff_ = mu_aff;
-            last_alpha_aff_ = alpha_aff;
-
-            // DEBUG PRINT
-            if (config.print_level >= PrintLevel::DEBUG) {
-                MLOG_INFO("Mehrotra Debug: mu_curr=" << mu_curr << ", mu_aff=" << mu_aff
-                                                     << ", alpha_aff=" << alpha_aff);
-            }
-
-            // Aggressive Update: Use sigma^k with k >= 1
-            // Heuristic: If affine step is good (large alpha_aff), be aggressive.
-            // If alpha_aff is small, be conservative.
-            double sigma_base = std::pow(mu_aff / mu_curr, 3);
-            double sigma = sigma_base;
-
-            // Aggressive Strategy
-            // If alpha_aff close to 1, we can reduce mu significantly
-            if (config.enable_aggressive_barrier) {
-                if (alpha_aff > 0.9) {
-                    sigma = std::min(sigma,
-                        0.01); // [AGGRESSIVE] Force 100x reduction if direction is good (was 0.1)
-                }
-                // If we are far from solution (large gap), allow faster drop
-                if (mu_curr > 1.0) {
-                    sigma = std::min(sigma, 0.1); // [AGGRESSIVE] Was 0.2
-                }
-            } else {
-                // Mehrotra Centering Parameter Heuristic
-                // Limit sigma to avoid aggressive reduction when affine step is bad
-                if (alpha_aff < 0.1) {
-                    // If affine direction is blocked quickly, we are close to boundary.
-                    // Be conservative to allow centering.
-                    sigma = std::max(sigma, 0.5);
-                } else if (alpha_aff > 0.9) {
-                    // If affine direction is good, we can reduce mu significantly
-                    sigma = std::min(sigma, 0.1);
-                }
-            }
-
-            if (sigma > 1.0) {
-                sigma = 1.0;
-            }
-            if (sigma < 1e-4) {
-                sigma = 1e-4; // Prevent too small sigma
-            }
-
-            double mu_target = sigma * mu_curr;
-            if (mu_target < config.mu_final) {
-                mu_target = config.mu_final; // Enforce lower bound
-            }
-
-            // 2. Corrector Step
-            // Solve with mu_target and affine correction term
-            if (config.enable_corrector) {
-                // Pass affine_traj to solve()
-                for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
-                    solve_success = linear_solver->solve(
-                        traj, N, mu_target, reg, config.inertia_strategy, config, &affine_traj);
-                    if (solve_success) {
-                        break;
-                    }
-                    // If failed, regularize and retry (note: reg might have increased in affine
-                    // step already)
-                    reg *= config.reg_scale_up;
-                    if (reg > config.reg_max) {
-                        reg = config.reg_max;
-                    }
-                }
-            } else {
-                // Predictor only (just update mu but don't add correction term)
-                for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
-                    solve_success = linear_solver->solve(
-                        traj, N, mu_target, reg, config.inertia_strategy, config);
-                    if (solve_success) {
-                        break;
-                    }
-                    reg *= config.reg_scale_up;
-                    if (reg > config.reg_max) {
-                        reg = config.reg_max;
-                    }
-                }
-            }
-
-            if (solve_success) {
-                mu = mu_target;
-            }
-
-        } else {
-            // Standard IPM
-            for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
-                solve_success
-                    = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
-                if (solve_success) {
-                    break;
-                }
-                if (reg < config.reg_min) {
-                    reg = config.reg_min;
-                }
-                reg *= config.reg_scale_up;
-                if (reg > config.reg_max) {
-                    reg = config.reg_max;
-                }
-            }
-        }
-
-        // Gate reg decay on step quality. A successful Riccati factorization
-        // only says the linearized KKT was factorizable at the current reg;
-        // it says nothing about whether the resulting step is admissible.
-        // The line search's accepted α is a composite proxy — direction
-        // quality, barrier fraction-to-boundary, and filter/merit acceptance
-        // all feed into it. A small α is necessary (not sufficient) for
-        // distrusting the current reg level; decaying on `solve_success`
-        // alone drives reg through α-collapse regions and pins it to
-        // reg_min. Threshold 0.5 is a small-step heuristic chosen
-        // empirically (see .claude/debug/reg-decay-too-aggressive-on-alpha-collapse
-        // for traces — case resolved two of three failure metrics with
-        // this value; matches informal IPM/SQP tuning convention).
-        // Interaction note: feasibility_restoration() does not touch
-        // last_alpha_, so after a collapse-triggered restoration the gate
-        // stays closed until the next accepted line-search step. That is
-        // the conservative behavior we want post-recovery.
-        if (solve_success && reg > config.reg_min && last_alpha_ > 0.5) {
-            reg = std::max(config.reg_min, reg / config.reg_scale_down);
-        }
-
-        // Iterative Refinement
-        if (solve_success && config.enable_iterative_refinement) {
-            // Pass 'traj' (which contains solution dx, du) and 'candidate' (which contains original
-            // system)
-            linear_solver->refine(traj, trajectory.candidate(), N, mu, reg, config);
-        }
-
-        timer.stop();
-
-        if (!solve_success) {
-            return SolverStatus::NUMERICAL_ERROR;
-        }
-
-        // Direction check after Riccati: scan the whole valid horizon so a
-        // later-stage slack/dual/state NaN cannot hide behind a finite dx0/du0.
-        if (has_invalid_search_direction(traj)) {
-            if (config.print_level >= PrintLevel::INFO) {
-                MLOG_ERROR("Numerical Error: invalid search direction detected.");
-            }
-            return SolverStatus::NUMERICAL_ERROR;
-        }
-
-        // Dual infeasibility metric: use Qu (stored in r_bar after the Riccati backward pass).
-        // This is only valid after a successful linear solve (r_bar is stale right after
-        // line-search swaps).
-        max_dual_inf = 0.0;
-        for (int k = 0; k <= N; ++k) {
-            double r_norm = MatOps::norm_inf(traj[k].r_bar);
-            if (r_norm > max_dual_inf) {
-                max_dual_inf = r_norm;
-            }
+        SolverStatus direction_status = compute_search_direction_(traj, max_dual_inf);
+        if (direction_status != SolverStatus::UNSOLVED) {
+            return direction_status;
         }
 
         // Convergence check (Primal + Dual + Mu) using the freshly computed dual residual.
@@ -1439,134 +1670,27 @@ private:
             return SolverStatus::OPTIMAL;
         }
 
-        // Notify the line search if μ decreased during this step so it can
-        // discard barrier-dependent history (filter entries, ratcheted merit_nu).
-        if (line_search && mu < mu_before_step) {
-            line_search->on_barrier_update();
+        double alpha = 1.0;
+        SolverStatus globalization_status
+            = globalize_step_(mu_before_step, max_prim_inf, max_dual_inf, alpha);
+        if (globalization_status != SolverStatus::UNSOLVED) {
+            return globalization_status;
         }
 
-        timer.start("Line Search");
-        double alpha = line_search->search(trajectory, *linear_solver, dt_traj, mu, reg, config);
-        alpha_log_.push_back(alpha);
-        last_alpha_ = alpha;
-        // IMPORTANT: line_search may swap trajectory buffers.
-        // Do not use references to trajectory.active() taken before this call.
-        auto& traj_after_ls = trajectory.active();
-
-        // If step size is valid, reset the counter
-        if (alpha > 1e-8) {
-            slack_reset_consecutive_count = 0;
-        } else {
-            // Alpha <= 1e-8 (Step size too small / Stagnation)
-
-            // 1. Check if stagnated at a feasible solution satisfying tolerances (Optimality check)
-            //    This prevents triggering incorrect restoration mechanisms due to numerical noise
-            //    near a perfect solution
-            if (max_prim_inf <= config.tol_con) {
-                // Further check dual feasibility to distinguish between SOLVED and FEASIBLE
-                if (max_dual_inf <= config.tol_dual) {
-                    if (config.print_level >= PrintLevel::INFO) {
-                        MLOG_INFO("Line search stagnated at optimal point (PrimInf: "
-                            << max_prim_inf << ", DualInf: " << max_dual_inf
-                            << "). Terminating as SOLVED.");
-                    }
-                    timer.stop();
-                    return SolverStatus::OPTIMAL;
-                } else {
-                    if (config.print_level >= PrintLevel::INFO) {
-                        MLOG_INFO("Line search stagnated at feasible point (PrimInf: "
-                            << max_prim_inf << "). Terminating as FEASIBLE.");
-                    }
-                    timer.stop();
-                    return SolverStatus::FEASIBLE;
-                }
-            }
-
-            // 2. Step 1: Slack Reset (With counter protection)
-            bool recovered = false;
-
-            // Logic explanation:
-            // Only allow attempt when slack_reset_consecutive_count < 1.
-            // This means if SlackReset was used in the last iteration but Alpha=0 still (dead
-            // loop), this time we force skipping Step 1 and go directly to Step 2 (Restoration).
-            if (config.enable_slack_reset && alpha < config.slack_reset_trigger
-                && slack_reset_consecutive_count < 1) {
-                if (config.print_level >= PrintLevel::DEBUG) {
-                    MLOG_DEBUG("Triggering Slack Reset (Attempt "
-                        << slack_reset_consecutive_count + 1 << ").");
-                }
-
-                apply_slack_reset_(traj_after_ls);
-                // Try one solve to see if a valid direction can be obtained
-                recovered = linear_solver->solve(
-                    traj_after_ls, N, mu, reg, config.inertia_strategy, config);
-
-                if (recovered) {
-                    // Mark: If this Reset failed to get us out of trouble, disallow it next time
-                    slack_reset_consecutive_count++;
-                }
-            } else if (config.enable_slack_reset && slack_reset_consecutive_count >= 1) {
-                if (config.print_level >= PrintLevel::DEBUG) {
-                    MLOG_DEBUG("Skipping Slack Reset to prevent cycle. Forcing Restoration.");
-                }
-            }
-
-            // 3. Step 2: Feasibility Restoration (If Step 1 failed or was skipped)
-            if (!recovered && config.enable_feasibility_restoration) {
-                recovered = feasibility_restoration();
-                // If restoration succeeded (state x moved), we can reset the counter, allowing
-                // SlackReset to be used again in the future
-                if (recovered) {
-                    slack_reset_consecutive_count = 0;
-                }
-            }
-
-            if (!recovered) {
-                // Both Slack Reset and Feasibility Restoration failed (or were disabled)
-                timer.stop();
-                print_iteration_log(alpha); // Log the fail state
-                return SolverStatus::INFEASIBLE;
-            }
-        }
-        timer.stop();
-
-        print_iteration_log(alpha); // Restore logging
-
-        // Final Convergence Check using Step Size and Residuals
+        // Final Convergence Check using Step Size and Residuals.
         // Avoids wasting a full derivative computation in next step if we are already done.
-        bool is_feasible = (max_prim_inf < config.tol_con);
-        bool is_dual_feasible = (max_dual_inf < config.tol_dual);
-
-        // 1. Standard "Small Mu" Convergence
-        if (mu <= config.mu_final && alpha > 1e-5) {
-            // Check stationarity via step size
-            double max_dx = 0.0;
-            for (int k = 0; k <= N; ++k) {
-                // Use MatOps::norm_inf to support both Eigen and MiniMatrix
-                double dx_norm = MatOps::norm_inf(trajectory.active()[k].dx);
-                if (dx_norm > max_dx) {
-                    max_dx = dx_norm;
-                }
-            }
-            // Use unscaled Newton step (max_dx) to check stationarity.
-            // Using (alpha * max_dx) is dangerous because small alpha (blocked step)
-            // can look like convergence.
-            if (max_dx < config.tol_grad && is_feasible && is_dual_feasible) {
-                return SolverStatus::OPTIMAL;
-            }
+        if (should_stop_after_line_search_(trajectory.active(), alpha, max_prim_inf, max_dual_inf)) {
+            return SolverStatus::OPTIMAL;
         }
 
-        // For outer-loop heuristics (e.g. cost stagnation), store feasibility of the *current*
-        // iterate, i.e. after line-search has potentially swapped buffers.
-        last_prim_inf = compute_max_violation(trajectory.active());
-        last_dual_inf = max_dual_inf;
+        update_metrics_after_globalization_(max_dual_inf);
         return SolverStatus::UNSOLVED;
     }
 
     // ============================================================
     // [Phase 1] Presolve: Preparation
     // ============================================================
-    void presolve()
+    void reset_solve_runtime_state_()
     {
         // [Enable/Disable Profiling]
         timer.enabled = config.enable_profiling;
@@ -1578,84 +1702,97 @@ private:
         slack_reset_consecutive_count = 0;
         reg = config.reg_init;
         mu = config.mu_init;
+    }
 
-        bool reuse_primal_dual = config.initialization == InitializationMode::REUSE_PRIMAL_DUAL;
-        bool need_init = config.initialization != InitializationMode::REUSE_PRIMAL_DUAL;
+    bool should_initialize_primal_dual_() const
+    {
+        if (config.initialization != InitializationMode::REUSE_PRIMAL_DUAL) {
+            return true;
+        }
+        return !has_valid_primal_dual_guess(trajectory.active());
+    }
 
-        if (reuse_primal_dual) {
-            auto& traj = trajectory.active();
-            if (!has_valid_primal_dual_guess(traj)) {
-                need_init = true;
+    void initialize_constraint_primal_dual_(Knot& kp, int i)
+    {
+        double g = kp.g_val(i);
+        double w = 0.0;
+        int type = 0;
+        if constexpr (NC > 0) {
+            if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                type = Model::constraint_types[i];
+                w = Model::constraint_weights[i];
             }
         }
 
-        if (need_init) {
-            auto& traj = trajectory.active();
-            for (int k = 0; k <= N; ++k) {
-                double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
+        if (type == 1 && w > 1e-6) { // L1 Soft Constraint
+            // Central Path:
+            // 1) g + s - soft_s = 0
+            // 2) s * lam = mu
+            // 3) soft_s * (w - lam) = mu
+            // Reduce to quadratic in lam: g*lam^2 - (g*w - 2*mu)*lam - mu*w = 0
+            double a = g;
+            double b = -(g * w - 2 * mu);
+            double c = -mu * w;
 
-                for (int i = 0; i < NC; ++i) {
-                    double g = traj[k].g_val(i);
-                    double w = 0.0;
-                    int type = 0;
-                    if constexpr (NC > 0) {
-                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                            type = Model::constraint_types[i];
-                            w = Model::constraint_weights[i];
-                        }
-                    }
-
-                    if (type == 1 && w > 1e-6) { // L1 Soft Constraint
-                        // Central Path:
-                        // 1) g + s - soft_s = 0
-                        // 2) s * lam = mu
-                        // 3) soft_s * (w - lam) = mu
-                        // Reduce to quadratic in lam: g*lam^2 - (g*w - 2*mu)*lam - mu*w = 0
-                        double a = g;
-                        double b = -(g * w - 2 * mu);
-                        double c = -mu * w;
-
-                        double lam_val;
-                        if (std::abs(a) < 1e-9) {
-                            // Linear case (g ≈ 0): 2*mu*lam = mu*w → lam = w/2
-                            lam_val = w / 2.0;
-                        } else {
-                            double delta = b * b - 4 * a * c;
-                            if (delta < 0) {
-                                delta = 0;
-                            }
-                            lam_val = (-b + std::sqrt(delta)) / (2 * a);
-                        }
-
-                        // Clamp for safety
-                        lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
-
-                        traj[k].lam(i) = lam_val;
-                        traj[k].s(i) = mu / lam_val;
-                        traj[k].soft_s(i) = mu / (w - lam_val);
-                    } else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
-                        // Central Path:
-                        // 1) g + s - lam/w = 0
-                        // 2) s * lam = mu
-                        // Reduce to quadratic in lam: lam^2 - g*w*lam - mu*w = 0
-                        double b = -g * w;
-                        double c = -mu * w;
-                        // lam = (-b + sqrt(b^2 - 4ac)) / 2a, here a=1
-                        // lam = (g*w + sqrt(g^2*w^2 + 4*mu*w)) / 2
-                        double delta = b * b - 4 * c; // b^2 + 4*mu*w > 0 always
-                        double lam_val = (-b + std::sqrt(delta)) / 2.0;
-
-                        traj[k].lam(i) = std::max(1e-8, lam_val);
-                        traj[k].s(i) = mu / traj[k].lam(i);
-                        // soft_s not used in L2
-                    } else { // Hard Constraint
-                        double s_val = std::max(1e-6, -g);
-                        traj[k].s(i) = s_val;
-                        traj[k].lam(i) = mu / s_val;
-                    }
+            double lam_val;
+            if (std::abs(a) < 1e-9) {
+                // Linear case (g ≈ 0): 2*mu*lam = mu*w → lam = w/2
+                lam_val = w / 2.0;
+            } else {
+                double delta = b * b - 4 * a * c;
+                if (delta < 0) {
+                    delta = 0;
                 }
+                lam_val = (-b + std::sqrt(delta)) / (2 * a);
             }
+
+            // Clamp for safety
+            lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
+
+            kp.lam(i) = lam_val;
+            kp.s(i) = mu / lam_val;
+            kp.soft_s(i) = mu / (w - lam_val);
+        } else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
+            // Central Path:
+            // 1) g + s - lam/w = 0
+            // 2) s * lam = mu
+            // Reduce to quadratic in lam: lam^2 - g*w*lam - mu*w = 0
+            double b = -g * w;
+            double c = -mu * w;
+            // lam = (-b + sqrt(b^2 - 4ac)) / 2a, here a=1
+            // lam = (g*w + sqrt(g^2*w^2 + 4*mu*w)) / 2
+            double delta = b * b - 4 * c; // b^2 + 4*mu*w > 0 always
+            double lam_val = (-b + std::sqrt(delta)) / 2.0;
+
+            kp.lam(i) = std::max(1e-8, lam_val);
+            kp.s(i) = mu / kp.lam(i);
+            // soft_s not used in L2
+        } else { // Hard Constraint
+            double s_val = std::max(1e-6, -g);
+            kp.s(i) = s_val;
+            kp.lam(i) = mu / s_val;
+        }
+    }
+
+    void initialize_primal_dual_from_model_()
+    {
+        auto& traj = trajectory.active();
+        for (int k = 0; k <= N; ++k) {
+            double current_dt = (k < N) ? dt_traj[k] : 0.0;
+            detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
+
+            for (int i = 0; i < NC; ++i) {
+                initialize_constraint_primal_dual_(traj[k], i);
+            }
+        }
+    }
+
+    void presolve()
+    {
+        reset_solve_runtime_state_();
+
+        if (should_initialize_primal_dual_()) {
+            initialize_primal_dual_from_model_();
         }
 
         print_iteration_log(0.0, true);
@@ -1665,21 +1802,8 @@ private:
     // ============================================================
     // [Phase 3] Postsolve: Finalization & Verdict
     // ============================================================
-    SolverStatus postsolve(SolverStatus loop_status)
+    bool refresh_postsolve_residuals_(TrajArray& traj, double& max_kkt_error)
     {
-        if (loop_status == SolverStatus::NUMERICAL_ERROR) {
-            return SolverStatus::NUMERICAL_ERROR;
-        }
-        if (config.print_level >= PrintLevel::INFO) {
-            if (loop_status == SolverStatus::UNSOLVED) {
-                MLOG_INFO("Max iterations or stagnation.");
-            }
-        }
-        // [Fix 2 Logic] 强制刷新导数
-        // 无论是因为收敛还是因为耗尽步数退出，我们都重新计算一次精确的残差，
-        // 以便做出最公正的最终评判。
-        auto& traj = trajectory.active();
-        double max_kkt_error = 0.0;
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
@@ -1689,7 +1813,7 @@ private:
             for (int i = 0; i < NC; ++i) {
                 if (MatOps::is_nan_scalar(traj[k].g_val(i))
                     || MatOps::is_nan_scalar(traj[k].s(i))) {
-                    return SolverStatus::NUMERICAL_ERROR;
+                    return false;
                 }
             }
 
@@ -1720,21 +1844,26 @@ private:
             }
         }
 
-        // Primal feasibility uses the recomputed constraints/dynamics defects.
-        double max_viol = compute_max_violation(traj);
+        return true;
+    }
 
+    bool evaluate_postsolve_dual_residual_(double& max_dual_inf)
+    {
         // Dual infeasibility metric: require a fresh Riccati backward pass so Qu includes
         // the dynamic multipliers (B^T * pi_{k+1}). Use the inactive trajectory buffer as
         // scratch so postsolve never overwrites the active solution directions/gains.
-        double max_dual_inf = std::numeric_limits<double>::infinity();
-        bool linear_ok = false;
+        max_dual_inf = std::numeric_limits<double>::infinity();
         if (linear_solver) {
             trajectory.prepare_candidate_full();
-            linear_ok = linear_solver->evaluate_dual_residual(trajectory.candidate(), N, mu, reg,
+            return linear_solver->evaluate_dual_residual(trajectory.candidate(), N, mu, reg,
                 config.inertia_strategy, config, max_dual_inf);
         }
-        // [最终评级]
+        return false;
+    }
 
+    SolverStatus classify_postsolve_result_(
+        double max_viol, double max_dual_inf, double max_kkt_error, bool linear_ok)
+    {
         // Level 1: SOLVED (Optimal)
         // 即使 Loop 是因为 Stagnation 退出的，如果此时恰好满足最优性，也给 SOLVED
         if (linear_ok && check_convergence(max_viol, max_dual_inf, max_kkt_error)) {
@@ -1754,6 +1883,35 @@ private:
             MLOG_WARN("Result: INFEASIBLE (Viol: " << max_viol << " > " << feasible_bound << ")");
         }
         return SolverStatus::INFEASIBLE;
+    }
+
+    SolverStatus postsolve(SolverStatus loop_status)
+    {
+        if (loop_status == SolverStatus::NUMERICAL_ERROR) {
+            return SolverStatus::NUMERICAL_ERROR;
+        }
+        if (config.print_level >= PrintLevel::INFO) {
+            if (loop_status == SolverStatus::UNSOLVED) {
+                MLOG_INFO("Max iterations or stagnation.");
+            }
+        }
+        // [Fix 2 Logic] 强制刷新导数
+        // 无论是因为收敛还是因为耗尽步数退出，我们都重新计算一次精确的残差，
+        // 以便做出最公正的最终评判。
+        auto& traj = trajectory.active();
+        double max_kkt_error = 0.0;
+        if (!refresh_postsolve_residuals_(traj, max_kkt_error)) {
+            return SolverStatus::NUMERICAL_ERROR;
+        }
+
+        // Primal feasibility uses the recomputed constraints/dynamics defects.
+        double max_viol = compute_max_violation(traj);
+
+        double max_dual_inf = std::numeric_limits<double>::infinity();
+        bool linear_ok = evaluate_postsolve_dual_residual_(max_dual_inf);
+
+        // [最终评级]
+        return classify_postsolve_result_(max_viol, max_dual_inf, max_kkt_error, linear_ok);
     }
 
 private:
@@ -1884,9 +2042,7 @@ private:
     // each step's line search). Purely diagnostic — not serialized.
     std::vector<double> alpha_log_;
 
-    // Last accepted line-search α; used to gate reg decay on step quality.
-    // Reset to 1.0 at solve() entry so the first iter doesn't block decay.
-    double last_alpha_ = 1.0;
+    SolverMetrics metrics_;
 
     TrajectoryType trajectory;
 
@@ -1901,13 +2057,6 @@ private:
     double mu;
     double reg;
     int current_iter = 0;
-    double last_prim_inf = 0.0;
-    double last_dual_inf = 0.0;
-
-    // Mehrotra diagnostics: last affine step's mu and alpha, exposed via
-    // friend for unit testing. Not part of public API.
-    double last_mu_aff_ = 0.0;
-    double last_alpha_aff_ = 0.0;
 
     // Continuous Slack Reset count, prevent infinite loop
     int slack_reset_consecutive_count = 0;

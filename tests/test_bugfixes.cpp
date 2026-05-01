@@ -19,8 +19,8 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         s.apply_slack_reset_(traj);
     }
-    static double last_mu_aff(const Solver& s) { return s.last_mu_aff_; }
-    static double last_alpha_aff(const Solver& s) { return s.last_alpha_aff_; }
+    static double last_mu_aff(const Solver& s) { return s.metrics_.last_mu_aff; }
+    static double last_alpha_aff(const Solver& s) { return s.metrics_.last_alpha_aff; }
     static double soft_s(const Solver& s, int stage, int idx)
     {
         return s.trajectory[stage].soft_s(idx);
@@ -31,7 +31,7 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         return s.postsolve(loop_status);
     }
-    static SolverStatus step(Solver& s) { return s.step(); }
+    static SolverStatus step(Solver& s) { return s.execute_solve_iteration_(); }
     static void set_linear_solver(
         Solver& s, std::unique_ptr<RiccatiSolver<typename Solver::TrajArray, Model>> solver)
     {
