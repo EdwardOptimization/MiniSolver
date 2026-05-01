@@ -1,8 +1,8 @@
-#include "minisolver/matrix/matrix_defs.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include "minisolver/integrator/implicit_integrator.h"
 #include "minisolver/integrator/numerical_jacobian.h"
+#include "minisolver/matrix/matrix_defs.h"
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -244,22 +244,25 @@ TEST(IntegratorTest, AccuracyComparison)
     // 2. Euler Explicit
     MSVec<double, 1> x_ee;
     x_ee(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    for (int k = 0; k < steps; ++k) {
         x_ee = NonlinearDecayModel::integrate(x_ee, u, p, dt, IntegratorType::EULER_EXPLICIT);
+    }
     double err_ee = std::abs(x_ee(0) - x_exact);
 
     // 3. RK4 Explicit
     MSVec<double, 1> x_rk4;
     x_rk4(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    for (int k = 0; k < steps; ++k) {
         x_rk4 = NonlinearDecayModel::integrate(x_rk4, u, p, dt, IntegratorType::RK4_EXPLICIT);
+    }
     double err_rk4 = std::abs(x_rk4(0) - x_exact);
 
     // 4. Euler Implicit
     MSVec<double, 1> x_ei;
     x_ei(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    for (int k = 0; k < steps; ++k) {
         x_ei = NonlinearDecayModel::integrate(x_ei, u, p, dt, IntegratorType::EULER_IMPLICIT);
+    }
     double err_ei = std::abs(x_ei(0) - x_exact);
 
     // Verify Accuracy Hierarchy: RK4 > Euler
@@ -278,8 +281,9 @@ TEST(IntegratorTest, AccuracyComparison)
     // RK2 Explicit
     MSVec<double, 1> x_rk2;
     x_rk2(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    for (int k = 0; k < steps; ++k) {
         x_rk2 = NonlinearDecayModel::integrate(x_rk2, u, p, dt, IntegratorType::RK2_EXPLICIT);
+    }
     double err_rk2 = std::abs(x_rk2(0) - x_exact);
 
     EXPECT_LT(err_rk2, err_ee);
@@ -313,11 +317,9 @@ struct StiffDecayModel {
     }
 
     template <typename T>
-    static void compute_dynamics(
-        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
     {
-        auto xn = detail::dispatch_integrate<StiffDecayModel>(
-            kp.x, kp.u, kp.p, dt, type);
+        auto xn = detail::dispatch_integrate<StiffDecayModel>(kp.x, kp.u, kp.p, dt, type);
         kp.f_resid = xn;
         kp.A(0, 0) = 1.0; // placeholder
         kp.B(0, 0) = 0.0;
@@ -330,14 +332,13 @@ struct StiffDecayModel {
         return detail::dispatch_integrate<StiffDecayModel>(x, u, p, dt, type);
     }
 
-    template <typename T>
-    static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) {}
-    template <typename T>
-    static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) {}
-    template <typename T>
-    static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) {}
-    template <typename T>
-    static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp) { compute_cost_gn(kp); }
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
     template <typename T>
     static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
     {
@@ -385,8 +386,7 @@ TEST(ImplicitIntegratorTest, NewtonDetectsConvergenceAfterFinalStep)
             F(0) = z(0) - 1.0;
             J(0, 0) = 1.0;
         },
-        cfg,
-        false);
+        cfg, false);
 
     EXPECT_TRUE(ok);
     EXPECT_NEAR(x(0), 1.0, 1e-12);
@@ -408,8 +408,7 @@ TEST(ImplicitIntegratorTest, NewtonDoesNotDampSolvableIllConditionedJacobian)
     cfg.tol = 1e-18;
     cfg.regularization = 1e-12;
 
-    auto eval = [&](const MSVec<double, 2>& z, MSVec<double, 2>& F,
-                    MSMat<double, 2, 2>& J) {
+    auto eval = [&](const MSVec<double, 2>& z, MSVec<double, 2>& F, MSMat<double, 2, 2>& J) {
         J(0, 0) = 1.0;
         J(0, 1) = 1.0;
         J(1, 0) = 1.0;
@@ -436,20 +435,24 @@ TEST(ImplicitIntegratorTest, BackwardEulerAccuracy)
     double t_end = 1.0;
     int steps = static_cast<int>(t_end / dt);
 
-    MSVec<double, 1> u; u.setZero();
-    MSVec<double, 1> p; p(0) = lambda;
+    MSVec<double, 1> u;
+    u.setZero();
+    MSVec<double, 1> p;
+    p(0) = lambda;
 
     // Backward Euler via ImplicitIntegrator
-    MSVec<double, 1> x_be; x_be(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    MSVec<double, 1> x_be;
+    x_be(0) = x0_val;
+    for (int k = 0; k < steps; ++k) {
         x_be = ImplicitIntegrator<StiffDecayModel>::integrate(
             x_be, u, p, dt, IntegratorType::EULER_IMPLICIT);
+    }
 
     double x_exact = x0_val * std::exp(-lambda * t_end);
     double err = std::abs(x_be(0) - x_exact);
 
-    std::cerr << "[ImplicitIntegrator] Backward Euler: x=" << x_be(0)
-              << " exact=" << x_exact << " err=" << err << "\n";
+    std::cerr << "[ImplicitIntegrator] Backward Euler: x=" << x_be(0) << " exact=" << x_exact
+              << " err=" << err << "\n";
 
     // Backward Euler is O(dt) for nonlinear, O(dt) for linear stiff.
     // For this simple linear case, error should be small.
@@ -465,19 +468,23 @@ TEST(ImplicitIntegratorTest, ImplicitMidpointAccuracy)
     double t_end = 1.0;
     int steps = static_cast<int>(t_end / dt);
 
-    MSVec<double, 1> u; u.setZero();
-    MSVec<double, 1> p; p(0) = lambda;
+    MSVec<double, 1> u;
+    u.setZero();
+    MSVec<double, 1> p;
+    p(0) = lambda;
 
-    MSVec<double, 1> x_im; x_im(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    MSVec<double, 1> x_im;
+    x_im(0) = x0_val;
+    for (int k = 0; k < steps; ++k) {
         x_im = ImplicitIntegrator<StiffDecayModel>::integrate(
             x_im, u, p, dt, IntegratorType::RK2_IMPLICIT);
+    }
 
     double x_exact = x0_val * std::exp(-lambda * t_end);
     double err = std::abs(x_im(0) - x_exact);
 
-    std::cerr << "[ImplicitIntegrator] Implicit Midpoint: x=" << x_im(0)
-              << " exact=" << x_exact << " err=" << err << "\n";
+    std::cerr << "[ImplicitIntegrator] Implicit Midpoint: x=" << x_im(0) << " exact=" << x_exact
+              << " err=" << err << "\n";
 
     // Midpoint is O(dt^2) — should be more accurate than backward Euler
     EXPECT_LT(err, 0.001);
@@ -487,16 +494,19 @@ TEST(ImplicitIntegratorTest, ImplicitMidpointAccuracy)
 TEST(ImplicitIntegratorTest, StiffStabilityExplicitFailsImplicitSucceeds)
 {
     double lambda = 1000.0; // very stiff
-    double dt = 0.005;      // dt > 2/lambda = 0.002 → explicit unstable
+    double dt = 0.005; // dt > 2/lambda = 0.002 → explicit unstable
     double x0_val = 1.0;
     int steps = 20;
 
-    MSVec<double, 1> u; u.setZero();
-    MSVec<double, 1> p; p(0) = lambda;
+    MSVec<double, 1> u;
+    u.setZero();
+    MSVec<double, 1> p;
+    p(0) = lambda;
 
     // Explicit Euler: should blow up (unstable).
     // Use simple forward Euler formula directly (not ImplicitIntegrator).
-    MSVec<double, 1> x_exp; x_exp(0) = x0_val;
+    MSVec<double, 1> x_exp;
+    x_exp(0) = x0_val;
     bool exp_finite = true;
     for (int k = 0; k < steps; ++k) {
         // Forward Euler: x_{k+1} = x_k + dt * f(x_k)
@@ -509,10 +519,12 @@ TEST(ImplicitIntegratorTest, StiffStabilityExplicitFailsImplicitSucceeds)
     }
 
     // Backward Euler: should stay stable
-    MSVec<double, 1> x_imp; x_imp(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    MSVec<double, 1> x_imp;
+    x_imp(0) = x0_val;
+    for (int k = 0; k < steps; ++k) {
         x_imp = ImplicitIntegrator<StiffDecayModel>::integrate(
             x_imp, u, p, dt, IntegratorType::EULER_IMPLICIT);
+    }
 
     double x_exact = x0_val * std::exp(-lambda * steps * dt);
 
@@ -526,8 +538,7 @@ TEST(ImplicitIntegratorTest, StiffStabilityExplicitFailsImplicitSucceeds)
         << "Explicit Euler should be unstable for stiff ODE";
 
     // Implicit should be close to exact
-    EXPECT_NEAR(x_imp(0), x_exact, 0.1)
-        << "Implicit Euler should handle stiff ODE";
+    EXPECT_NEAR(x_imp(0), x_exact, 0.1) << "Implicit Euler should handle stiff ODE";
 }
 
 // --- A/B Jacobian verification ---
@@ -548,8 +559,10 @@ TEST(ImplicitIntegratorTest, JacobianAccuracy)
 
     // Compute discrete Jacobian via finite difference of the integrate map
     auto x_next_fn = [&](double x_val) -> double {
-        MSVec<double, 1> x_in; x_in(0) = x_val;
-        MSVec<double, 1> u_in; u_in(0) = 0.0;
+        MSVec<double, 1> x_in;
+        x_in(0) = x_val;
+        MSVec<double, 1> u_in;
+        u_in(0) = 0.0;
         MSVec<double, 0> p_in;
         auto z = ImplicitIntegrator<NonlinearDecayModel>::integrate(
             x_in, u_in, p_in, dt, IntegratorType::EULER_IMPLICIT, cfg);
@@ -581,28 +594,36 @@ TEST(ImplicitIntegratorTest, GaussLegendreAccuracy)
     double t_end = 1.0;
     int steps = static_cast<int>(t_end / dt);
 
-    MSVec<double, 1> u; u.setZero();
-    MSVec<double, 1> p; p(0) = lambda;
+    MSVec<double, 1> u;
+    u.setZero();
+    MSVec<double, 1> p;
+    p(0) = lambda;
 
     // Backward Euler
-    MSVec<double, 1> x_be; x_be(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    MSVec<double, 1> x_be;
+    x_be(0) = x0_val;
+    for (int k = 0; k < steps; ++k) {
         x_be = ImplicitIntegrator<StiffDecayModel>::integrate(
             x_be, u, p, dt, IntegratorType::EULER_IMPLICIT);
+    }
     double err_be = std::abs(x_be(0) - x0_val * std::exp(-lambda * t_end));
 
     // Implicit Midpoint
-    MSVec<double, 1> x_im; x_im(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    MSVec<double, 1> x_im;
+    x_im(0) = x0_val;
+    for (int k = 0; k < steps; ++k) {
         x_im = ImplicitIntegrator<StiffDecayModel>::integrate(
             x_im, u, p, dt, IntegratorType::RK2_IMPLICIT);
+    }
     double err_im = std::abs(x_im(0) - x0_val * std::exp(-lambda * t_end));
 
     // Gauss-Legendre (RK4 Implicit)
-    MSVec<double, 1> x_gl; x_gl(0) = x0_val;
-    for (int k = 0; k < steps; ++k)
+    MSVec<double, 1> x_gl;
+    x_gl(0) = x0_val;
+    for (int k = 0; k < steps; ++k) {
         x_gl = ImplicitIntegrator<StiffDecayModel>::integrate(
             x_gl, u, p, dt, IntegratorType::RK4_IMPLICIT);
+    }
     double err_gl = std::abs(x_gl(0) - x0_val * std::exp(-lambda * t_end));
 
     std::cerr << "[ImplicitIntegrator] Accuracy comparison (dt=" << dt << "):\n"
@@ -630,8 +651,10 @@ TEST(ImplicitIntegratorTest, WarmStartVsColdStart)
     double lambda = 2.0;
     double dt = 0.1;
 
-    MSVec<double, 1> u; u.setZero();
-    MSVec<double, 1> p; p(0) = lambda;
+    MSVec<double, 1> u;
+    u.setZero();
+    MSVec<double, 1> p;
+    p(0) = lambda;
     NewtonConfig cfg;
     cfg.max_iters = 50;
     cfg.tol = 1e-12;
@@ -644,18 +667,19 @@ TEST(ImplicitIntegratorTest, WarmStartVsColdStart)
     // Cold start: new solver each time, always start from x
     int cold_total_iters = 0;
     {
-        MSVec<double, 1> x; x(0) = 1.0;
+        MSVec<double, 1> x;
+        x(0) = 1.0;
         for (int step = 0; step < 1000; ++step) {
             NewtonSolver<double, 1> ns;
             MSVec<double, 1> z = x;
             int iters = 0;
-            auto eval = [&](const MSVec<double, 1>& z_in, MSVec<double, 1>& F,
-                            MSMat<double, 1, 1>& J) {
-                iters++;
-                double zz = z_in(0);
-                F(0) = zz - x(0) + small_dt * zz * zz;
-                J(0, 0) = 1.0 + 2.0 * small_dt * zz;
-            };
+            auto eval
+                = [&](const MSVec<double, 1>& z_in, MSVec<double, 1>& F, MSMat<double, 1, 1>& J) {
+                      iters++;
+                      double zz = z_in(0);
+                      F(0) = zz - x(0) + small_dt * zz * zz;
+                      J(0, 0) = 1.0 + 2.0 * small_dt * zz;
+                  };
             ns.solve(z, eval, cfg, /*warm_start=*/false);
             cold_total_iters += iters;
             x = z;
@@ -665,18 +689,19 @@ TEST(ImplicitIntegratorTest, WarmStartVsColdStart)
     // Warm start: reuse solver, seed from previous converged solution
     int warm_total_iters = 0;
     {
-        MSVec<double, 1> x; x(0) = 1.0;
+        MSVec<double, 1> x;
+        x(0) = 1.0;
         NewtonSolver<double, 1> ns;
         for (int step = 0; step < 1000; ++step) {
             MSVec<double, 1> z = x;
             int iters = 0;
-            auto eval = [&](const MSVec<double, 1>& z_in, MSVec<double, 1>& F,
-                            MSMat<double, 1, 1>& J) {
-                iters++;
-                double zz = z_in(0);
-                F(0) = zz - x(0) + small_dt * zz * zz;
-                J(0, 0) = 1.0 + 2.0 * small_dt * zz;
-            };
+            auto eval
+                = [&](const MSVec<double, 1>& z_in, MSVec<double, 1>& F, MSMat<double, 1, 1>& J) {
+                      iters++;
+                      double zz = z_in(0);
+                      F(0) = zz - x(0) + small_dt * zz * zz;
+                      J(0, 0) = 1.0 + 2.0 * small_dt * zz;
+                  };
             ns.solve(z, eval, cfg, /*warm_start=*/true);
             warm_total_iters += iters;
             x = z;
@@ -690,18 +715,21 @@ TEST(ImplicitIntegratorTest, WarmStartVsColdStart)
     // Now measure wall-clock time for 100k solves (Gauss-Legendre sized)
     // to quantify the workspace reuse benefit.
     const int N_ITER = 100000;
-    MSVec<double, 1> x0; x0(0) = 0.5;
+    MSVec<double, 1> x0;
+    x0(0) = 0.5;
 
     // Cold: create workspace each call
     auto t_cold_start = std::chrono::steady_clock::now();
     for (int i = 0; i < N_ITER; ++i) {
         NewtonSolver<double, 1> ns;
         MSVec<double, 1> z = x0;
-        ns.solve(z, [&](const MSVec<double, 1>& z_in, MSVec<double, 1>& F,
-                         MSMat<double, 1, 1>& J) {
-            F(0) = z_in(0) - 0.5 + 0.01 * z_in(0) * z_in(0);
-            J(0, 0) = 1.0 + 0.02 * z_in(0);
-        }, cfg, false);
+        ns.solve(
+            z,
+            [&](const MSVec<double, 1>& z_in, MSVec<double, 1>& F, MSMat<double, 1, 1>& J) {
+                F(0) = z_in(0) - 0.5 + 0.01 * z_in(0) * z_in(0);
+                J(0, 0) = 1.0 + 0.02 * z_in(0);
+            },
+            cfg, false);
     }
     auto t_cold_end = std::chrono::steady_clock::now();
     double cold_us = std::chrono::duration<double, std::micro>(t_cold_end - t_cold_start).count();
@@ -711,11 +739,13 @@ TEST(ImplicitIntegratorTest, WarmStartVsColdStart)
     auto t_warm_start = std::chrono::steady_clock::now();
     for (int i = 0; i < N_ITER; ++i) {
         MSVec<double, 1> z = x0;
-        ns_warm.solve(z, [&](const MSVec<double, 1>& z_in, MSVec<double, 1>& F,
-                              MSMat<double, 1, 1>& J) {
-            F(0) = z_in(0) - 0.5 + 0.01 * z_in(0) * z_in(0);
-            J(0, 0) = 1.0 + 0.02 * z_in(0);
-        }, cfg, true);
+        ns_warm.solve(
+            z,
+            [&](const MSVec<double, 1>& z_in, MSVec<double, 1>& F, MSMat<double, 1, 1>& J) {
+                F(0) = z_in(0) - 0.5 + 0.01 * z_in(0) * z_in(0);
+                J(0, 0) = 1.0 + 0.02 * z_in(0);
+            },
+            cfg, true);
     }
     auto t_warm_end = std::chrono::steady_clock::now();
     double warm_us = std::chrono::duration<double, std::micro>(t_warm_end - t_warm_start).count();

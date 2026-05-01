@@ -50,8 +50,9 @@ namespace matrix {
     template <> struct FillImpl<false> {
         template <typename Mat, typename T> static inline void run(Mat& m, T value)
         {
-            for (int i = 0; i < Mat::Rows * Mat::Cols; ++i)
+            for (int i = 0; i < Mat::Rows * Mat::Cols; ++i) {
                 m.data[i] = value;
+            }
         }
     };
 
@@ -80,8 +81,9 @@ namespace matrix {
         template <typename Out, typename In, typename T>
         static inline void run(Out& out, const In& in, T scale)
         {
-            for (int i = 0; i < In::Rows * In::Cols; ++i)
+            for (int i = 0; i < In::Rows * In::Cols; ++i) {
                 out.data[i] = in.data[i] * scale;
+            }
         }
     };
 
@@ -111,8 +113,9 @@ namespace matrix {
         template <typename Out, typename A, typename B>
         static inline void run(Out& out, const A& a, const B& b)
         {
-            for (int i = 0; i < A::Rows * A::Cols; ++i)
+            for (int i = 0; i < A::Rows * A::Cols; ++i) {
                 out.data[i] = a.data[i] + Sign * b.data[i];
+            }
         }
     };
 
@@ -148,8 +151,9 @@ namespace matrix {
         template <typename Out, typename In, typename T>
         static inline void run(Out& out, const In& in, T scale)
         {
-            for (int i = 0; i < In::Rows * In::Cols; ++i)
+            for (int i = 0; i < In::Rows * In::Cols; ++i) {
                 out.data[i] += in.data[i] * scale;
+            }
         }
     };
 
@@ -174,8 +178,9 @@ namespace matrix {
                     const int i = index / Out::Cols;
                     const int j = index - i * Out::Cols;
                     typename Out::Scalar sum = typename Out::Scalar(0);
-                    for (int k = 0; k < A::Cols; ++k)
+                    for (int k = 0; k < A::Cols; ++k) {
                         sum += a(i, k) * b(k, j);
+                    }
                     out(i, j) = sum;
                 }
             } body = { out, a, b };
@@ -190,8 +195,9 @@ namespace matrix {
             for (int i = 0; i < Out::Rows; ++i) {
                 for (int j = 0; j < Out::Cols; ++j) {
                     typename Out::Scalar sum = typename Out::Scalar(0);
-                    for (int k = 0; k < A::Cols; ++k)
+                    for (int k = 0; k < A::Cols; ++k) {
                         sum += a(i, k) * b(k, j);
+                    }
                     out(i, j) = sum;
                 }
             }
@@ -220,8 +226,9 @@ namespace matrix {
                     const int i = index / Out::Cols;
                     const int j = index - i * Out::Cols;
                     typename Out::Scalar sum = typename Out::Scalar(0);
-                    for (int k = 0; k < A::Cols; ++k)
+                    for (int k = 0; k < A::Cols; ++k) {
                         sum += a(i, k) * b(k, j);
+                    }
                     out(i, j) += sum;
                 }
             } body = { out, a, b };
@@ -236,8 +243,9 @@ namespace matrix {
             for (int i = 0; i < Out::Rows; ++i) {
                 for (int j = 0; j < Out::Cols; ++j) {
                     typename Out::Scalar sum = typename Out::Scalar(0);
-                    for (int k = 0; k < A::Cols; ++k)
+                    for (int k = 0; k < A::Cols; ++k) {
                         sum += a(i, k) * b(k, j);
+                    }
                     out(i, j) += sum;
                 }
             }
@@ -274,8 +282,9 @@ namespace matrix {
         template <typename Out, typename In> static inline void run(Out& out, const In& in)
         {
             for (int i = 0; i < In::Rows; ++i) {
-                for (int j = 0; j < In::Cols; ++j)
+                for (int j = 0; j < In::Cols; ++j) {
                     out(j, i) = in(i, j);
+                }
             }
         }
     };
@@ -300,8 +309,9 @@ namespace matrix {
                     const int i = index / Out::Cols;
                     const int j = index - i * Out::Cols;
                     typename Out::Scalar sum = typename Out::Scalar(0);
-                    for (int k = 0; k < A::Rows; ++k)
+                    for (int k = 0; k < A::Rows; ++k) {
                         sum += a(k, i) * b(k, j);
+                    }
                     out(i, j) += sum;
                 }
             } body = { out, a, b };
@@ -316,8 +326,9 @@ namespace matrix {
             for (int i = 0; i < Out::Rows; ++i) {
                 for (int j = 0; j < Out::Cols; ++j) {
                     typename Out::Scalar sum = typename Out::Scalar(0);
-                    for (int k = 0; k < A::Rows; ++k)
+                    for (int k = 0; k < A::Rows; ++k) {
                         sum += a(k, i) * b(k, j);
+                    }
                     out(i, j) += sum;
                 }
             }
@@ -347,8 +358,9 @@ namespace matrix {
                     const int i = index / Out::Cols;
                     const int j = index - i * Out::Cols;
                     typename Out::Scalar sum = typename Out::Scalar(0);
-                    for (int k = 0; k < A::Rows; ++k)
+                    for (int k = 0; k < A::Rows; ++k) {
                         sum += a(k, i) * weights(k) * b(k, j);
+                    }
                     out(i, j) += sum;
                 }
             } body = { out, a, weights, b };
@@ -363,8 +375,9 @@ namespace matrix {
             for (int i = 0; i < Out::Rows; ++i) {
                 for (int j = 0; j < Out::Cols; ++j) {
                     typename Out::Scalar sum = typename Out::Scalar(0);
-                    for (int k = 0; k < A::Rows; ++k)
+                    for (int k = 0; k < A::Rows; ++k) {
                         sum += a(k, i) * weights(k) * b(k, j);
+                    }
                     out(i, j) += sum;
                 }
             }
@@ -392,8 +405,9 @@ namespace matrix {
                 inline void operator()(int i)
                 {
                     typename Out::Scalar sum = typename Out::Scalar(0);
-                    for (int k = 0; k < A::Rows; ++k)
+                    for (int k = 0; k < A::Rows; ++k) {
                         sum += a(k, i) * x(k);
+                    }
                     out.data[i] += sum;
                 }
             } body = { out, a, x };
@@ -407,8 +421,9 @@ namespace matrix {
         {
             for (int i = 0; i < Out::Rows; ++i) {
                 typename Out::Scalar sum = typename Out::Scalar(0);
-                for (int k = 0; k < A::Rows; ++k)
+                for (int k = 0; k < A::Rows; ++k) {
                     sum += a(k, i) * x(k);
+                }
                 out.data[i] += sum;
             }
         }
@@ -466,8 +481,9 @@ namespace matrix {
         template <typename Mat> static inline bool run(const Mat& m)
         {
             for (int i = 0; i < Mat::Rows * Mat::Cols; ++i) {
-                if (is_nan_scalar(static_cast<double>(m.data[i])))
+                if (is_nan_scalar(static_cast<double>(m.data[i]))) {
                     return true;
+                }
             }
             return false;
         }
@@ -478,8 +494,9 @@ namespace matrix {
         {
             for (int i = 0; i < Mat::Rows; ++i) {
                 for (int j = 0; j < Mat::Cols; ++j) {
-                    if (is_nan_scalar(static_cast<double>(m(i, j))))
+                    if (is_nan_scalar(static_cast<double>(m(i, j)))) {
                         return true;
+                    }
                 }
             }
             return false;
@@ -494,8 +511,9 @@ namespace matrix {
     template <typename Mat> inline bool all_finite(const Mat& m)
     {
         for (int i = 0; i < Mat::Rows * Mat::Cols; ++i) {
-            if (!is_finite_scalar(static_cast<double>(m.data[i])))
+            if (!is_finite_scalar(static_cast<double>(m.data[i]))) {
                 return false;
+            }
         }
         return true;
     }
@@ -503,16 +521,18 @@ namespace matrix {
     template <typename A, typename B> inline double dot(const A& a, const B& b)
     {
         double sum = 0.0;
-        for (int i = 0; i < A::Rows * A::Cols; ++i)
+        for (int i = 0; i < A::Rows * A::Cols; ++i) {
             sum += static_cast<double>(a.data[i]) * static_cast<double>(b.data[i]);
+        }
         return sum;
     }
 
     template <typename Mat> inline double norm_inf(const Mat& m)
     {
         double max_val = 0.0;
-        for (int i = 0; i < Mat::Rows * Mat::Cols; ++i)
+        for (int i = 0; i < Mat::Rows * Mat::Cols; ++i) {
             max_val = std::max(max_val, std::abs(static_cast<double>(m.data[i])));
+        }
         return max_val;
     }
 

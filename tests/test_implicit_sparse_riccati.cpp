@@ -33,8 +33,7 @@ template <typename BaseModel> struct CountingFusedModel : public BaseModel {
     inline static int fused_calls = 0;
 
     template <typename T>
-    static void compute_fused_riccati_step(
-        const MSMat<T, BaseModel::NX, BaseModel::NX>& Vxx,
+    static void compute_fused_riccati_step(const MSMat<T, BaseModel::NX, BaseModel::NX>& Vxx,
         const MSVec<T, BaseModel::NX>& Vx,
         KnotPoint<T, BaseModel::NX, BaseModel::NU, BaseModel::NC, BaseModel::NP>& kp)
     {
@@ -62,7 +61,8 @@ SolverConfig make_config(IntegratorType integrator)
     return config;
 }
 
-template <typename Model> MiniSolver<Model, kMaxHorizon> make_initialized_solver(IntegratorType type)
+template <typename Model>
+MiniSolver<Model, kMaxHorizon> make_initialized_solver(IntegratorType type)
 {
     MiniSolver<Model, kMaxHorizon> solver(kHorizon, Backend::CPU_SERIAL, make_config(type));
     solver.set_dt(0.08);

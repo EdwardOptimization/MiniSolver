@@ -34,8 +34,9 @@ void save_trajectory_csv(const std::string& filename, const SolverType& solver,
         std::vector<double> u = solver.get_control(k); // might be empty at N
         double g_obs = solver.get_constraint_val(k, 4); // Obstacle constraint
 
-        if (k > 0 && k - 1 < static_cast<int>(dts.size()))
+        if (k > 0 && k - 1 < static_cast<int>(dts.size())) {
             current_t += dts[k - 1];
+        }
 
         // Safe access
         double u0 = (k < horizon) ? u[0] : 0.0;
@@ -78,8 +79,9 @@ int main(int /*argc*/, char** /*argv*/)
     MiniSolver<CarModel, 50> solver(N, mode, config);
 
     std::vector<double> dts(N);
-    for (int k = 0; k < N; ++k)
+    for (int k = 0; k < N; ++k) {
         dts[k] = 0.1;
+    }
     solver.set_dt(dts);
 
     // Scenario
@@ -90,8 +92,9 @@ int main(int /*argc*/, char** /*argv*/)
     // Initialize Trajectory (Cold Start)
     double current_t = 0.0;
     for (int k = 0; k <= N; ++k) {
-        if (k > 0)
+        if (k > 0) {
             current_t += dts[k - 1];
+        }
         double x_ref = current_t * 5.0;
 
         if (k < N) {

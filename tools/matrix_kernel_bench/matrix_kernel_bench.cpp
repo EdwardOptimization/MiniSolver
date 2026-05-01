@@ -19,24 +19,27 @@ volatile double sink = 0.0;
 template <typename Mat> double checksum_minimatrix(const Mat& m)
 {
     double sum = 0.0;
-    for (int i = 0; i < Mat::Rows * Mat::Cols; ++i)
+    for (int i = 0; i < Mat::Rows * Mat::Cols; ++i) {
         sum += m.data[i] * static_cast<double>(i + 1);
+    }
     return sum;
 }
 
 template <typename Mat> double checksum_eigen(const Mat& m)
 {
     double sum = 0.0;
-    for (int i = 0; i < m.size(); ++i)
+    for (int i = 0; i < m.size(); ++i) {
         sum += m.data()[i] * static_cast<double>(i + 1);
+    }
     return sum;
 }
 
 template <bool Unroll, int End> struct ForRange {
     template <typename Body> static inline void run(Body& body)
     {
-        for (int i = 0; i < End; ++i)
+        for (int i = 0; i < End; ++i) {
             body(i);
+        }
     }
 };
 
@@ -50,8 +53,9 @@ template <int End> struct ForRange<true, End> {
 template <bool Unroll, int End> struct PrefixRange {
     template <typename Body> static inline void run(int count, Body& body)
     {
-        for (int i = 0; i < count; ++i)
+        for (int i = 0; i < count; ++i) {
             body(i);
+        }
     }
 };
 
@@ -59,8 +63,9 @@ template <int End> struct PrefixRange<true, End> {
     template <typename Body> static inline void run(int count, Body& body)
     {
         auto guarded = [&](int i) {
-            if (i < count)
+            if (i < count) {
                 body(i);
+            }
         };
         minisolver::matrix::StaticFor<0, End>::run(guarded);
     }
@@ -69,8 +74,9 @@ template <int End> struct PrefixRange<true, End> {
 template <bool Unroll, int End> struct SuffixRange {
     template <typename Body> static inline void run(int begin, Body& body)
     {
-        for (int i = begin; i < End; ++i)
+        for (int i = begin; i < End; ++i) {
             body(i);
+        }
     }
 };
 
@@ -78,8 +84,9 @@ template <int End> struct SuffixRange<true, End> {
     template <typename Body> static inline void run(int begin, Body& body)
     {
         auto guarded = [&](int i) {
-            if (i >= begin)
+            if (i >= begin) {
                 body(i);
+            }
         };
         minisolver::matrix::StaticFor<0, End>::run(guarded);
     }
@@ -87,15 +94,19 @@ template <int End> struct SuffixRange<true, End> {
 
 template <bool U0, bool U1, bool U2> std::string unroll_variant_name(const std::string& base)
 {
-    if (!U0 && !U1 && !U2)
+    if (!U0 && !U1 && !U2) {
         return base + "_loop";
+    }
     std::string name = base + "_unroll";
-    if (U0)
+    if (U0) {
         name += "_outer";
-    if (U1)
+    }
+    if (U1) {
         name += "_row";
-    if (U2)
+    }
+    if (U2) {
         name += "_inner";
+    }
     return name;
 }
 
@@ -104,8 +115,9 @@ double time_ns_per_iter(
     const std::string& kernel, int n, const std::string& variant, int iters, Fn fn)
 {
     const auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < iters; ++i)
+    for (int i = 0; i < iters; ++i) {
         fn(i);
+    }
     const auto end = std::chrono::high_resolution_clock::now();
     const double ns = std::chrono::duration<double, std::nano>(end - start).count();
     const double per_iter = ns / static_cast<double>(iters);
@@ -150,10 +162,12 @@ void fill_minimatrix_inputs(
     std::array<MiniMatrix<double, R, K>, 64>& as, std::array<MiniMatrix<double, K, C>, 64>& bs)
 {
     for (int batch = 0; batch < 64; ++batch) {
-        for (int i = 0; i < R * K; ++i)
+        for (int i = 0; i < R * K; ++i) {
             as[batch].data[i] = 0.01 * static_cast<double>((batch + 1) * (i + 1));
-        for (int i = 0; i < K * C; ++i)
+        }
+        for (int i = 0; i < K * C; ++i) {
             bs[batch].data[i] = 0.02 * static_cast<double>((batch + 3) * (i + 1));
+        }
     }
 }
 
@@ -162,28 +176,35 @@ void fill_eigen_inputs(std::array<Eigen::Matrix<double, R, K>, 64>& as,
     std::array<Eigen::Matrix<double, K, C>, 64>& bs)
 {
     for (int batch = 0; batch < 64; ++batch) {
-        for (int r = 0; r < R; ++r)
-            for (int k = 0; k < K; ++k)
+        for (int r = 0; r < R; ++r) {
+            for (int k = 0; k < K; ++k) {
                 as[batch](r, k) = 0.01 * static_cast<double>((batch + 1) * (r * K + k + 1));
-        for (int k = 0; k < K; ++k)
-            for (int c = 0; c < C; ++c)
+            }
+        }
+        for (int k = 0; k < K; ++k) {
+            for (int c = 0; c < C; ++c) {
                 bs[batch](k, c) = 0.02 * static_cast<double>((batch + 3) * (k * C + c + 1));
+            }
+        }
     }
 }
 
 inline double lower_seed(int batch, int row, int col)
 {
-    if (col > row)
+    if (col > row) {
         return 0.0;
-    if (row == col)
+    }
+    if (row == col) {
         return 2.0 + 0.03 * static_cast<double>((batch + row) % 7);
+    }
     return 0.01 * static_cast<double>((batch + 1) * (row + 1) + (col + 1));
 }
 
 inline double general_seed(int batch, int row, int col, int n)
 {
-    if (row == col)
+    if (row == col) {
         return 2.0 * static_cast<double>(n) + 0.01 * static_cast<double>(batch + row + 1);
+    }
     const double sign = ((row + col + batch) & 1) ? -1.0 : 1.0;
     return sign * 0.02 * static_cast<double>((batch + 1) + (row + 1) * (col + 2));
 }
@@ -192,17 +213,21 @@ template <int N> void fill_minimatrix_spd(std::array<MiniMatrix<double, N, N>, 6
 {
     for (int batch = 0; batch < 64; ++batch) {
         std::array<double, N * N> l;
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j) {
                 l[i * N + j] = lower_seed(batch, i, j);
+            }
+        }
 
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < N; ++j) {
                 double sum = 0.0;
-                for (int k = 0; k < N; ++k)
+                for (int k = 0; k < N; ++k) {
                     sum += l[i * N + k] * l[j * N + k];
-                if (i == j)
+                }
+                if (i == j) {
                     sum += 0.25;
+                }
                 mats[batch](i, j) = sum;
             }
         }
@@ -213,9 +238,11 @@ template <int N> void fill_eigen_spd(std::array<Eigen::Matrix<double, N, N>, 64>
 {
     for (int batch = 0; batch < 64; ++batch) {
         Eigen::Matrix<double, N, N> l = Eigen::Matrix<double, N, N>::Zero();
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j) {
                 l(i, j) = lower_seed(batch, i, j);
+            }
+        }
         mats[batch].noalias() = l * l.transpose();
         mats[batch].diagonal().array() += 0.25;
     }
@@ -224,18 +251,22 @@ template <int N> void fill_eigen_spd(std::array<Eigen::Matrix<double, N, N>, 64>
 template <int N> void fill_minimatrix_general(std::array<MiniMatrix<double, N, N>, 64>& mats)
 {
     for (int batch = 0; batch < 64; ++batch) {
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j) {
                 mats[batch](i, j) = general_seed(batch, i, j, N);
+            }
+        }
     }
 }
 
 template <int N> void fill_eigen_general(std::array<Eigen::Matrix<double, N, N>, 64>& mats)
 {
     for (int batch = 0; batch < 64; ++batch) {
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j) {
                 mats[batch](i, j) = general_seed(batch, i, j, N);
+            }
+        }
     }
 }
 
@@ -247,32 +278,42 @@ inline double rhs_seed(int batch, int row, int col)
 
 template <int N> void fill_minimatrix_rhs_vec(std::array<MiniMatrix<double, N, 1>, 64>& rhs)
 {
-    for (int batch = 0; batch < 64; ++batch)
-        for (int i = 0; i < N; ++i)
+    for (int batch = 0; batch < 64; ++batch) {
+        for (int i = 0; i < N; ++i) {
             rhs[batch](i) = rhs_seed(batch, i, 0);
+        }
+    }
 }
 
 template <int N> void fill_eigen_rhs_vec(std::array<Eigen::Matrix<double, N, 1>, 64>& rhs)
 {
-    for (int batch = 0; batch < 64; ++batch)
-        for (int i = 0; i < N; ++i)
+    for (int batch = 0; batch < 64; ++batch) {
+        for (int i = 0; i < N; ++i) {
             rhs[batch](i) = rhs_seed(batch, i, 0);
+        }
+    }
 }
 
 template <int N> void fill_minimatrix_rhs_mat(std::array<MiniMatrix<double, N, N>, 64>& rhs)
 {
-    for (int batch = 0; batch < 64; ++batch)
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
+    for (int batch = 0; batch < 64; ++batch) {
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j) {
                 rhs[batch](i, j) = rhs_seed(batch, i, j);
+            }
+        }
+    }
 }
 
 template <int N> void fill_eigen_rhs_mat(std::array<Eigen::Matrix<double, N, N>, 64>& rhs)
 {
-    for (int batch = 0; batch < 64; ++batch)
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
+    for (int batch = 0; batch < 64; ++batch) {
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j) {
                 rhs[batch](i, j) = rhs_seed(batch, i, j);
+            }
+        }
+    }
 }
 
 template <int N>
@@ -282,8 +323,9 @@ double residual_inf_vec(const MiniMatrix<double, N, N>& a, const MiniMatrix<doub
     double max_abs = 0.0;
     for (int i = 0; i < N; ++i) {
         double sum = 0.0;
-        for (int j = 0; j < N; ++j)
+        for (int j = 0; j < N; ++j) {
             sum += a(i, j) * x(j);
+        }
         max_abs = std::max(max_abs, std::abs(sum - b(i)));
     }
     return max_abs;
@@ -297,8 +339,9 @@ double residual_inf_mat(const MiniMatrix<double, N, N>& a, const MiniMatrix<doub
     for (int i = 0; i < N; ++i) {
         for (int c = 0; c < N; ++c) {
             double sum = 0.0;
-            for (int j = 0; j < N; ++j)
+            for (int j = 0; j < N; ++j) {
                 sum += a(i, j) * x(j, c);
+            }
             max_abs = std::max(max_abs, std::abs(sum - b(i, c)));
         }
     }
@@ -329,12 +372,14 @@ template <int N> double minimatrix_llt_checksum(const MiniMatrix<double, N, N>& 
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j <= i; ++j) {
             double sum = 0.0;
-            for (int k = 0; k < j; ++k)
+            for (int k = 0; k < j; ++k) {
                 sum += l[i * N + k] * l[j * N + k];
+            }
             if (i == j) {
                 const double val = a(i, i) - sum;
-                if (val <= 0.0)
+                if (val <= 0.0) {
                     return -1.0;
+                }
                 l[i * N + j] = std::sqrt(val);
             } else {
                 l[i * N + j] = (a(i, j) - sum) / l[j * N + j];
@@ -343,8 +388,9 @@ template <int N> double minimatrix_llt_checksum(const MiniMatrix<double, N, N>& 
     }
 
     double sum = 0.0;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         sum += l[i] * static_cast<double>(i + 1);
+    }
     return sum;
 }
 
@@ -356,26 +402,31 @@ template <int N> double minimatrix_ldlt_checksum(const MiniMatrix<double, N, N>&
     d.fill(0.0);
 
     for (int j = 0; j < N; ++j) {
-        for (int k = 0; k < j; ++k)
+        for (int k = 0; k < j; ++k) {
             l[j * N + j] += l[j * N + k] * l[j * N + k] * d[k];
+        }
         d[j] = a(j, j) - l[j * N + j];
-        if (std::abs(d[j]) < 1e-14)
+        if (std::abs(d[j]) < 1e-14) {
             return -1.0;
+        }
         l[j * N + j] = 1.0;
 
         for (int i = j + 1; i < N; ++i) {
             double sum = 0.0;
-            for (int k = 0; k < j; ++k)
+            for (int k = 0; k < j; ++k) {
                 sum += l[i * N + k] * l[j * N + k] * d[k];
+            }
             l[i * N + j] = (a(i, j) - sum) / d[j];
         }
     }
 
     double sum = 0.0;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         sum += l[i] * static_cast<double>(i + 1);
-    for (int i = 0; i < N; ++i)
+    }
+    for (int i = 0; i < N; ++i) {
         sum += d[i] * static_cast<double>(i + 1);
+    }
     return sum;
 }
 
@@ -383,10 +434,12 @@ template <int N> double minimatrix_lu_checksum(const MiniMatrix<double, N, N>& a
 {
     std::array<double, N * N> lu;
     std::array<int, N> perm;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         lu[i] = a.data[i];
-    for (int i = 0; i < N; ++i)
+    }
+    for (int i = 0; i < N; ++i) {
         perm[i] = i;
+    }
 
     for (int k = 0; k < N; ++k) {
         int max_row = k;
@@ -398,26 +451,31 @@ template <int N> double minimatrix_lu_checksum(const MiniMatrix<double, N, N>& a
                 max_row = i;
             }
         }
-        if (max_val < 1e-14)
+        if (max_val < 1e-14) {
             return -1.0;
+        }
         if (max_row != k) {
             std::swap(perm[k], perm[max_row]);
-            for (int j = 0; j < N; ++j)
+            for (int j = 0; j < N; ++j) {
                 std::swap(lu[k * N + j], lu[max_row * N + j]);
+            }
         }
         for (int i = k + 1; i < N; ++i) {
             const double factor = lu[i * N + k] / lu[k * N + k];
             lu[i * N + k] = factor;
-            for (int j = k + 1; j < N; ++j)
+            for (int j = k + 1; j < N; ++j) {
                 lu[i * N + j] -= factor * lu[k * N + j];
+            }
         }
     }
 
     double sum = 0.0;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         sum += lu[i] * static_cast<double>(i + 1);
-    for (int i = 0; i < N; ++i)
+    }
+    for (int i = 0; i < N; ++i) {
         sum += static_cast<double>(perm[i] + 1);
+    }
     return sum;
 }
 
@@ -430,32 +488,39 @@ template <int N> double minimatrix_qr_mgs_checksum(const MiniMatrix<double, N, N
     r.fill(0.0);
 
     for (int j = 0; j < N; ++j) {
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             v[i] = a(i, j);
+        }
 
         for (int k = 0; k < j; ++k) {
             double dot = 0.0;
-            for (int i = 0; i < N; ++i)
+            for (int i = 0; i < N; ++i) {
                 dot += q[i * N + k] * v[i];
+            }
             r[k * N + j] = dot;
-            for (int i = 0; i < N; ++i)
+            for (int i = 0; i < N; ++i) {
                 v[i] -= dot * q[i * N + k];
+            }
         }
 
         double norm_sq = 0.0;
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             norm_sq += v[i] * v[i];
+        }
         const double norm = std::sqrt(norm_sq);
-        if (norm < 1e-14)
+        if (norm < 1e-14) {
             return -1.0;
+        }
         r[j * N + j] = norm;
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             q[i * N + j] = v[i] / norm;
+        }
     }
 
     double sum = 0.0;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         sum += (q[i] + r[i]) * static_cast<double>(i + 1);
+    }
     return sum;
 }
 
@@ -467,11 +532,13 @@ double minimatrix_llt_variant_checksum(const MiniMatrix<double, N, N>& a)
     bool success = true;
 
     auto body_outer = [&](int i) {
-        if (!success)
+        if (!success) {
             return;
+        }
         auto body_row = [&](int j) {
-            if (!success)
+            if (!success) {
                 return;
+            }
             double sum = 0.0;
             auto body_inner = [&](int k) { sum += l[i * N + k] * l[j * N + k]; };
             PrefixRange<UI, N>::run(j, body_inner);
@@ -491,11 +558,13 @@ double minimatrix_llt_variant_checksum(const MiniMatrix<double, N, N>& a)
     };
     ForRange<UO, N>::run(body_outer);
 
-    if (!success)
+    if (!success) {
         return -1.0;
+    }
     double sum = 0.0;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         sum += l[i] * static_cast<double>(i + 1);
+    }
     return sum;
 }
 
@@ -509,8 +578,9 @@ double minimatrix_ldlt_variant_checksum(const MiniMatrix<double, N, N>& a)
     bool success = true;
 
     auto body_outer = [&](int j) {
-        if (!success)
+        if (!success) {
             return;
+        }
 
         double diag_sum = 0.0;
         auto body_diag = [&](int k) { diag_sum += l[j * N + k] * l[j * N + k] * d[k]; };
@@ -532,13 +602,16 @@ double minimatrix_ldlt_variant_checksum(const MiniMatrix<double, N, N>& a)
     };
     ForRange<UO, N>::run(body_outer);
 
-    if (!success)
+    if (!success) {
         return -1.0;
+    }
     double sum = 0.0;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         sum += l[i] * static_cast<double>(i + 1);
-    for (int i = 0; i < N; ++i)
+    }
+    for (int i = 0; i < N; ++i) {
         sum += d[i] * static_cast<double>(i + 1);
+    }
     return sum;
 }
 
@@ -547,15 +620,18 @@ double minimatrix_lu_variant_checksum(const MiniMatrix<double, N, N>& a)
 {
     std::array<double, N * N> lu;
     std::array<int, N> perm;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         lu[i] = a.data[i];
-    for (int i = 0; i < N; ++i)
+    }
+    for (int i = 0; i < N; ++i) {
         perm[i] = i;
+    }
 
     bool success = true;
     auto body_outer = [&](int k) {
-        if (!success)
+        if (!success) {
             return;
+        }
 
         int max_row = k;
         double max_val = std::abs(lu[k * N + k]);
@@ -588,13 +664,16 @@ double minimatrix_lu_variant_checksum(const MiniMatrix<double, N, N>& a)
     };
     ForRange<UO, N>::run(body_outer);
 
-    if (!success)
+    if (!success) {
         return -1.0;
+    }
     double sum = 0.0;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         sum += lu[i] * static_cast<double>(i + 1);
-    for (int i = 0; i < N; ++i)
+    }
+    for (int i = 0; i < N; ++i) {
         sum += static_cast<double>(perm[i] + 1);
+    }
     return sum;
 }
 
@@ -609,8 +688,9 @@ double minimatrix_qr_mgs_variant_checksum(const MiniMatrix<double, N, N>& a)
     bool success = true;
 
     auto body_outer = [&](int j) {
-        if (!success)
+        if (!success) {
             return;
+        }
 
         auto body_copy = [&](int i) { v[i] = a(i, j); };
         ForRange<UR, N>::run(body_copy);
@@ -639,11 +719,13 @@ double minimatrix_qr_mgs_variant_checksum(const MiniMatrix<double, N, N>& a)
     };
     ForRange<UO, N>::run(body_outer);
 
-    if (!success)
+    if (!success) {
         return -1.0;
+    }
     double sum = 0.0;
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         sum += (q[i] + r[i]) * static_cast<double>(i + 1);
+    }
     return sum;
 }
 
@@ -656,8 +738,9 @@ bool minimatrix_ldlt_factor_variant(
     bool success = true;
 
     auto body_outer = [&](int j) {
-        if (!success)
+        if (!success) {
             return;
+        }
 
         double diag_sum = 0.0;
         auto body_diag = [&](int k) { diag_sum += l[j * N + k] * l[j * N + k] * d[k]; };
@@ -690,16 +773,18 @@ void minimatrix_ldlt_solve_vec_from_factor(const std::array<double, N * N>& l,
 
     for (int i = 0; i < N; ++i) {
         double sum = b(i);
-        for (int k = 0; k < i; ++k)
+        for (int k = 0; k < i; ++k) {
             sum -= l[i * N + k] * y[k];
+        }
         y[i] = sum;
         z[i] = y[i] / d[i];
     }
 
     for (int i = N - 1; i >= 0; --i) {
         double sum = z[i];
-        for (int k = i + 1; k < N; ++k)
+        for (int k = i + 1; k < N; ++k) {
             sum -= l[k * N + i] * x(k);
+        }
         x(i) = sum;
     }
 }
@@ -714,8 +799,9 @@ void minimatrix_ldlt_solve_mat_from_factor(const std::array<double, N * N>& l,
     for (int i = 0; i < N; ++i) {
         for (int col = 0; col < N; ++col) {
             double sum = b(i, col);
-            for (int k = 0; k < i; ++k)
+            for (int k = 0; k < i; ++k) {
                 sum -= l[i * N + k] * y[k * N + col];
+            }
             y[i * N + col] = sum;
             z[i * N + col] = sum / d[i];
         }
@@ -724,8 +810,9 @@ void minimatrix_ldlt_solve_mat_from_factor(const std::array<double, N * N>& l,
     for (int i = N - 1; i >= 0; --i) {
         for (int col = 0; col < N; ++col) {
             double sum = z[i * N + col];
-            for (int k = i + 1; k < N; ++k)
+            for (int k = i + 1; k < N; ++k) {
                 sum -= l[k * N + i] * x(k, col);
+            }
             x(i, col) = sum;
         }
     }
@@ -737,8 +824,9 @@ bool minimatrix_ldlt_solve_vec_variant(const MiniMatrix<double, N, N>& a,
 {
     std::array<double, N * N> l;
     std::array<double, N> d;
-    if (!minimatrix_ldlt_factor_variant<UO, UR, UI, N>(a, l, d))
+    if (!minimatrix_ldlt_factor_variant<UO, UR, UI, N>(a, l, d)) {
         return false;
+    }
     minimatrix_ldlt_solve_vec_from_factor<N>(l, d, b, x);
     return true;
 }
@@ -749,8 +837,9 @@ bool minimatrix_ldlt_solve_mat_variant(const MiniMatrix<double, N, N>& a,
 {
     std::array<double, N * N> l;
     std::array<double, N> d;
-    if (!minimatrix_ldlt_factor_variant<UO, UR, UI, N>(a, l, d))
+    if (!minimatrix_ldlt_factor_variant<UO, UR, UI, N>(a, l, d)) {
         return false;
+    }
     minimatrix_ldlt_solve_mat_from_factor<N>(l, d, b, x);
     return true;
 }
@@ -759,15 +848,18 @@ template <bool UO, bool UR, bool UI, int N>
 bool minimatrix_lu_factor_variant(
     const MiniMatrix<double, N, N>& a, std::array<double, N * N>& lu, std::array<int, N>& perm)
 {
-    for (int i = 0; i < N * N; ++i)
+    for (int i = 0; i < N * N; ++i) {
         lu[i] = a.data[i];
-    for (int i = 0; i < N; ++i)
+    }
+    for (int i = 0; i < N; ++i) {
         perm[i] = i;
+    }
 
     bool success = true;
     auto body_outer = [&](int k) {
-        if (!success)
+        if (!success) {
             return;
+        }
 
         int max_row = k;
         double max_val = std::abs(lu[k * N + k]);
@@ -809,15 +901,17 @@ void minimatrix_lu_solve_vec_from_factor(const std::array<double, N * N>& lu,
     std::array<double, N> y;
     for (int i = 0; i < N; ++i) {
         double sum = b(perm[i]);
-        for (int j = 0; j < i; ++j)
+        for (int j = 0; j < i; ++j) {
             sum -= lu[i * N + j] * y[j];
+        }
         y[i] = sum;
     }
 
     for (int i = N - 1; i >= 0; --i) {
         double sum = y[i];
-        for (int j = i + 1; j < N; ++j)
+        for (int j = i + 1; j < N; ++j) {
             sum -= lu[i * N + j] * x(j);
+        }
         x(i) = sum / lu[i * N + i];
     }
 }
@@ -830,8 +924,9 @@ void minimatrix_lu_solve_mat_from_factor(const std::array<double, N * N>& lu,
     for (int i = 0; i < N; ++i) {
         for (int col = 0; col < N; ++col) {
             double sum = b(perm[i], col);
-            for (int j = 0; j < i; ++j)
+            for (int j = 0; j < i; ++j) {
                 sum -= lu[i * N + j] * y[j * N + col];
+            }
             y[i * N + col] = sum;
         }
     }
@@ -839,8 +934,9 @@ void minimatrix_lu_solve_mat_from_factor(const std::array<double, N * N>& lu,
     for (int i = N - 1; i >= 0; --i) {
         for (int col = 0; col < N; ++col) {
             double sum = y[i * N + col];
-            for (int j = i + 1; j < N; ++j)
+            for (int j = i + 1; j < N; ++j) {
                 sum -= lu[i * N + j] * x(j, col);
+            }
             x(i, col) = sum / lu[i * N + i];
         }
     }
@@ -852,8 +948,9 @@ bool minimatrix_lu_solve_vec_variant(const MiniMatrix<double, N, N>& a,
 {
     std::array<double, N * N> lu;
     std::array<int, N> perm;
-    if (!minimatrix_lu_factor_variant<UO, UR, UI, N>(a, lu, perm))
+    if (!minimatrix_lu_factor_variant<UO, UR, UI, N>(a, lu, perm)) {
         return false;
+    }
     minimatrix_lu_solve_vec_from_factor<N>(lu, perm, b, x);
     return true;
 }
@@ -864,8 +961,9 @@ bool minimatrix_lu_solve_mat_variant(const MiniMatrix<double, N, N>& a,
 {
     std::array<double, N * N> lu;
     std::array<int, N> perm;
-    if (!minimatrix_lu_factor_variant<UO, UR, UI, N>(a, lu, perm))
+    if (!minimatrix_lu_factor_variant<UO, UR, UI, N>(a, lu, perm)) {
         return false;
+    }
     minimatrix_lu_solve_mat_from_factor<N>(lu, perm, b, x);
     return true;
 }
@@ -879,27 +977,33 @@ bool minimatrix_qr_mgs_factor(
     r.fill(0.0);
 
     for (int j = 0; j < N; ++j) {
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             v[i] = a(i, j);
+        }
 
         for (int k = 0; k < j; ++k) {
             double dot = 0.0;
-            for (int i = 0; i < N; ++i)
+            for (int i = 0; i < N; ++i) {
                 dot += q[i * N + k] * v[i];
+            }
             r[k * N + j] = dot;
-            for (int i = 0; i < N; ++i)
+            for (int i = 0; i < N; ++i) {
                 v[i] -= dot * q[i * N + k];
+            }
         }
 
         double norm_sq = 0.0;
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             norm_sq += v[i] * v[i];
+        }
         const double norm = std::sqrt(norm_sq);
-        if (norm < 1e-14)
+        if (norm < 1e-14) {
             return false;
+        }
         r[j * N + j] = norm;
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             q[i * N + j] = v[i] / norm;
+        }
     }
     return true;
 }
@@ -912,15 +1016,17 @@ void minimatrix_qr_mgs_solve_vec_from_factor(const std::array<double, N * N>& q,
     std::array<double, N> y;
     for (int j = 0; j < N; ++j) {
         double sum = 0.0;
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             sum += q[i * N + j] * b(i);
+        }
         y[j] = sum;
     }
 
     for (int i = N - 1; i >= 0; --i) {
         double sum = y[i];
-        for (int j = i + 1; j < N; ++j)
+        for (int j = i + 1; j < N; ++j) {
             sum -= r[i * N + j] * x(j);
+        }
         x(i) = sum / r[i * N + i];
     }
 }
@@ -934,8 +1040,9 @@ void minimatrix_qr_mgs_solve_mat_from_factor(const std::array<double, N * N>& q,
     for (int j = 0; j < N; ++j) {
         for (int col = 0; col < N; ++col) {
             double sum = 0.0;
-            for (int i = 0; i < N; ++i)
+            for (int i = 0; i < N; ++i) {
                 sum += q[i * N + j] * b(i, col);
+            }
             y[j * N + col] = sum;
         }
     }
@@ -943,8 +1050,9 @@ void minimatrix_qr_mgs_solve_mat_from_factor(const std::array<double, N * N>& q,
     for (int i = N - 1; i >= 0; --i) {
         for (int col = 0; col < N; ++col) {
             double sum = y[i * N + col];
-            for (int j = i + 1; j < N; ++j)
+            for (int j = i + 1; j < N; ++j) {
                 sum -= r[i * N + j] * x(j, col);
+            }
             x(i, col) = sum / r[i * N + i];
         }
     }
@@ -956,8 +1064,9 @@ bool minimatrix_qr_mgs_solve_vec(const MiniMatrix<double, N, N>& a,
 {
     std::array<double, N * N> q;
     std::array<double, N * N> r;
-    if (!minimatrix_qr_mgs_factor<N>(a, q, r))
+    if (!minimatrix_qr_mgs_factor<N>(a, q, r)) {
         return false;
+    }
     minimatrix_qr_mgs_solve_vec_from_factor<N>(q, r, b, x);
     return true;
 }
@@ -968,8 +1077,9 @@ bool minimatrix_qr_mgs_solve_mat(const MiniMatrix<double, N, N>& a,
 {
     std::array<double, N * N> q;
     std::array<double, N * N> r;
-    if (!minimatrix_qr_mgs_factor<N>(a, q, r))
+    if (!minimatrix_qr_mgs_factor<N>(a, q, r)) {
         return false;
+    }
     minimatrix_qr_mgs_solve_mat_from_factor<N>(q, r, b, x);
     return true;
 }
@@ -1366,8 +1476,9 @@ template <int N> void bench_solve_spd_all(int iters)
         [](const MiniMatrix<double, N, N>& a, const MiniMatrix<double, N, 1>& b,
             MiniMatrix<double, N, 1>& x) {
             minisolver::MiniLLT<double, N> llt(a);
-            if (llt.info() != 0)
+            if (llt.info() != 0) {
                 return false;
+            }
             x = llt.solve(b);
             return true;
         });
@@ -1382,8 +1493,9 @@ template <int N> void bench_solve_spd_all(int iters)
         [](const MiniMatrix<double, N, N>& a, const MiniMatrix<double, N, 1>& b,
             MiniMatrix<double, N, 1>& x) {
             minisolver::MiniLDLT<double, N> ldlt(a);
-            if (ldlt.info() != 0)
+            if (ldlt.info() != 0) {
                 return false;
+            }
             x = ldlt.solve(b);
             return true;
         });
@@ -1398,8 +1510,9 @@ template <int N> void bench_solve_spd_all(int iters)
         [](const MiniMatrix<double, N, N>& a, const MiniMatrix<double, N, N>& b,
             MiniMatrix<double, N, N>& x) {
             minisolver::MiniLLT<double, N> llt(a);
-            if (llt.info() != 0)
+            if (llt.info() != 0) {
                 return false;
+            }
             x = llt.solve(b);
             return true;
         });
@@ -1414,8 +1527,9 @@ template <int N> void bench_solve_spd_all(int iters)
         [](const MiniMatrix<double, N, N>& a, const MiniMatrix<double, N, N>& b,
             MiniMatrix<double, N, N>& x) {
             minisolver::MiniLDLT<double, N> ldlt(a);
-            if (ldlt.info() != 0)
+            if (ldlt.info() != 0) {
                 return false;
+            }
             x = ldlt.solve(b);
             return true;
         });
@@ -1446,8 +1560,9 @@ template <int N> void bench_solve_spd_all(int iters)
     validate_eigen_vec_solve<N>("solve_spd_vec", "eigen_llt", eigen_mats, eigen_rhs_vec,
         [](const EigenMat& a, const EigenVec& b, EigenVec& x) {
             Eigen::LLT<EigenMat> llt(a);
-            if (llt.info() != Eigen::Success)
+            if (llt.info() != Eigen::Success) {
                 return false;
+            }
             x = llt.solve(b);
             return true;
         });
@@ -1460,8 +1575,9 @@ template <int N> void bench_solve_spd_all(int iters)
     validate_eigen_mat_solve<N>("solve_spd_mat", "eigen_llt", eigen_mats, eigen_rhs_mat,
         [](const EigenMat& a, const EigenMat& b, EigenMat& x) {
             Eigen::LLT<EigenMat> llt(a);
-            if (llt.info() != Eigen::Success)
+            if (llt.info() != Eigen::Success) {
                 return false;
+            }
             x = llt.solve(b);
             return true;
         });
@@ -1474,8 +1590,9 @@ template <int N> void bench_solve_spd_all(int iters)
     validate_eigen_vec_solve<N>("solve_spd_vec", "eigen_ldlt", eigen_mats, eigen_rhs_vec,
         [](const EigenMat& a, const EigenVec& b, EigenVec& x) {
             Eigen::LDLT<EigenMat> ldlt(a);
-            if (ldlt.info() != Eigen::Success)
+            if (ldlt.info() != Eigen::Success) {
                 return false;
+            }
             x = ldlt.solve(b);
             return true;
         });
@@ -1488,8 +1605,9 @@ template <int N> void bench_solve_spd_all(int iters)
     validate_eigen_mat_solve<N>("solve_spd_mat", "eigen_ldlt", eigen_mats, eigen_rhs_mat,
         [](const EigenMat& a, const EigenMat& b, EigenMat& x) {
             Eigen::LDLT<EigenMat> ldlt(a);
-            if (ldlt.info() != Eigen::Success)
+            if (ldlt.info() != Eigen::Success) {
                 return false;
+            }
             x = ldlt.solve(b);
             return true;
         });
@@ -1630,34 +1748,43 @@ template <int N> void bench_solve_general_all(int iters)
 
 int iters_for_size(int n)
 {
-    if (n <= 4)
+    if (n <= 4) {
         return 1000000;
-    if (n <= 8)
+    }
+    if (n <= 8) {
         return 500000;
-    if (n <= 12)
+    }
+    if (n <= 12) {
         return 150000;
+    }
     return 50000;
 }
 
 int decomp_iters_for_size(int n)
 {
-    if (n <= 4)
+    if (n <= 4) {
         return 300000;
-    if (n <= 8)
+    }
+    if (n <= 8) {
         return 100000;
-    if (n <= 12)
+    }
+    if (n <= 12) {
         return 30000;
+    }
     return 10000;
 }
 
 int solve_iters_for_size(int n)
 {
-    if (n <= 4)
+    if (n <= 4) {
         return 200000;
-    if (n <= 8)
+    }
+    if (n <= 8) {
         return 60000;
-    if (n <= 12)
+    }
+    if (n <= 12) {
         return 20000;
+    }
     return 8000;
 }
 

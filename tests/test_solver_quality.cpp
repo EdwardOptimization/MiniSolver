@@ -386,8 +386,9 @@ TEST(SolverQualityTest, AnalyticalSolutionUnconstrained)
 
     // Property 3: Total cost should be much lower than initial cost
     double total_cost = 0.0;
-    for (int k = 0; k <= N; ++k)
+    for (int k = 0; k <= N; ++k) {
         total_cost += solver.get_stage_cost(k);
+    }
     double initial_cost = 0.5 * 10.0 * x0 * x0 * (N + 1); // If u=0, cost = sum w_x*x0^2/2
     EXPECT_LT(total_cost, initial_cost * 0.5) << "Optimization should significantly reduce cost";
 

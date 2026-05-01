@@ -91,8 +91,9 @@ int main()
     // Setup Problem (Parameters & Initial Guess)
     double current_t = 0.0;
     for (int k = 0; k <= N; ++k) {
-        if (k > 0)
+        if (k > 0) {
             current_t += dts[k - 1];
+        }
         double x_ref = current_t * ExtConfig::TARGET_V;
 
         // Smart reference for obstacle avoidance

@@ -19,8 +19,9 @@ void* operator new(size_t size)
         g_allocation_count++;
     }
     void* p = malloc(size);
-    if (!p)
+    if (!p) {
         throw std::bad_alloc();
+    }
     return p;
 }
 
@@ -43,8 +44,9 @@ void* operator new[](size_t size)
         g_allocation_count++;
     }
     void* p = malloc(size);
-    if (!p)
+    if (!p) {
         throw std::bad_alloc();
+    }
     return p;
 }
 
@@ -315,19 +317,22 @@ TEST(MemoryTest, ZeroMalloc_ImplicitIntegrator)
     g_memory_check_active = true;
 
     // Backward Euler
-    for (int i = 0; i < 100; ++i)
+    for (int i = 0; i < 100; ++i) {
         ImplicitIntegrator<MemTestImplicitModel>::compute_dynamics(
             kp, IntegratorType::EULER_IMPLICIT, 0.1, nc);
+    }
 
     // Implicit Midpoint
-    for (int i = 0; i < 100; ++i)
+    for (int i = 0; i < 100; ++i) {
         ImplicitIntegrator<MemTestImplicitModel>::compute_dynamics(
             kp, IntegratorType::RK2_IMPLICIT, 0.1, nc);
+    }
 
     // Gauss-Legendre (2-stage, 2*NX=4 coupled Newton)
-    for (int i = 0; i < 100; ++i)
+    for (int i = 0; i < 100; ++i) {
         ImplicitIntegrator<MemTestImplicitModel>::compute_dynamics(
             kp, IntegratorType::RK4_IMPLICIT, 0.1, nc);
+    }
 
     g_memory_check_active = false;
 

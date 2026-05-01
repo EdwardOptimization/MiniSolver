@@ -18,8 +18,9 @@ namespace matrix {
     template <bool Unroll, int End> struct ForRange {
         template <typename Functor> static inline void run(Functor& f)
         {
-            for (int i = 0; i < End; ++i)
+            for (int i = 0; i < End; ++i) {
                 f(i);
+            }
         }
     };
 
@@ -33,8 +34,9 @@ namespace matrix {
     template <bool Unroll, int End> struct PrefixRange {
         template <typename Functor> static inline void run(int count, Functor& f)
         {
-            for (int i = 0; i < count; ++i)
+            for (int i = 0; i < count; ++i) {
                 f(i);
+            }
         }
     };
 
@@ -46,8 +48,9 @@ namespace matrix {
                 Functor& f;
                 inline void operator()(int i)
                 {
-                    if (i < count)
+                    if (i < count) {
                         f(i);
+                    }
                 }
             } body = { count, f };
             StaticFor<0, End>::run(body);
@@ -57,8 +60,9 @@ namespace matrix {
     template <bool Unroll, int End> struct SuffixRange {
         template <typename Functor> static inline void run(int begin, Functor& f)
         {
-            for (int i = begin; i < End; ++i)
+            for (int i = begin; i < End; ++i) {
                 f(i);
+            }
         }
     };
 
@@ -70,8 +74,9 @@ namespace matrix {
                 Functor& f;
                 inline void operator()(int i)
                 {
-                    if (i >= begin)
+                    if (i >= begin) {
                         f(i);
+                    }
                 }
             } body = { begin, f };
             StaticFor<0, End>::run(body);

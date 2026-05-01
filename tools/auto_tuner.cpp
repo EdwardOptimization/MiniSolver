@@ -150,28 +150,31 @@ public:
         // Order: EULER_EXPLICIT=0, EULER_IMPLICIT=1, RK2_EXPLICIT=2, RK2_IMPLICIT=3,
         // RK4_EXPLICIT=4... Let's pick explicitly
         int r_int = std::uniform_int_distribution<int>(0, 2)(rng);
-        if (r_int == 0)
+        if (r_int == 0) {
             p.integrator = IntegratorType::EULER_EXPLICIT;
-        else if (r_int == 1)
+        } else if (r_int == 1) {
             p.integrator = IntegratorType::RK2_EXPLICIT;
-        else
+        } else {
             p.integrator = IntegratorType::RK4_EXPLICIT;
+        }
 
         int r_bar = dist_int_3(rng);
-        if (r_bar == 0)
+        if (r_bar == 0) {
             p.barrier = BarrierStrategy::MONOTONE;
-        else if (r_bar == 1)
+        } else if (r_bar == 1) {
             p.barrier = BarrierStrategy::MEHROTRA;
-        else
+        } else {
             p.barrier = BarrierStrategy::ADAPTIVE;
+        }
 
         int r_ls = dist_int_3(rng);
-        if (r_ls == 0)
+        if (r_ls == 0) {
             p.ls_type = LineSearchType::MERIT;
-        else if (r_ls == 1)
+        } else if (r_ls == 1) {
             p.ls_type = LineSearchType::FILTER;
-        else
+        } else {
             p.ls_type = LineSearchType::NONE;
+        }
         p.inertia = (dist_int_2(rng) == 0) ? InertiaStrategy::REGULARIZATION
                                            : InertiaStrategy::IGNORE_SINGULAR;
 
@@ -336,8 +339,9 @@ EvalResult evaluate_config(const TunableParams& params)
 int main(int argc, char** argv)
 {
     int samples = 50;
-    if (argc > 1)
+    if (argc > 1) {
         samples = std::atoi(argv[1]);
+    }
 
     std::cout << ">> Auto-Tuning MiniSolver (" << samples << " samples)...\n";
 
@@ -359,8 +363,9 @@ int main(int argc, char** argv)
             std::cout << "------------------------------------------------\n";
         }
 
-        if (i % 10 == 0)
+        if (i % 10 == 0) {
             std::cout << "." << std::flush;
+        }
     }
 
     std::cout << "\n\n>> TUNING COMPLETE.\n";

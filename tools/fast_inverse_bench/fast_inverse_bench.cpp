@@ -40,14 +40,16 @@ bool legacy_fast_inverse(const MatrixType& A, MatrixType& A_inv, double epsilon 
 
     if constexpr (ROWS == 1) {
         const double val = A(0, 0);
-        if (std::abs(val) < epsilon)
+        if (std::abs(val) < epsilon) {
             return false;
+        }
         A_inv(0, 0) = 1.0 / val;
         return true;
     } else if constexpr (ROWS == 2) {
         const double det = A(0, 0) * A(1, 1) - A(0, 1) * A(1, 0);
-        if (std::abs(det) < epsilon)
+        if (std::abs(det) < epsilon) {
             return false;
+        }
 
         const double inv_det = 1.0 / det;
         A_inv(0, 0) = A(1, 1) * inv_det;
@@ -63,8 +65,9 @@ bool legacy_fast_inverse(const MatrixType& A, MatrixType& A_inv, double epsilon 
         const double det = A00 * (A11 * A22 - A12 * A21) - A01 * (A10 * A22 - A12 * A20)
             + A02 * (A10 * A21 - A11 * A20);
 
-        if (std::abs(det) < epsilon)
+        if (std::abs(det) < epsilon) {
             return false;
+        }
         const double inv_det = 1.0 / det;
 
         A_inv(0, 0) = (A11 * A22 - A12 * A21) * inv_det;
@@ -98,10 +101,12 @@ template <typename MatrixType> void fill_spd_2x2(MatrixType& A, XorShift64& rng)
 
     // Enforce SPD: det = a*c - b^2 > 0.
     const double max_b = 0.8 * std::sqrt(a * c);
-    if (b > max_b)
+    if (b > max_b) {
         b = max_b;
-    if (b < -max_b)
+    }
+    if (b < -max_b) {
         b = -max_b;
+    }
 
     A(0, 0) = a;
     A(0, 1) = b;
@@ -137,27 +142,32 @@ BenchArgs parse_args(int argc, char** argv)
     for (int i = 1; i < argc; ++i) {
         const std::string s(argv[i]);
         auto next_val = [&](int& idx) -> const char* {
-            if (idx + 1 >= argc)
+            if (idx + 1 >= argc) {
                 return nullptr;
+            }
             return argv[++idx];
         };
 
         if (s == "--iters") {
             const char* v = next_val(i);
-            if (v)
+            if (v) {
                 a.iters = std::stoll(v);
+            }
         } else if (s == "--mats") {
             const char* v = next_val(i);
-            if (v)
+            if (v) {
                 a.mats = std::stoi(v);
+            }
         } else if (s == "--repeats") {
             const char* v = next_val(i);
-            if (v)
+            if (v) {
                 a.repeats = std::stoi(v);
+            }
         } else if (s == "--epsilon") {
             const char* v = next_val(i);
-            if (v)
+            if (v) {
                 a.epsilon = std::stod(v);
+            }
         } else if (s == "--help" || s == "-h") {
             std::cout
                 << "Usage: fast_inverse_bench [--iters N] [--mats M] [--repeats R] [--epsilon E]\n"
@@ -165,10 +175,12 @@ BenchArgs parse_args(int argc, char** argv)
             std::exit(0);
         }
     }
-    if (a.mats < 1)
+    if (a.mats < 1) {
         a.mats = 1;
-    if (a.repeats < 1)
+    }
+    if (a.repeats < 1) {
         a.repeats = 1;
+    }
     return a;
 }
 
@@ -203,13 +215,15 @@ double time_inv_ns_per_call(const BenchArgs& args, FillFn fill, InvFn inv_fn)
         const auto t1 = std::chrono::steady_clock::now();
         const double ns = std::chrono::duration<double, std::nano>(t1 - t0).count();
         const double ns_per = ns / static_cast<double>(args.iters);
-        if (ns_per < best_ns)
+        if (ns_per < best_ns) {
             best_ns = ns_per;
+        }
     }
 
     // Prevent optimizing away.
-    if (sink == 123456.789)
+    if (sink == 123456.789) {
         std::cerr << "sink=" << sink << "\n";
+    }
     return best_ns;
 }
 

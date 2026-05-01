@@ -8,3 +8,5 @@ ColumnLimit:     100
 AllowShortFunctionsOnASingleLine: Inline
 # sort include files
 SortIncludes:    true
+# require braces for single-line control statements
+InsertBraces:    true

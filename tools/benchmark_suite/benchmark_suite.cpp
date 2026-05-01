@@ -129,8 +129,9 @@ Result run_case(const BenchmarkCase& test_case)
                     total_cost += solver.get_stage_cost(k);
                     for (int j = 0; j < CarModel::NC; ++j) {
                         double v = solver.get_constraint_val(k, j); // Violations are g(x) > 0
-                        if (v > max_viol)
+                        if (v > max_viol) {
                             max_viol = v;
+                        }
                     }
                 }
                 res.cost = total_cost;
@@ -253,8 +254,9 @@ int main()
         Result r = run_case(c);
 
         std::string status_str = r.success ? "OK" : "FAIL";
-        if (c.config.enable_rti)
+        if (c.config.enable_rti) {
             status_str = "RTI"; // RTI always "completes"
+        }
 
         std::cout << std::left << std::setw(18) << r.name << std::setw(35) << c.description
                   << std::fixed << std::setprecision(3) << std::setw(12) << r.time_ms

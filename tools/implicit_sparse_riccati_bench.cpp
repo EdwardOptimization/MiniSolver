@@ -27,8 +27,7 @@ template <typename BaseModel> struct CountingFusedModel : public BaseModel {
     inline static int fused_calls = 0;
 
     template <typename T>
-    static void compute_fused_riccati_step(
-        const MSMat<T, BaseModel::NX, BaseModel::NX>& Vxx,
+    static void compute_fused_riccati_step(const MSMat<T, BaseModel::NX, BaseModel::NX>& Vxx,
         const MSVec<T, BaseModel::NX>& Vx,
         KnotPoint<T, BaseModel::NX, BaseModel::NU, BaseModel::NC, BaseModel::NP>& kp)
     {
@@ -70,12 +69,12 @@ MiniSolver<Model, kMaxHorizon> make_initialized_solver(IntegratorType type)
     return solver;
 }
 
-template <typename SolverT>
-double total_cost(const SolverT& solver)
+template <typename SolverT> double total_cost(const SolverT& solver)
 {
     double cost = 0.0;
-    for (int k = 0; k <= kHorizon; ++k)
+    for (int k = 0; k <= kHorizon; ++k) {
         cost += solver.get_stage_cost(k);
+    }
     return cost;
 }
 
@@ -88,8 +87,7 @@ struct BenchResult {
     double cost = 0.0;
 };
 
-template <typename Model>
-BenchResult run_bench(IntegratorType type)
+template <typename Model> BenchResult run_bench(IntegratorType type)
 {
     std::vector<double> samples;
     samples.reserve(kMeasureRuns);
@@ -132,18 +130,13 @@ void run_case(const char* name, IntegratorType type)
     const double speedup = generic.median_us / fused.median_us;
     const double cost_diff = std::abs(fused.cost - generic.cost);
 
-    std::cout << std::left << std::setw(18) << name
-              << std::right
-              << std::setw(12) << std::fixed << std::setprecision(2) << fused.median_us
-              << std::setw(12) << generic.median_us
-              << std::setw(10) << std::setprecision(2) << speedup
-              << std::setw(10) << fused.iterations
-              << std::setw(10) << generic.iterations
-              << std::setw(12) << status_to_string(fused.status)
-              << std::setw(12) << status_to_string(generic.status)
+    std::cout << std::left << std::setw(18) << name << std::right << std::setw(12) << std::fixed
+              << std::setprecision(2) << fused.median_us << std::setw(12) << generic.median_us
+              << std::setw(10) << std::setprecision(2) << speedup << std::setw(10)
+              << fused.iterations << std::setw(10) << generic.iterations << std::setw(12)
+              << status_to_string(fused.status) << std::setw(12) << status_to_string(generic.status)
               << std::setw(14) << std::scientific << std::setprecision(2) << cost_diff
-              << std::setw(14) << fused.fused_calls
-              << "\n";
+              << std::setw(14) << fused.fused_calls << "\n";
 }
 
 } // namespace
@@ -152,16 +145,11 @@ int main()
 {
     std::cout << "implicit sparse Riccati benchmark\n";
     std::cout << "runs: warmup=" << kWarmupRuns << ", measured=" << kMeasureRuns << "\n";
-    std::cout << std::left << std::setw(18) << "case"
-              << std::right << std::setw(12) << "fused_us"
-              << std::setw(12) << "generic_us"
-              << std::setw(10) << "speedup"
-              << std::setw(10) << "fiters"
-              << std::setw(10) << "giters"
-              << std::setw(12) << "fstatus"
-              << std::setw(12) << "gstatus"
-              << std::setw(14) << "cost_diff"
-              << std::setw(14) << "fused_calls"
+    std::cout << std::left << std::setw(18) << "case" << std::right << std::setw(12) << "fused_us"
+              << std::setw(12) << "generic_us" << std::setw(10) << "speedup" << std::setw(10)
+              << "fiters" << std::setw(10) << "giters" << std::setw(12) << "fstatus"
+              << std::setw(12) << "gstatus" << std::setw(14) << "cost_diff" << std::setw(14)
+              << "fused_calls"
               << "\n";
 
     run_case<FusedEulerImplicitRegressionModel, GenericEulerImplicitRegressionModel>(

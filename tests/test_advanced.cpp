@@ -116,8 +116,9 @@ TEST(AdvancedFeaturesTest, SoftConstraintL2)
     // If w=10.
 
     // Initialize solver with u=2 (violated)
-    for (int k = 0; k < N; ++k)
+    for (int k = 0; k < N; ++k) {
         solver.set_control_guess(k, "u", 2.0);
+    }
     solver.rollout_dynamics();
 
     // To ensure convergence to 0, we need tighter tolerances or more iterations.

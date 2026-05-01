@@ -276,11 +276,13 @@ TEST(SerializerTest, CaptureAndSaveAndLoad)
 
         // Set some dummy state values manually to verify trajectory save/load
         // (Instead of solving, we just fill data to check exact IO reproduction)
-        for (int i = 0; i < CarModel::NX; ++i)
+        for (int i = 0; i < CarModel::NX; ++i) {
             solver.set_state_guess(k, i, k * 1.0);
+        }
         if (k < N) {
-            for (int i = 0; i < CarModel::NU; ++i)
+            for (int i = 0; i < CarModel::NU; ++i) {
                 solver.set_control_guess(k, i, k * 0.5);
+            }
         }
         for (int i = 0; i < CarModel::NC; ++i) {
             solver.set_slack_guess(k, i, 0.1);
@@ -462,18 +464,21 @@ TEST(SerializerTest, FullRoundTrip)
     EXPECT_DOUBLE_EQ(stateA.total_cost, stateB.total_cost);
 
     for (int k = 0; k <= N; ++k) {
-        for (int i = 0; i < CarModel::NX; ++i)
+        for (int i = 0; i < CarModel::NX; ++i) {
             EXPECT_EQ(solverA.get_state(k, i), solverB.get_state(k, i));
+        }
         if (k < N) {
-            for (int i = 0; i < CarModel::NU; ++i)
+            for (int i = 0; i < CarModel::NU; ++i) {
                 EXPECT_EQ(solverA.get_control(k, i), solverB.get_control(k, i));
+            }
         }
         for (int i = 0; i < CarModel::NC; ++i) {
             EXPECT_EQ(solverA.get_slack(k, i), solverB.get_slack(k, i));
             EXPECT_EQ(solverA.get_dual(k, i), solverB.get_dual(k, i));
         }
-        for (int i = 0; i < CarModel::NP; ++i)
+        for (int i = 0; i < CarModel::NP; ++i) {
             EXPECT_EQ(solverA.get_parameter(k, i), solverB.get_parameter(k, i));
+        }
     }
 }
 

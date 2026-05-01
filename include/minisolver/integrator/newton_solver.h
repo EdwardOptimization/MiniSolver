@@ -1,7 +1,7 @@
 #pragma once
 
-#include "minisolver/matrix/matrix_defs.h"
 #include "minisolver/core/solver_options.h"
+#include "minisolver/matrix/matrix_defs.h"
 
 namespace minisolver {
 
@@ -10,19 +10,19 @@ namespace minisolver {
 // Warm start: if the previous call converged, its solution seeds the next call.
 //
 // Func signature: void(const MSVec<T,N>& x, MSVec<T,N>& F, MSMat<T,N,N>& J)
-template <typename T, int N>
-class NewtonSolver {
+template <typename T, int N> class NewtonSolver {
 public:
     // Solve F(x) = 0 starting from x (modified in-place).
     // warm_start: if true and previous call converged, replace x with
     // the previous solution before iterating.
     template <typename Func>
-    bool solve(MSVec<T, N>& x, Func&& eval_func, const NewtonConfig& config = {},
-               bool warm_start = true)
+    bool solve(
+        MSVec<T, N>& x, Func&& eval_func, const NewtonConfig& config = {}, bool warm_start = true)
     {
         // Warm start: seed from previous converged solution
-        if (warm_start && converged_last_)
+        if (warm_start && converged_last_) {
             x = x_prev_;
+        }
 
         converged_last_ = false;
 
@@ -39,15 +39,18 @@ public:
             // Diagonal damping is a fallback for singular systems; applying it
             // unconditionally can stall valid but ill-conditioned linear steps.
             if (!MatOps::lu_solve(J_, F_, delta_)) {
-                if (config.regularization <= T(0))
+                if (config.regularization <= T(0)) {
                     return false;
+                }
 
                 MSMat<T, N, N> J_reg = J_;
-                for (int i = 0; i < N; ++i)
+                for (int i = 0; i < N; ++i) {
                     J_reg(i, i) += config.regularization;
+                }
 
-                if (!MatOps::lu_solve(J_reg, F_, delta_))
+                if (!MatOps::lu_solve(J_reg, F_, delta_)) {
                     return false;
+                }
             }
 
             x -= delta_;

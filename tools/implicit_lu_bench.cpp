@@ -27,17 +27,21 @@ template <int R, int C, typename Mat> void fill_general(Mat& m, double seed)
 
 template <int R, int C, typename Mat> void fill_rhs(Mat& m, double seed)
 {
-    for (int i = 0; i < R; ++i)
-        for (int j = 0; j < C; ++j)
+    for (int i = 0; i < R; ++i) {
+        for (int j = 0; j < C; ++j) {
             m(i, j) = std::cos(seed + 0.13 * i - 0.19 * j);
+        }
+    }
 }
 
 template <int R, int C, typename Mat> double checksum(const Mat& m)
 {
     double sum = 0.0;
-    for (int i = 0; i < R; ++i)
-        for (int j = 0; j < C; ++j)
+    for (int i = 0; i < R; ++i) {
+        for (int j = 0; j < C; ++j) {
             sum += m(i, j) * (1.0 + 0.01 * i + 0.02 * j);
+        }
+    }
     return sum;
 }
 
@@ -67,13 +71,12 @@ struct GaussLegendreBenchModel {
             const int next = (i + 1) % NX;
             const double rate = 0.45 + 0.08 * i;
             T control = T(0);
-            for (int j = 0; j < NU; ++j)
+            for (int j = 0; j < NU; ++j) {
                 control += static_cast<T>(0.03 * (i + 1) * (j + 1)) * u(j);
+            }
 
-            xdot(i) = -static_cast<T>(rate) * x(i)
-                + static_cast<T>(0.05) * x(next) * x(next)
-                + static_cast<T>(0.1 * std::sin(static_cast<double>(x(i))))
-                + control;
+            xdot(i) = -static_cast<T>(rate) * x(i) + static_cast<T>(0.05) * x(next) * x(next)
+                + static_cast<T>(0.1 * std::sin(static_cast<double>(x(i)))) + control;
         }
         return xdot;
     }
@@ -90,11 +93,12 @@ struct GaussLegendreBenchModel {
         for (int i = 0; i < NX; ++i) {
             const int next = (i + 1) % NX;
             const double rate = 0.45 + 0.08 * i;
-            jac.Jx(i, i) = -static_cast<T>(rate)
-                + static_cast<T>(0.1 * std::cos(static_cast<double>(x(i))));
+            jac.Jx(i, i)
+                = -static_cast<T>(rate) + static_cast<T>(0.1 * std::cos(static_cast<double>(x(i))));
             jac.Jx(i, next) = static_cast<T>(0.1) * x(next);
-            for (int j = 0; j < NU; ++j)
+            for (int j = 0; j < NU; ++j) {
                 jac.Ju(i, j) = static_cast<T>(0.03 * (i + 1) * (j + 1));
+            }
         }
         return jac;
     }
@@ -104,9 +108,11 @@ template <int R, int C, typename MatA, typename MatB>
 double max_abs_diff(const MatA& a, const MatB& b)
 {
     double max_diff = 0.0;
-    for (int i = 0; i < R; ++i)
-        for (int j = 0; j < C; ++j)
+    for (int i = 0; i < R; ++i) {
+        for (int j = 0; j < C; ++j) {
             max_diff = std::max(max_diff, std::abs(a(i, j) - b(i, j)));
+        }
+    }
     return max_diff;
 }
 
@@ -116,8 +122,9 @@ bool solve_columns_baseline(
 {
     for (int col_idx = 0; col_idx < NRHS; ++col_idx) {
         MSVec<double, N> col;
-        if (!MatOps::lu_solve(a, b.col(col_idx), col))
+        if (!MatOps::lu_solve(a, b.col(col_idx), col)) {
             return false;
+        }
         x.col(col_idx) = col;
     }
     return true;
@@ -190,10 +197,12 @@ template <int N, int NRHS> void run_case(int iters)
 template <typename Model> void fill_gauss_knot(KnotPoint<double, Model::NX, Model::NU, 0, 0>& kp)
 {
     kp.set_zero();
-    for (int i = 0; i < Model::NX; ++i)
+    for (int i = 0; i < Model::NX; ++i) {
         kp.x(i) = 0.2 + 0.04 * i;
-    for (int i = 0; i < Model::NU; ++i)
+    }
+    for (int i = 0; i < Model::NU; ++i) {
         kp.u(i) = -0.1 + 0.03 * i;
+    }
 }
 
 template <typename Model> void run_gauss_compute_case(int iters)
@@ -209,8 +218,7 @@ template <typename Model> void run_gauss_compute_case(int iters)
     config.regularization = 1e-12;
 
     ImplicitIntegrator<Model>::compute_dynamics(kp, IntegratorType::RK4_IMPLICIT, 0.05, config);
-    sink += checksum<Model::NX, 1>(kp.f_resid)
-        + checksum<Model::NX, Model::NX>(kp.A)
+    sink += checksum<Model::NX, 1>(kp.f_resid) + checksum<Model::NX, Model::NX>(kp.A)
         + checksum<Model::NX, Model::NU>(kp.B);
 
     Model::reset_counters();
@@ -218,8 +226,7 @@ template <typename Model> void run_gauss_compute_case(int iters)
     for (int i = 0; i < iters; ++i) {
         fill_gauss_knot<Model>(kp);
         ImplicitIntegrator<Model>::compute_dynamics(kp, IntegratorType::RK4_IMPLICIT, 0.05, config);
-        sink += checksum<Model::NX, 1>(kp.f_resid)
-            + checksum<Model::NX, Model::NX>(kp.A)
+        sink += checksum<Model::NX, 1>(kp.f_resid) + checksum<Model::NX, Model::NX>(kp.A)
             + checksum<Model::NX, Model::NU>(kp.B);
     }
     const auto t1 = std::chrono::steady_clock::now();
@@ -229,8 +236,8 @@ template <typename Model> void run_gauss_compute_case(int iters)
     const double dyn_per_iter = static_cast<double>(Model::dynamics_calls) / iters;
     const double jac_per_iter = static_cast<double>(Model::jacobian_calls) / iters;
 
-    std::cout << std::left << std::setw(18) << "gauss_compute" << " NX=" << std::setw(2)
-              << Model::NX << " NU=" << std::setw(2) << Model::NU
+    std::cout << std::left << std::setw(18) << "gauss_compute"
+              << " NX=" << std::setw(2) << Model::NX << " NU=" << std::setw(2) << Model::NU
               << " ns/iter=" << std::fixed << std::setprecision(3) << ns_per_iter
               << " dyn/iter=" << std::setprecision(2) << dyn_per_iter
               << " jac/iter=" << jac_per_iter << "\n";
@@ -249,7 +256,8 @@ int main()
     run_case<12, 6>(100000);
     run_case<20, 10>(40000);
 
-    if (sink == 123456789.0)
+    if (sink == 123456789.0) {
         std::cout << "sink\n";
+    }
     return 0;
 }

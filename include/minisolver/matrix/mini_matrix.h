@@ -41,9 +41,11 @@ public:
     operator MiniMatrix<T, R, C>() const
     {
         MiniMatrix<T, R, C> out;
-        for (int r = 0; r < R; ++r)
-            for (int c = 0; c < C; ++c)
+        for (int r = 0; r < R; ++r) {
+            for (int c = 0; c < C; ++c) {
                 out(r, c) = (*this)(r, c);
+            }
+        }
         return out;
     }
 
@@ -105,26 +107,32 @@ public:
 
     MiniBlockRef& operator=(const MiniBlockRef& other)
     {
-        for (int r = 0; r < R; ++r)
-            for (int c = 0; c < C; ++c)
+        for (int r = 0; r < R; ++r) {
+            for (int c = 0; c < C; ++c) {
                 (*this)(r, c) = other(r, c);
+            }
+        }
         return *this;
     }
 
     template <typename Other> MiniBlockRef& operator=(const Other& other)
     {
-        for (int r = 0; r < R; ++r)
-            for (int c = 0; c < C; ++c)
+        for (int r = 0; r < R; ++r) {
+            for (int c = 0; c < C; ++c) {
                 (*this)(r, c) = other(r, c);
+            }
+        }
         return *this;
     }
 
     operator MiniMatrix<T, R, C>() const
     {
         MiniMatrix<T, R, C> out;
-        for (int r = 0; r < R; ++r)
-            for (int c = 0; c < C; ++c)
+        for (int r = 0; r < R; ++r) {
+            for (int c = 0; c < C; ++c) {
                 out(r, c) = (*this)(r, c);
+            }
+        }
         return out;
     }
 
@@ -179,12 +187,15 @@ public:
 
     T minCoeff() const
     {
-        if (R * C == 0)
+        if (R * C == 0) {
             return T(0);
+        }
         T min_val = data[0];
-        for (int i = 1; i < R * C; ++i)
-            if (data[i] < min_val)
+        for (int i = 1; i < R * C; ++i) {
+            if (data[i] < min_val) {
                 min_val = data[i];
+            }
+        }
         return min_val;
     }
 
@@ -201,8 +212,9 @@ public:
     void setIdentity()
     {
         setZero();
-        for (int i = 0; i < std::min(R, C); ++i)
+        for (int i = 0; i < std::min(R, C); ++i) {
             (*this)(i, i) = T(1);
+        }
     }
 
     // Assignment
@@ -359,8 +371,9 @@ public:
     MiniMatrix cwiseMax(T val) const
     {
         MiniMatrix res;
-        for (int i = 0; i < R * C; ++i)
+        for (int i = 0; i < R * C; ++i) {
             res.data[i] = std::max(data[i], val);
+        }
         return res;
     }
 
@@ -444,8 +457,9 @@ public:
         for (int i = 0; i < N; i++) {
             for (int j = 0; j <= i; j++) {
                 T sum = 0;
-                for (int k = 0; k < j; k++)
+                for (int k = 0; k < j; k++) {
                     sum += L(i, k) * L(j, k);
+                }
 
                 if (i == j) {
                     T val = A(i, i) - sum;
@@ -482,16 +496,18 @@ public:
         // Forward sub Ly = b (overwrite b with y)
         for (int i = 0; i < N; ++i) {
             T sum = 0;
-            for (int k = 0; k < i; ++k)
+            for (int k = 0; k < i; ++k) {
                 sum += L(i, k) * b(k);
+            }
             b(i) = (b(i) - sum) * inv_diag[i];
         }
 
         // Backward sub L^T x = y (overwrite b with x)
         for (int i = N - 1; i >= 0; --i) {
             T sum = 0;
-            for (int k = i + 1; k < N; ++k)
+            for (int k = i + 1; k < N; ++k) {
                 sum += L(k, i) * b(k);
+            }
             b(i) = (b(i) - sum) * inv_diag[i];
         }
     }
@@ -516,8 +532,9 @@ public:
         for (int i = 0; i < N; ++i) {
             for (int c = 0; c < C; ++c) {
                 T sum = B(i, c);
-                for (int k = 0; k < i; ++k)
+                for (int k = 0; k < i; ++k) {
                     sum -= L(i, k) * B(k, c);
+                }
                 B(i, c) = sum * inv_diag[i];
             }
         }
@@ -526,8 +543,9 @@ public:
         for (int i = N - 1; i >= 0; --i) {
             for (int c = 0; c < C; ++c) {
                 T sum = B(i, c);
-                for (int k = i + 1; k < N; ++k)
+                for (int k = i + 1; k < N; ++k) {
                     sum -= L(k, i) * B(k, c);
+                }
                 B(i, c) = sum * inv_diag[i];
             }
         }
@@ -578,8 +596,9 @@ private:
     template <bool UnrollRow, bool UnrollInner>
     void compute_column(const MiniMatrix<T, N, N>& A, int j)
     {
-        if (!success)
+        if (!success) {
             return;
+        }
 
         T diag_sum = T(0);
         struct DiagBody {
@@ -641,20 +660,23 @@ public:
         // L * y = b.
         for (int i = 0; i < N; ++i) {
             T sum = b(i);
-            for (int k = 0; k < i; ++k)
+            for (int k = 0; k < i; ++k) {
                 sum -= L(i, k) * b(k);
+            }
             b(i) = sum;
         }
 
         // D * z = y.
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             b(i) *= inv_D[i];
+        }
 
         // L^T * x = z.
         for (int i = N - 1; i >= 0; --i) {
             T sum = b(i);
-            for (int k = i + 1; k < N; ++k)
+            for (int k = i + 1; k < N; ++k) {
                 sum -= L(k, i) * b(k);
+            }
             b(i) = sum;
         }
     }
@@ -677,23 +699,27 @@ public:
         for (int i = 0; i < N; ++i) {
             for (int c = 0; c < C; ++c) {
                 T sum = B(i, c);
-                for (int k = 0; k < i; ++k)
+                for (int k = 0; k < i; ++k) {
                     sum -= L(i, k) * B(k, c);
+                }
                 B(i, c) = sum;
             }
         }
 
         // D * Z = Y.
-        for (int i = 0; i < N; ++i)
-            for (int c = 0; c < C; ++c)
+        for (int i = 0; i < N; ++i) {
+            for (int c = 0; c < C; ++c) {
                 B(i, c) *= inv_D[i];
+            }
+        }
 
         // L^T * X = Z.
         for (int i = N - 1; i >= 0; --i) {
             for (int c = 0; c < C; ++c) {
                 T sum = B(i, c);
-                for (int k = i + 1; k < N; ++k)
+                for (int k = i + 1; k < N; ++k) {
                     sum -= L(k, i) * B(k, c);
+                }
                 B(i, c) = sum;
             }
         }

@@ -60,8 +60,9 @@ double fraction_to_boundary_rule(const TrajVector& traj, int N, double tau = 0.9
                 // If dlam > 0, alpha <= (w - lam) / dlam.
                 if (dlam > 0) {
                     double gap = w - lam;
-                    if (gap < 1e-9)
+                    if (gap < 1e-9) {
                         gap = 1e-9;
+                    }
                     alpha_lam = std::min(alpha_lam, tau * gap / dlam);
                 }
             }

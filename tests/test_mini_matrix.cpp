@@ -15,8 +15,9 @@ double residual_inf(const MiniMatrix<double, N, N>& A, const MiniMatrix<double, 
     for (int i = 0; i < N; ++i) {
         for (int c = 0; c < C; ++c) {
             double sum = 0.0;
-            for (int j = 0; j < N; ++j)
+            for (int j = 0; j < N; ++j) {
                 sum += A(i, j) * X(j, c);
+            }
             max_abs = std::max(max_abs, std::abs(sum - B(i, c)));
         }
     }
@@ -30,8 +31,9 @@ double residual_inf_static(const MatA& A, const MatX& X, const MatB& B)
     for (int i = 0; i < N; ++i) {
         for (int c = 0; c < C; ++c) {
             double sum = 0.0;
-            for (int j = 0; j < N; ++j)
+            for (int j = 0; j < N; ++j) {
                 sum += A(i, j) * X(j, c);
+            }
             max_abs = std::max(max_abs, std::abs(sum - B(i, c)));
         }
     }
@@ -77,8 +79,9 @@ TEST(MiniMatrixTest, Cholesky_EdgeCases)
     MiniMatrix<double, 2, 2> bad_B;
     bad_B.setIdentity();
     auto bad_X = llt_indef.solve(bad_B);
-    for (double v : bad_X.data)
+    for (double v : bad_X.data) {
         EXPECT_DOUBLE_EQ(v, 0.0);
+    }
 
     // 3. Positive Definite (Valid)
     // [ 2  1 ]
@@ -182,8 +185,9 @@ TEST(MiniMatrixTest, LDLT_EdgeCasesAndSolves)
     MiniMatrix<double, 2, 2> bad_B;
     bad_B.setIdentity();
     auto bad_X = ldlt_indef.solve(bad_B);
-    for (double v : bad_X.data)
+    for (double v : bad_X.data) {
         EXPECT_DOUBLE_EQ(v, 0.0);
+    }
 
     MiniMatrix<double, 2, 2> A;
     A(0, 0) = 2.0;
@@ -217,13 +221,15 @@ TEST(MiniMatrixTest, Optimization_AddAtMulB)
     // C += A^T * B
     // A: 2x3
     MiniMatrix<double, 2, 3> A;
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < 6; ++i) {
         A.data[i] = i; // 0,1,2; 3,4,5
+    }
 
     // B: 2x3
     MiniMatrix<double, 2, 3> B;
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < 6; ++i) {
         B.data[i] = 1.0; // All 1s
+    }
 
     // Ref C: 3x3
     MiniMatrix<double, 3, 3> C_ref;
@@ -250,12 +256,13 @@ TEST(MiniMatrixTest, Optimization_AddAtMulB)
     for (int i = 0; i < 9; ++i) {
         EXPECT_NEAR(C_ref.data[i], C_opt.data[i], 1e-9);
         // Additional hardcoded check based on manual calculation
-        if (i < 3)
+        if (i < 3) {
             EXPECT_NEAR(C_opt.data[i], 3.0, 1e-9);
-        else if (i < 6)
+        } else if (i < 6) {
             EXPECT_NEAR(C_opt.data[i], 5.0, 1e-9);
-        else
+        } else {
             EXPECT_NEAR(C_opt.data[i], 7.0, 1e-9);
+        }
     }
 }
 
@@ -286,8 +293,9 @@ TEST(MiniMatrixTest, Kernel_WeightedAddAtMulB)
     ref.setZero();
     for (int i = 0; i < 2; ++i) {
         for (int j = 0; j < 2; ++j) {
-            for (int k = 0; k < 3; ++k)
+            for (int k = 0; k < 3; ++k) {
                 ref(i, j) += A(k, i) * weights(k) * B(k, j);
+            }
         }
     }
 
@@ -295,18 +303,21 @@ TEST(MiniMatrixTest, Kernel_WeightedAddAtMulB)
     opt.setZero();
     matrix::weighted_add_At_mul_B(opt, A, weights, B);
 
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 4; ++i) {
         EXPECT_NEAR(ref.data[i], opt.data[i], 1e-12);
+    }
 }
 
 TEST(MiniMatrixTest, Kernel_MatMulAndMultAdd)
 {
     MiniMatrix<double, 2, 3> A;
     MiniMatrix<double, 3, 2> B;
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < 6; ++i) {
         A.data[i] = static_cast<double>(i + 1);
-    for (int i = 0; i < 6; ++i)
+    }
+    for (int i = 0; i < 6; ++i) {
         B.data[i] = static_cast<double>(10 + i);
+    }
 
     auto C = A * B;
     EXPECT_NEAR(C(0, 0), 76.0, 1e-12);
@@ -362,8 +373,9 @@ TEST(MiniMatrixTest, DotPromotesFloatOperandsBeforeMultiply)
 TEST(MiniMatrixTest, Kernel_SymmetrizeAndFiniteChecks)
 {
     MiniMatrix<double, 3, 3> A;
-    for (int i = 0; i < 9; ++i)
+    for (int i = 0; i < 9; ++i) {
         A.data[i] = static_cast<double>(i);
+    }
 
     A.symmetrize();
     EXPECT_NEAR(A(0, 1), 2.0, 1e-12);

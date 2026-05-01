@@ -25,14 +25,8 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         return s.trajectory[stage].soft_s(idx);
     }
-    static bool has_nans(Solver& s, const typename Solver::TrajArray& t)
-    {
-        return s.has_nans(t);
-    }
-    static typename Solver::TrajArray& get_trajectory(Solver& s)
-    {
-        return s.trajectory.active();
-    }
+    static bool has_nans(Solver& s, const typename Solver::TrajArray& t) { return s.has_nans(t); }
+    static typename Solver::TrajArray& get_trajectory(Solver& s) { return s.trajectory.active(); }
     static void set_linear_solver(
         Solver& s, std::unique_ptr<RiccatiSolver<typename Solver::TrajArray, Model>> solver)
     {
@@ -796,8 +790,8 @@ TEST(BugfixTest, MehrotraMuAffIncludesL1SoftPair)
         const double lam_k = solver.get_dual(k, 0);
         const double soft_s_k = Access::soft_s(solver, k, 0);
 
-        true_total_comp += s_k * lam_k;              // hard pair
-        true_total_comp += soft_s_k * (w - lam_k);    // L1 soft pair
+        true_total_comp += s_k * lam_k; // hard pair
+        true_total_comp += soft_s_k * (w - lam_k); // L1 soft pair
         true_total_dim += 2; // count both pairs
     }
     double true_mu_aff = true_total_comp / std::max(1, true_total_dim);
@@ -818,7 +812,8 @@ TEST(BugfixTest, MehrotraMuAffIncludesL1SoftPair)
     // not the exact affine-step values the solver uses internally).
     EXPECT_GT(mu_aff_solver, true_mu_aff * 0.5)
         << "mu_aff is much smaller than true value — L1 soft pair likely "
-           "omitted. solver=" << mu_aff_solver << " true=" << true_mu_aff;
+           "omitted. solver="
+        << mu_aff_solver << " true=" << true_mu_aff;
 }
 
 TEST(BugfixTest, SlackResetUsesCurrentMuNotMuInit)
@@ -881,7 +876,10 @@ TEST(BugfixTest, SolverWarnsOnFusedKernelIntegratorMismatch)
     // whose fused kernel was generated for a different integrator.
     // The solver should still construct (warning, not throw) since the
     // non-fused path works with any integrator.
-    EXPECT_NO_THROW({ TaggedSolver solver(3, Backend::CPU_SERIAL, conf); (void)solver; });
+    EXPECT_NO_THROW({
+        TaggedSolver solver(3, Backend::CPU_SERIAL, conf);
+        (void)solver;
+    });
 }
 
 TEST(BugfixTest, RiccatiSkipsFusedKernelOnIntegratorMismatch)
@@ -957,7 +955,7 @@ TEST(ImprovementDemo, SlackReset_ComplementarityGap)
     MiniSolver<BugTestModel, 10>::TrajArray traj;
     for (int k = 0; k <= N; ++k) {
         traj[k].set_zero();
-        traj[k].s(0) = 1e-4;   // below min_s = |g| + sqrt(mu) ≈ 3.16e-3
+        traj[k].s(0) = 1e-4; // below min_s = |g| + sqrt(mu) ≈ 3.16e-3
         traj[k].lam(0) = 1e-6; // small, so old mu_init/s dominates
         traj[k].g_val(0) = 0.0;
     }
@@ -965,8 +963,9 @@ TEST(ImprovementDemo, SlackReset_ComplementarityGap)
     // --- Current fix: mu/s ---
     Access::apply_slack_reset(solver, traj);
     double fix_comp = 0.0;
-    for (int k = 0; k <= N; ++k)
+    for (int k = 0; k <= N; ++k) {
         fix_comp += std::abs(traj[k].lam(0) * traj[k].s(0) - 1e-5); // |lam*s - mu|
+    }
 
     // --- Simulated old behavior: mu_init/s ---
     // Reset trajectory, then apply mu_init/s manually.
@@ -986,13 +985,15 @@ TEST(ImprovementDemo, SlackReset_ComplementarityGap)
         }
     }
     double old_comp = 0.0;
-    for (int k = 0; k <= N; ++k)
+    for (int k = 0; k <= N; ++k) {
         old_comp += std::abs(traj_old[k].lam(0) * traj_old[k].s(0) - 1e-5);
+    }
 
     std::cerr << "[Demo 1] slack_reset complementarity gap:\n"
               << "  old (mu_init/s): |lam*s - mu| = " << old_comp << "\n"
               << "  fix (mu/s):      |lam*s - mu| = " << fix_comp << "\n"
-              << "  improvement:     " << old_comp / std::max(fix_comp, 1e-30) << "x closer to central path\n";
+              << "  improvement:     " << old_comp / std::max(fix_comp, 1e-30)
+              << "x closer to central path\n";
 
     // The fix should be at least 1000x closer to the central path.
     EXPECT_LT(fix_comp, old_comp / 1000.0);
@@ -1126,8 +1127,9 @@ TEST(ImprovementDemo, TerminalCost_UGuardProtectsAgainstPhantom)
 
     for (int k = 0; k <= N; ++k) {
         solver.set_state_guess(k, 0, 0.0);
-        if (k < N)
+        if (k < N) {
             solver.set_control_guess(k, 0, 0.0);
+        }
         solver.set_slack_guess(k, 0, 1.0);
         solver.set_dual_guess(k, 0, 0.1);
     }
@@ -1178,8 +1180,8 @@ TEST(ImprovementDemo, MeritLS_ArmijoRejectsTinyImprovement)
 
         std::cerr << "[Demo 6a] alpha=1.0, phi_alpha=0.9999999:\n"
                   << "  simple decrease: " << (simple ? "ACCEPT" : "REJECT") << "\n"
-                  << "  Armijo threshold=" << armijo_threshold
-                  << ": " << (armijo ? "ACCEPT" : "REJECT") << "\n";
+                  << "  Armijo threshold=" << armijo_threshold << ": "
+                  << (armijo ? "ACCEPT" : "REJECT") << "\n";
 
         EXPECT_TRUE(simple);
         EXPECT_FALSE(armijo) << "Armijo should reject tiny improvement at alpha=1";
@@ -1196,8 +1198,8 @@ TEST(ImprovementDemo, MeritLS_ArmijoRejectsTinyImprovement)
 
         std::cerr << "[Demo 6b] alpha=0.01, phi_alpha=0.9999:\n"
                   << "  simple decrease: " << (simple ? "ACCEPT" : "REJECT") << "\n"
-                  << "  Armijo threshold=" << armijo_threshold
-                  << ": " << (armijo ? "ACCEPT" : "REJECT") << "\n";
+                  << "  Armijo threshold=" << armijo_threshold << ": "
+                  << (armijo ? "ACCEPT" : "REJECT") << "\n";
 
         EXPECT_TRUE(simple);
         EXPECT_TRUE(armijo) << "Armijo should accept when decrease is proportional to alpha";
@@ -1214,8 +1216,8 @@ TEST(ImprovementDemo, MeritLS_ArmijoRejectsTinyImprovement)
 
         std::cerr << "[Demo 6c] alpha=1.0, phi_alpha=0.5:\n"
                   << "  simple decrease: " << (simple ? "ACCEPT" : "REJECT") << "\n"
-                  << "  Armijo threshold=" << armijo_threshold
-                  << ": " << (armijo ? "ACCEPT" : "REJECT") << "\n";
+                  << "  Armijo threshold=" << armijo_threshold << ": "
+                  << (armijo ? "ACCEPT" : "REJECT") << "\n";
 
         EXPECT_TRUE(simple);
         EXPECT_TRUE(armijo);
@@ -1249,8 +1251,8 @@ TEST(ImprovementDemo, MeritLS_ArmijoVsSimpleDecrease_Iterations)
         return { solver.get_iteration_count(), solver.get_stage_cost(0) };
     };
 
-    auto [iters_armijo, cost_armijo] = run_solver(1e-4);     // Armijo on
-    auto [iters_simple, cost_simple] = run_solver(0.0);       // simple decrease
+    auto [iters_armijo, cost_armijo] = run_solver(1e-4); // Armijo on
+    auto [iters_simple, cost_simple] = run_solver(0.0); // simple decrease
 
     std::cerr << "[Demo 7] Merit LS: Armijo vs simple decrease\n"
               << "  simple decrease: " << iters_simple << " iters, cost=" << cost_simple << "\n"
@@ -1262,8 +1264,7 @@ TEST(ImprovementDemo, MeritLS_ArmijoVsSimpleDecrease_Iterations)
         << "Armijo changed the solution by more than 1%";
 
     // Armijo should use same or fewer iterations (rejects micro-steps).
-    EXPECT_LE(iters_armijo, iters_simple)
-        << "Armijo should not increase iteration count";
+    EXPECT_LE(iters_armijo, iters_simple) << "Armijo should not increase iteration count";
 }
 
 // =============================================================================
@@ -1304,8 +1305,7 @@ struct NanJacobianModel {
         kp.B(0, 0) = dt;
     }
 
-    template <typename T>
-    static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
 
     template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
     {
@@ -1366,8 +1366,7 @@ struct NanDynamicsResidualModel {
         kp.B(0, 0) = dt;
     }
 
-    template <typename T>
-    static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
 
     template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
     {

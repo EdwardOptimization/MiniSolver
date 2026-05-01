@@ -102,8 +102,9 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
         double s_i = kp.s(i);
         double lam_i = kp.lam(i);
 
-        if (s_i < config.min_barrier_slack)
+        if (s_i < config.min_barrier_slack) {
             s_i = config.min_barrier_slack;
+        }
 
         double w = 0.0;
         int type = 0;
@@ -120,8 +121,9 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
             sigma_val = 1.0 / (s_i / lam_i + 1.0 / w);
         } else if (type == 1 && w > 1e-6) { // L1 Soft (Dual Box)
             double soft_s_i = kp.soft_s(i);
-            if (soft_s_i < config.min_barrier_slack)
+            if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
+            }
             const double soft_dual_i
                 = internal::positive_barrier_gap(w - lam_i, config.min_barrier_slack);
 
@@ -134,16 +136,18 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
         sigma(i) = sigma_val;
 
         double r_y = s_i * lam_i - mu;
-        if (aff_kp)
+        if (aff_kp) {
             r_y += aff_kp->ds(i) * aff_kp->dlam(i);
+        }
 
         // Primal residual base
         double g_val_i = (soc_kp) ? soc_kp->g_val(i) : kp.g_val(i);
 
         if (type == 1 && w > 1e-6) {
             double soft_s_i = kp.soft_s(i);
-            if (soft_s_i < config.min_barrier_slack)
+            if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
+            }
             const double soft_dual_i
                 = internal::positive_barrier_gap(w - lam_i, config.min_barrier_slack);
 
@@ -214,8 +218,9 @@ void recover_dual_search_directions(Knot& kp, double mu, const minisolver::Solve
 
     for (int i = 0; i < Knot::NC; ++i) {
         double s_i = kp.s(i);
-        if (s_i < config.min_barrier_slack)
+        if (s_i < config.min_barrier_slack) {
             s_i = config.min_barrier_slack;
+        }
 
         double w = 0.0;
         int type = 0;
@@ -228,15 +233,17 @@ void recover_dual_search_directions(Knot& kp, double mu, const minisolver::Solve
 
         double lam_i = kp.lam(i);
         double r_y = s_i * lam_i - mu;
-        if (aff_kp)
+        if (aff_kp) {
             r_y += aff_kp->ds(i) * aff_kp->dlam(i);
+        }
 
         double g_val_i = (soc_kp) ? soc_kp->g_val(i) : kp.g_val(i);
 
         if (type == 1 && w > 1e-6) { // L1 Soft
             double soft_s_i = kp.soft_s(i);
-            if (soft_s_i < config.min_barrier_slack)
+            if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
+            }
             const double soft_dual_i
                 = internal::positive_barrier_gap(w - lam_i, config.min_barrier_slack);
 
@@ -286,8 +293,9 @@ bool fast_inverse(const MatrixType& A, MatrixType& A_inv, double epsilon = 1e-9)
     if constexpr (ROWS == 1) {
         double val = A(0, 0);
         // This fast path is only valid for SPD matrices.
-        if (val <= epsilon)
+        if (val <= epsilon) {
             return false;
+        }
         A_inv(0, 0) = 1.0 / val;
         return true;
     }
@@ -295,10 +303,12 @@ bool fast_inverse(const MatrixType& A, MatrixType& A_inv, double epsilon = 1e-9)
     else if constexpr (ROWS == 2) {
         double det = A(0, 0) * A(1, 1) - A(0, 1) * A(1, 0);
         // SPD check via leading principal minors (Sylvester criterion for symmetric matrices).
-        if (A(0, 0) <= epsilon)
+        if (A(0, 0) <= epsilon) {
             return false;
-        if (det <= epsilon)
+        }
+        if (det <= epsilon) {
             return false;
+        }
 
         double inv_det = 1.0 / det;
         A_inv(0, 0) = A(1, 1) * inv_det;
@@ -315,17 +325,20 @@ bool fast_inverse(const MatrixType& A, MatrixType& A_inv, double epsilon = 1e-9)
         double A20 = A(2, 0), A21 = A(2, 1), A22 = A(2, 2);
 
         // SPD check via leading principal minors (Sylvester criterion for symmetric matrices).
-        if (A00 <= epsilon)
+        if (A00 <= epsilon) {
             return false;
+        }
         double det2 = A00 * A11 - A01 * A10;
-        if (det2 <= epsilon)
+        if (det2 <= epsilon) {
             return false;
+        }
 
         double det = A00 * (A11 * A22 - A12 * A21) - A01 * (A10 * A22 - A12 * A20)
             + A02 * (A10 * A21 - A11 * A20);
 
-        if (det <= epsilon)
+        if (det <= epsilon) {
             return false;
+        }
         double inv_det = 1.0 / det;
 
         A_inv(0, 0) = (A11 * A22 - A12 * A21) * inv_det;
@@ -364,8 +377,9 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
     MSVec<double, Knot::NX> Vx = traj[N].q_bar;
     MSMat<double, Knot::NX, Knot::NX> Vxx = traj[N].Q_bar;
 
-    for (int i = 0; i < Knot::NX; ++i)
+    for (int i = 0; i < Knot::NX; ++i) {
         Vxx(i, i) += reg;
+    }
 
     for (int k = N - 1; k >= 0; --k) {
         auto& kp = traj[k];
@@ -442,11 +456,13 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
         } // End of Legacy Path
 
         if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
-            for (int i = 0; i < Knot::NU; ++i)
+            for (int i = 0; i < Knot::NU; ++i) {
                 kp.R_bar(i, i) += reg;
+            }
         } else {
-            for (int i = 0; i < Knot::NU; ++i)
+            for (int i = 0; i < Knot::NU; ++i) {
                 kp.R_bar(i, i) += config.reg_min;
+            }
         }
 
         if (strategy == minisolver::InertiaStrategy::REGULARIZATION && Knot::NU <= 3) {
@@ -507,8 +523,9 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                     // Prefer keeping a 2D SPD principal block if possible (freeze only 1 dim).
                     for (int i = 0; i < 3; ++i) {
                         for (int j = i + 1; j < 3; ++j) {
-                            if (!is_spd_2x2(i, j))
+                            if (!is_spd_2x2(i, j)) {
                                 continue;
+                            }
                             const double d = det_2x2(i, j);
                             if (d > best_det) {
                                 best_det = d;
@@ -551,8 +568,9 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                     }
                 }
 
-                if (!inv_ok)
+                if (!inv_ok) {
                     return false;
+                }
             }
 
             kp.d.noalias() = -ws.Quu_inv * kp.r_bar; // Qu is in kp.r_bar
@@ -570,12 +588,14 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                 // Failure handling A: Directly return false
                 if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
                     // Try the last chance: unified regularization
-                    for (int i = 0; i < Knot::NU; ++i)
+                    for (int i = 0; i < Knot::NU; ++i) {
                         kp.R_bar(i, i) += config.regularization_step; // e.g. 1e-6
+                    }
 
                     ws.spd_solver.compute(kp.R_bar);
-                    if (!MatOps::is_spd_solver_success(ws.spd_solver))
+                    if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
                         return false; // Give up
+                    }
                 }
 
                 // Failure handling B: Try to fix (Ignore Singular)
@@ -594,8 +614,9 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                     if (fixed) {
                         // Re-factorize the corrected matrix (Retry Factorization)
                         ws.spd_solver.compute(kp.R_bar);
-                        if (!MatOps::is_spd_solver_success(ws.spd_solver))
+                        if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
                             return false;
+                        }
                     } else {
                         // The matrix is not positive definite, but the diagonal elements are all
                         // greater than the threshold, indicating a structural problem that cannot
@@ -611,16 +632,19 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                 if (strategy == minisolver::InertiaStrategy::SATURATION) {
                     const double sat_floor = (reg > config.reg_min) ? reg : config.reg_min;
                     for (int i = 0; i < Knot::NU; ++i) {
-                        if (kp.R_bar(i, i) < sat_floor)
+                        if (kp.R_bar(i, i) < sat_floor) {
                             kp.R_bar(i, i) = sat_floor;
+                        }
                     }
                     ws.spd_solver.compute(kp.R_bar);
                     if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
-                        for (int i = 0; i < Knot::NU; ++i)
+                        for (int i = 0; i < Knot::NU; ++i) {
                             kp.R_bar(i, i) += config.regularization_step;
+                        }
                         ws.spd_solver.compute(kp.R_bar);
-                        if (!MatOps::is_spd_solver_success(ws.spd_solver))
+                        if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
                             return false;
+                        }
                     }
                 }
             }
@@ -643,8 +667,9 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
         Vxx = kp.Q_bar;
         MatOps::mult_add_transA(Vxx, kp.H_bar, kp.K);
         MatOps::symmetrize(Vxx);
-        for (int i = 0; i < Knot::NX; ++i)
+        for (int i = 0; i < Knot::NX; ++i) {
             Vxx(i, i) += reg;
+        }
     }
 
     traj[0].dx.setZero();

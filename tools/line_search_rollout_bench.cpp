@@ -41,7 +41,8 @@ SolverConfig make_config(IntegratorType integrator, bool rollout)
 template <typename Model>
 MiniSolver<Model, kMaxHorizon> make_initialized_solver(IntegratorType type, bool rollout)
 {
-    MiniSolver<Model, kMaxHorizon> solver(kHorizon, Backend::CPU_SERIAL, make_config(type, rollout));
+    MiniSolver<Model, kMaxHorizon> solver(
+        kHorizon, Backend::CPU_SERIAL, make_config(type, rollout));
     solver.set_dt(0.08);
     solver.set_initial_state("x0", 1.0);
     solver.set_initial_state("x1", -0.45);
@@ -60,17 +61,16 @@ struct BenchResult {
     SolverStatus status = SolverStatus::UNSOLVED;
 };
 
-template <typename SolverT>
-double total_cost(const SolverT& solver)
+template <typename SolverT> double total_cost(const SolverT& solver)
 {
     double cost = 0.0;
-    for (int k = 0; k <= kHorizon; ++k)
+    for (int k = 0; k <= kHorizon; ++k) {
         cost += solver.get_stage_cost(k);
+    }
     return cost;
 }
 
-template <typename Model>
-BenchResult run_bench(IntegratorType type, bool rollout)
+template <typename Model> BenchResult run_bench(IntegratorType type, bool rollout)
 {
     std::vector<double> samples;
     samples.reserve(kMeasureRuns);
@@ -99,24 +99,18 @@ BenchResult run_bench(IntegratorType type, bool rollout)
     return result;
 }
 
-template <typename Model>
-void run_case(const char* name, IntegratorType type)
+template <typename Model> void run_case(const char* name, IntegratorType type)
 {
     BenchResult multiple = run_bench<Model>(type, false);
     BenchResult rollout = run_bench<Model>(type, true);
 
-    std::cout << std::left << std::setw(16) << name
-              << std::right
-              << std::setw(14) << std::fixed << std::setprecision(2) << multiple.median_us
-              << std::setw(14) << rollout.median_us
+    std::cout << std::left << std::setw(16) << name << std::right << std::setw(14) << std::fixed
+              << std::setprecision(2) << multiple.median_us << std::setw(14) << rollout.median_us
               << std::setw(10) << std::setprecision(2) << rollout.median_us / multiple.median_us
-              << std::setw(10) << multiple.iterations
-              << std::setw(10) << rollout.iterations
-              << std::setw(12) << status_to_string(multiple.status)
-              << std::setw(12) << status_to_string(rollout.status)
-              << std::setw(14) << std::scientific << std::setprecision(2)
-              << std::abs(multiple.cost - rollout.cost)
-              << "\n";
+              << std::setw(10) << multiple.iterations << std::setw(10) << rollout.iterations
+              << std::setw(12) << status_to_string(multiple.status) << std::setw(12)
+              << status_to_string(rollout.status) << std::setw(14) << std::scientific
+              << std::setprecision(2) << std::abs(multiple.cost - rollout.cost) << "\n";
 }
 
 } // namespace
@@ -125,16 +119,10 @@ int main()
 {
     std::cout << "line-search rollout benchmark\n";
     std::cout << "runs: warmup=" << kWarmupRuns << ", measured=" << kMeasureRuns << "\n";
-    std::cout << std::left << std::setw(16) << "case"
-              << std::right
-              << std::setw(14) << "multiple_us"
-              << std::setw(14) << "rollout_us"
-              << std::setw(10) << "ratio"
-              << std::setw(10) << "miters"
-              << std::setw(10) << "riters"
-              << std::setw(12) << "mstatus"
-              << std::setw(12) << "rstatus"
-              << std::setw(14) << "cost_diff"
+    std::cout << std::left << std::setw(16) << "case" << std::right << std::setw(14)
+              << "multiple_us" << std::setw(14) << "rollout_us" << std::setw(10) << "ratio"
+              << std::setw(10) << "miters" << std::setw(10) << "riters" << std::setw(12)
+              << "mstatus" << std::setw(12) << "rstatus" << std::setw(14) << "cost_diff"
               << "\n";
 
     run_case<FusedMidpointImplicitRegressionModel>("midpoint", IntegratorType::RK2_IMPLICIT);

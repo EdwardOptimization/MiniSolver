@@ -61,8 +61,9 @@ struct MatOps {
     inline static bool cholesky_solve(const Mat& A, const Vec& b, ResVec& x)
     {
         Eigen::LLT<Mat> llt(A);
-        if (llt.info() == Eigen::NumericalIssue)
+        if (llt.info() == Eigen::NumericalIssue) {
             return false;
+        }
         x = llt.solve(b);
         return true;
     }
@@ -82,8 +83,9 @@ struct MatOps {
     inline static bool lu_solve(const Mat& A, const Vec& b, ResVec& x)
     {
         Eigen::PartialPivLU<Mat> lu(A);
-        if (lu.matrixLU().diagonal().array().abs().minCoeff() < 1e-30)
+        if (lu.matrixLU().diagonal().array().abs().minCoeff() < 1e-30) {
             return false; // near-singular
+        }
         x = lu.solve(b);
         return true;
     }
@@ -92,8 +94,9 @@ struct MatOps {
     inline static bool lu_solve_matrix(const Mat& A, const Rhs& B, Res& X)
     {
         Eigen::PartialPivLU<Mat> lu(A);
-        if (lu.matrixLU().diagonal().array().abs().minCoeff() < 1e-30)
+        if (lu.matrixLU().diagonal().array().abs().minCoeff() < 1e-30) {
             return false;
+        }
         X = lu.solve(B);
         return true;
     }
@@ -117,8 +120,9 @@ struct MatOps {
         if constexpr (std::is_same_v<typename V1::Scalar, float>
             || std::is_same_v<typename V2::Scalar, float>) {
             double sum = 0.0;
-            for (Eigen::Index i = 0; i < a.size(); ++i)
+            for (Eigen::Index i = 0; i < a.size(); ++i) {
                 sum += static_cast<double>(a.coeff(i)) * static_cast<double>(b.coeff(i));
+            }
             return sum;
         } else {
             return static_cast<double>(a.dot(b));
@@ -242,8 +246,9 @@ struct MatOps {
         // Iterate element-wise. For fixed-size matrices this is unrolled.
         for (int i = 0; i < m.rows(); ++i) {
             for (int j = 0; j < m.cols(); ++j) {
-                if (is_nan_scalar(m(i, j)))
+                if (is_nan_scalar(m(i, j))) {
                     return true;
+                }
             }
         }
         return false;
@@ -290,8 +295,9 @@ struct MatOps {
     inline static bool cholesky_solve(const Mat& A, const Vec& b, ResVec& x)
     {
         MiniLLT<double, Mat::Rows> llt(A);
-        if (llt.info() != 0)
+        if (llt.info() != 0) {
             return false;
+        }
 
         if ((void*)&b == (void*)&x) {
             llt.solve_in_place(x);
@@ -315,13 +321,15 @@ struct MatOps {
         constexpr int N = Mat::Rows;
         // Copy A into LU workspace
         std::array<double, N * N> lu;
-        for (int i = 0; i < N * N; ++i)
+        for (int i = 0; i < N * N; ++i) {
             lu[static_cast<size_t>(i)] = A.data[i];
+        }
 
         // Permutation
         std::array<int, N> perm;
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             perm[static_cast<size_t>(i)] = i;
+        }
 
         // Forward elimination with partial pivoting
         for (int k = 0; k < N; ++k) {
@@ -335,24 +343,27 @@ struct MatOps {
                     max_row = i;
                 }
             }
-            if (max_val < 1e-30)
+            if (max_val < 1e-30) {
                 return false; // singular
+            }
 
             // Swap rows
             if (max_row != k) {
                 std::swap(perm[static_cast<size_t>(k)], perm[static_cast<size_t>(max_row)]);
-                for (int j = 0; j < N; ++j)
+                for (int j = 0; j < N; ++j) {
                     std::swap(lu[static_cast<size_t>(k * N + j)],
                         lu[static_cast<size_t>(max_row * N + j)]);
+                }
             }
 
             // Eliminate
             for (int i = k + 1; i < N; ++i) {
                 double factor
                     = lu[static_cast<size_t>(i * N + k)] / lu[static_cast<size_t>(k * N + k)];
-                for (int j = k + 1; j < N; ++j)
+                for (int j = k + 1; j < N; ++j) {
                     lu[static_cast<size_t>(i * N + j)]
                         -= factor * lu[static_cast<size_t>(k * N + j)];
+                }
                 lu[static_cast<size_t>(i * N + k)] = factor;
             }
         }
@@ -361,16 +372,18 @@ struct MatOps {
         std::array<double, N> y;
         for (int i = 0; i < N; ++i) {
             y[static_cast<size_t>(i)] = b(perm[static_cast<size_t>(i)]);
-            for (int j = 0; j < i; ++j)
+            for (int j = 0; j < i; ++j) {
                 y[static_cast<size_t>(i)]
                     -= lu[static_cast<size_t>(i * N + j)] * y[static_cast<size_t>(j)];
+            }
         }
 
         // Backward substitution (U)
         for (int i = N - 1; i >= 0; --i) {
             x(i) = y[static_cast<size_t>(i)];
-            for (int j = i + 1; j < N; ++j)
+            for (int j = i + 1; j < N; ++j) {
                 x(i) -= lu[static_cast<size_t>(i * N + j)] * x(j);
+            }
             x(i) /= lu[static_cast<size_t>(i * N + i)];
         }
         return true;
@@ -386,13 +399,16 @@ struct MatOps {
         static_assert(Res::Rows == N && Res::Cols == NRHS, "LU output shape mismatch");
 
         std::array<double, N * N> lu;
-        for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j)
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < N; ++j) {
                 lu[static_cast<size_t>(i * N + j)] = A(i, j);
+            }
+        }
 
         std::array<int, N> perm;
-        for (int i = 0; i < N; ++i)
+        for (int i = 0; i < N; ++i) {
             perm[static_cast<size_t>(i)] = i;
+        }
 
         for (int k = 0; k < N; ++k) {
             int max_row = k;
@@ -404,22 +420,25 @@ struct MatOps {
                     max_row = i;
                 }
             }
-            if (max_val < 1e-30)
+            if (max_val < 1e-30) {
                 return false;
+            }
 
             if (max_row != k) {
                 std::swap(perm[static_cast<size_t>(k)], perm[static_cast<size_t>(max_row)]);
-                for (int j = 0; j < N; ++j)
+                for (int j = 0; j < N; ++j) {
                     std::swap(lu[static_cast<size_t>(k * N + j)],
                         lu[static_cast<size_t>(max_row * N + j)]);
+                }
             }
 
             for (int i = k + 1; i < N; ++i) {
                 double factor
                     = lu[static_cast<size_t>(i * N + k)] / lu[static_cast<size_t>(k * N + k)];
-                for (int j = k + 1; j < N; ++j)
+                for (int j = k + 1; j < N; ++j) {
                     lu[static_cast<size_t>(i * N + j)]
                         -= factor * lu[static_cast<size_t>(k * N + j)];
+                }
                 lu[static_cast<size_t>(i * N + k)] = factor;
             }
         }
@@ -428,15 +447,17 @@ struct MatOps {
             std::array<double, N> y;
             for (int i = 0; i < N; ++i) {
                 y[static_cast<size_t>(i)] = B(perm[static_cast<size_t>(i)], col);
-                for (int j = 0; j < i; ++j)
+                for (int j = 0; j < i; ++j) {
                     y[static_cast<size_t>(i)]
                         -= lu[static_cast<size_t>(i * N + j)] * y[static_cast<size_t>(j)];
+                }
             }
 
             for (int i = N - 1; i >= 0; --i) {
                 double value = y[static_cast<size_t>(i)];
-                for (int j = i + 1; j < N; ++j)
+                for (int j = i + 1; j < N; ++j) {
                     value -= lu[static_cast<size_t>(i * N + j)] * X(j, col);
+                }
                 X(i, col) = value / lu[static_cast<size_t>(i * N + i)];
             }
         }
@@ -552,8 +573,9 @@ struct MatOps {
     {
         for (int i = 0; i < Derived::Rows; ++i) {
             for (int j = 0; j < Derived::Cols; ++j) {
-                if (is_nan_scalar(m(i, j)))
+                if (is_nan_scalar(m(i, j))) {
                     return true;
+                }
             }
         }
         return false;

@@ -17,9 +17,11 @@ volatile double sink = 0.0;
 template <int R, int C, typename Mat> double checksum(const Mat& m)
 {
     double sum = 0.0;
-    for (int r = 0; r < R; ++r)
-        for (int c = 0; c < C; ++c)
+    for (int r = 0; r < R; ++r) {
+        for (int c = 0; c < C; ++c) {
             sum += m(r, c) * static_cast<double>(r * C + c + 1);
+        }
+    }
     return sum;
 }
 
@@ -27,9 +29,11 @@ template <int R, int C, typename MatA, typename MatB>
 double max_abs_diff(const MatA& a, const MatB& b)
 {
     double max_diff = 0.0;
-    for (int r = 0; r < R; ++r)
-        for (int c = 0; c < C; ++c)
+    for (int r = 0; r < R; ++r) {
+        for (int c = 0; c < C; ++c) {
             max_diff = std::max(max_diff, std::abs(a(r, c) - b(r, c)));
+        }
+    }
     return max_diff;
 }
 
@@ -45,8 +49,9 @@ template <int R, int C> void fill_matrix(MSMat<double, R, C>& m, double base)
 
 template <int N> void fill_vector(MSVec<double, N>& v, double base)
 {
-    for (int i = 0; i < N; ++i)
+    for (int i = 0; i < N; ++i) {
         v(i) = base + 0.011 * static_cast<double>(i + 1);
+    }
 }
 
 template <int NX, int NU, int NC> struct Inputs {
@@ -161,8 +166,9 @@ template <int N>
 void axpy_fused_local(
     const MSVec<double, N>& base, const MSVec<double, N>& step, double alpha, MSVec<double, N>& out)
 {
-    for (int i = 0; i < N; ++i)
+    for (int i = 0; i < N; ++i) {
         out(i) = base(i) + step(i) * alpha;
+    }
 }
 
 template <int NX, int NU, int NC, typename Func>
@@ -262,7 +268,8 @@ int main()
     run_shape<6, 2, 10>(iters);
     run_shape<10, 4, 16>(iters);
 
-    if (sink == 123456789.0)
+    if (sink == 123456789.0) {
         std::cerr << sink << "\n";
+    }
     return 0;
 }

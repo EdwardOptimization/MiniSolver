@@ -54,8 +54,9 @@ public:
     bool refine(TrajArray& traj, const TrajArray& original_system, int N, double /*mu*/,
         double /*reg*/, const SolverConfig& config) override
     {
-        if (!config.enable_iterative_refinement)
+        if (!config.enable_iterative_refinement) {
             return true;
+        }
 
         // [FIX] Implemented Linear Rollout Refinement (Defect Correction)
         // This pass enforces strict dynamic feasibility of the linear solution:
@@ -95,8 +96,9 @@ public:
             MSVec<double, Model::NX> error = predicted_dx_next - traj[k + 1].dx;
             // [FIX] Use MatOps::norm_inf
             double err_norm = MatOps::norm_inf(error);
-            if (err_norm > max_defect)
+            if (err_norm > max_defect) {
                 max_defect = err_norm;
+            }
 
             // 3. Propagate Correction
             // delta_x_{k+1} = A * delta_x + B * delta_u + error

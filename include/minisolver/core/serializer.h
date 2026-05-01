@@ -73,8 +73,9 @@ private:
     template <typename Enum> static bool read_enum(std::ifstream& in, Enum& e)
     {
         std::int32_t v = 0;
-        if (!read_pod(in, v))
+        if (!read_pod(in, v)) {
             return false;
+        }
         e = static_cast<Enum>(v);
         return true;
     }
@@ -88,8 +89,9 @@ private:
     static bool read_bool(std::ifstream& in, bool& v)
     {
         std::uint8_t b = 0;
-        if (!read_pod(in, b))
+        if (!read_pod(in, b)) {
             return false;
+        }
         v = (b != 0);
         return true;
     }
@@ -187,8 +189,9 @@ private:
         }
 
         std::int32_t inertia_max_retries = 0;
-        if (!read_pod(in, inertia_max_retries))
+        if (!read_pod(in, inertia_max_retries)) {
             return false;
+        }
         cfg.inertia_max_retries = static_cast<int>(inertia_max_retries);
 
         if (!read_pod(in, cfg.tol_grad) || !read_pod(in, cfg.tol_con) || !read_pod(in, cfg.tol_dual)
@@ -198,8 +201,9 @@ private:
         }
 
         std::int32_t line_search_max_iters = 0;
-        if (!read_pod(in, line_search_max_iters))
+        if (!read_pod(in, line_search_max_iters)) {
             return false;
+        }
         cfg.line_search_max_iters = static_cast<int>(line_search_max_iters);
 
         if (!read_pod(in, cfg.line_search_tau) || !read_pod(in, cfg.line_search_backtrack_factor)
@@ -212,8 +216,9 @@ private:
         }
 
         std::int32_t max_restoration_iters = 0;
-        if (!read_pod(in, max_restoration_iters))
+        if (!read_pod(in, max_restoration_iters)) {
             return false;
+        }
         cfg.max_restoration_iters = static_cast<int>(max_restoration_iters);
 
         if (!read_pod(in, cfg.restoration_mu) || !read_pod(in, cfg.restoration_reg)
@@ -222,8 +227,9 @@ private:
         }
 
         std::int32_t max_iters = 0;
-        if (!read_pod(in, max_iters))
+        if (!read_pod(in, max_iters)) {
             return false;
+        }
         cfg.max_iters = static_cast<int>(max_iters);
 
         if (!read_enum(in, cfg.print_level) || !read_bool(in, cfg.enable_profiling)
@@ -233,8 +239,9 @@ private:
         }
 
         std::int32_t max_refinement_steps = 0;
-        if (!read_pod(in, max_refinement_steps))
+        if (!read_pod(in, max_refinement_steps)) {
             return false;
+        }
         cfg.max_refinement_steps = static_cast<int>(max_refinement_steps);
 
         if (!read_bool(in, cfg.enable_rti) || !read_bool(in, cfg.enable_line_search_rollout)
@@ -286,18 +293,24 @@ public:
             state.total_cost += kp.cost;
 
             // Manual copy to ensure compatibility between MSVec (Eigen/MiniMatrix) and std::array
-            for (int i = 0; i < Model::NX; ++i)
+            for (int i = 0; i < Model::NX; ++i) {
                 data.x[i] = kp.x(i);
-            for (int i = 0; i < Model::NU; ++i)
+            }
+            for (int i = 0; i < Model::NU; ++i) {
                 data.u[i] = kp.u(i);
-            for (int i = 0; i < Model::NP; ++i)
+            }
+            for (int i = 0; i < Model::NP; ++i) {
                 data.p[i] = kp.p(i);
-            for (int i = 0; i < Model::NC; ++i)
+            }
+            for (int i = 0; i < Model::NC; ++i) {
                 data.s[i] = kp.s(i);
-            for (int i = 0; i < Model::NC; ++i)
+            }
+            for (int i = 0; i < Model::NC; ++i) {
                 data.soft_s[i] = kp.soft_s(i);
-            for (int i = 0; i < Model::NC; ++i)
+            }
+            for (int i = 0; i < Model::NC; ++i) {
                 data.lam[i] = kp.lam(i);
+            }
         }
 
         return state;
@@ -511,18 +524,24 @@ public:
         auto& traj = solver.trajectory.active();
         for (int k = 0; k <= N; ++k) {
             const auto& src = knots[static_cast<size_t>(k)];
-            for (int i = 0; i < NX; ++i)
+            for (int i = 0; i < NX; ++i) {
                 traj[k].x(i) = src.x[static_cast<size_t>(i)];
-            for (int i = 0; i < NU; ++i)
+            }
+            for (int i = 0; i < NU; ++i) {
                 traj[k].u(i) = src.u[static_cast<size_t>(i)];
-            for (int i = 0; i < NP; ++i)
+            }
+            for (int i = 0; i < NP; ++i) {
                 traj[k].p(i) = src.p[static_cast<size_t>(i)];
-            for (int i = 0; i < NC; ++i)
+            }
+            for (int i = 0; i < NC; ++i) {
                 traj[k].s(i) = src.s[static_cast<size_t>(i)];
-            for (int i = 0; i < NC; ++i)
+            }
+            for (int i = 0; i < NC; ++i) {
                 traj[k].soft_s(i) = src.soft_s[static_cast<size_t>(i)];
-            for (int i = 0; i < NC; ++i)
+            }
+            for (int i = 0; i < NC; ++i) {
                 traj[k].lam(i) = src.lam[static_cast<size_t>(i)];
+            }
         }
 
         // Keep candidate buffer consistent with the loaded active buffer.

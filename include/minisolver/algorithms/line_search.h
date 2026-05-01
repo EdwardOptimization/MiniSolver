@@ -89,8 +89,9 @@ public:
 
                 const double current_dt = (k < N) ? dt_traj[static_cast<size_t>(k)] : 0.0;
                 detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
-                if (k < N)
+                if (k < N) {
                     candidate[k + 1].x = candidate[k].f_resid;
+                }
             }
         }
 
@@ -132,10 +133,11 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
 
             // Barrier & Soft Constraint Penalty Calculation
             for (int i = 0; i < NC; ++i) {
-                if (kp.s(i) > config.min_barrier_slack)
+                if (kp.s(i) > config.min_barrier_slack) {
                     total_merit -= mu * std::log(kp.s(i));
-                else
+                } else {
                     total_merit += config.barrier_inf_cost;
+                }
 
                 // L1 Soft Constraint: Dual Barrier
                 double w = 0.0;
@@ -150,15 +152,17 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 // L1 Soft Constraint: Dual Barrier + Linear Penalty
                 if (type == 1 && w > 1e-6) {
                     // 1. Barrier terms
-                    if (kp.soft_s(i) > config.min_barrier_slack)
+                    if (kp.soft_s(i) > config.min_barrier_slack) {
                         total_merit -= mu * std::log(kp.soft_s(i));
-                    else
+                    } else {
                         total_merit += config.barrier_inf_cost;
+                    }
 
-                    if (w - kp.lam(i) > 1e-9)
+                    if (w - kp.lam(i) > 1e-9) {
                         total_merit -= mu * std::log(w - kp.lam(i));
-                    else
+                    } else {
                         total_merit += config.barrier_inf_cost;
+                    }
 
                     // 2. L1 Linear Penalty
                     total_merit += w * kp.soft_s(i);
@@ -227,12 +231,14 @@ public:
         double max_dual = 0.0;
         for (int k = 0; k <= N; ++k) {
             double local_max = MatOps::norm_inf(active[k].lam);
-            if (local_max > max_dual)
+            if (local_max > max_dual) {
                 max_dual = local_max;
+            }
         }
         double required_nu = max_dual * 1.1 + 1.0;
-        if (required_nu > merit_nu)
+        if (required_nu > merit_nu) {
             merit_nu = required_nu;
+        }
 
         // 2. Initial Merit
         double phi_0 = compute_merit(active, N, mu, config);
@@ -280,8 +286,9 @@ public:
 
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
                     detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
-                    if (k < N)
+                    if (k < N) {
                         candidate[k + 1].x = candidate[k].f_resid;
+                    }
                 }
             }
 
@@ -306,8 +313,9 @@ public:
                 }
             }
 
-            if (accepted)
+            if (accepted) {
                 break;
+            }
             alpha *= config.line_search_backtrack_factor;
             ls_iter++;
         }
@@ -345,10 +353,11 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
             // Objective (Phi) Calculation
             phi += kp.cost;
             for (int i = 0; i < NC; ++i) {
-                if (kp.s(i) > config.min_barrier_slack)
+                if (kp.s(i) > config.min_barrier_slack) {
                     phi -= mu * std::log(kp.s(i));
-                else
+                } else {
                     phi += config.barrier_inf_cost;
+                }
 
                 // L1 Soft Constraint: Dual Barrier
                 double w = 0.0;
@@ -363,15 +372,17 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 // L1 Soft Constraint
                 if (type == 1 && w > 1e-6) {
                     // Barrier terms
-                    if (kp.soft_s(i) > config.min_barrier_slack)
+                    if (kp.soft_s(i) > config.min_barrier_slack) {
                         phi -= mu * std::log(kp.soft_s(i));
-                    else
+                    } else {
                         phi += config.barrier_inf_cost;
+                    }
 
-                    if (w - kp.lam(i) > 1e-9)
+                    if (w - kp.lam(i) > 1e-9) {
                         phi -= mu * std::log(w - kp.lam(i));
-                    else
+                    } else {
                         phi += config.barrier_inf_cost;
+                    }
 
                     // L1 Linear Penalty
                     phi += w * kp.soft_s(i);
@@ -434,8 +445,9 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         bool sufficient_decrease = (theta <= (1.0 - config.filter_gamma_theta) * theta_0)
             || (phi <= phi_0 - config.filter_gamma_phi * theta_0);
 
-        if (!sufficient_decrease)
+        if (!sufficient_decrease) {
             return false;
+        }
 
         // Check against filter
         for (const auto& entry : filter) {
@@ -443,8 +455,9 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
             double phi_j = entry.second;
             bool sufficient_wrt_filter = (theta <= (1.0 - config.filter_gamma_theta) * theta_j)
                 || (phi <= phi_j - config.filter_gamma_phi * theta_j);
-            if (!sufficient_wrt_filter)
+            if (!sufficient_wrt_filter) {
                 return false;
+            }
         }
         return true;
     }
@@ -524,8 +537,9 @@ public:
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
                     detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
-                    if (k < N)
+                    if (k < N) {
                         candidate[k + 1].x = candidate[k].f_resid;
+                    }
                 }
             }
 
@@ -537,8 +551,9 @@ public:
             // SOC Logic
             if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0
                 && alpha > config.soc_trigger_alpha) {
-                if (config.print_level >= PrintLevel::DEBUG)
+                if (config.print_level >= PrintLevel::DEBUG) {
                     MLOG_DEBUG("Step rejected. Attempting SOC.");
+                }
 
                 // Avoid heap allocation in the solve loop.
                 TrajArray soc_data = active; // Copy system matrices from active trajectory
@@ -572,30 +587,35 @@ public:
                         double current_dt = (k < N) ? dt_traj[k] : 0.0;
                         if (config.enable_line_search_rollout) {
                             // Keep x0 fixed and re-propagate after applying SOC correction.
-                            if (k == 0)
+                            if (k == 0) {
                                 candidate[0].x = active[0].x;
+                            }
                         }
 
                         detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
-                        if (config.enable_line_search_rollout && k < N)
+                        if (config.enable_line_search_rollout && k < N) {
                             candidate[k + 1].x = candidate[k].f_resid;
+                        }
                     }
 
                     auto m_soc = compute_metrics(candidate, N, mu, config);
                     if (is_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config)) {
-                        if (config.print_level >= PrintLevel::DEBUG)
+                        if (config.print_level >= PrintLevel::DEBUG) {
                             MLOG_DEBUG("SOC Accepted.");
+                        }
                         accepted = true;
                     }
                 }
 
                 soc_attempted = true;
-                if (accepted)
+                if (accepted) {
                     break;
+                }
             }
 
-            if (accepted)
+            if (accepted) {
                 break;
+            }
             alpha *= config.line_search_backtrack_factor;
             ls_iter++;
         }

@@ -16,17 +16,21 @@ volatile double sink = 0.0;
 
 template <typename Mat> void fill_matrix(Mat& m, double seed)
 {
-    for (int i = 0; i < Mat::Rows; ++i)
-        for (int j = 0; j < Mat::Cols; ++j)
+    for (int i = 0; i < Mat::Rows; ++i) {
+        for (int j = 0; j < Mat::Cols; ++j) {
             m(i, j) = std::sin(seed + 0.17 * i + 0.23 * j);
+        }
+    }
 }
 
 template <typename Mat> double checksum(const Mat& m)
 {
     double sum = 0.0;
-    for (int i = 0; i < Mat::Rows; ++i)
-        for (int j = 0; j < Mat::Cols; ++j)
+    for (int i = 0; i < Mat::Rows; ++i) {
+        for (int j = 0; j < Mat::Cols; ++j) {
             sum += m(i, j) * (1.0 + 0.01 * i + 0.03 * j);
+        }
+    }
     return sum;
 }
 
@@ -158,7 +162,8 @@ int main()
     run_case<8, 4, 4, 2>(iters);
     run_case<12, 6, 6, 2>(iters);
 
-    if (sink == 123456789.0)
+    if (sink == 123456789.0) {
         std::cout << "sink\n";
+    }
     return 0;
 }

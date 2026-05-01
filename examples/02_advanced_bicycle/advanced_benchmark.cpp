@@ -52,8 +52,9 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
 
     std::vector<double> dts(N);
     // Simple uniform time steps
-    for (int k = 0; k < N; ++k)
+    for (int k = 0; k < N; ++k) {
         dts[k] = 0.05;
+    }
 
     const int NUM_RUNS = 100;
     const int WARMUP_RUNS = 10;
@@ -76,8 +77,9 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
 
         double current_t = 0.0;
         for (int k = 0; k <= N; ++k) {
-            if (k > 0)
+            if (k > 0) {
                 current_t += dts[k - 1];
+            }
             double x_ref = current_t * ExtConfig::TARGET_V;
 
             // Intelligent Reference Generation (Match Debug Setup)
@@ -150,16 +152,18 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
                     for (int i = 0; i < BicycleExtModel::NC; ++i) {
                         double val
                             = std::abs(solver.get_constraint_val(k, i) + solver.get_slack(k, i));
-                        if (val > max_viol)
+                        if (val > max_viol) {
                             max_viol = val;
+                        }
                     }
                 }
                 last_converged
                     = (status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
 
                 double cost = 0.0;
-                for (int k = 0; k <= horizon; ++k)
+                for (int k = 0; k <= horizon; ++k) {
                     cost += solver.get_stage_cost(k);
+                }
                 last_cost = cost;
                 last_viol = max_viol;
             }

@@ -47,17 +47,20 @@ public:
 
     void start(const std::string& name)
     {
-        if (!enabled)
+        if (!enabled) {
             return;
+        }
         stack.push_back({ name, Clock::now() });
     }
 
     void stop()
     {
-        if (!enabled)
+        if (!enabled) {
             return;
-        if (stack.empty())
+        }
+        if (stack.empty()) {
             return;
+        }
         auto end_time = Clock::now();
         auto& entry = stack.back();
         std::chrono::duration<double, std::milli> ms = end_time - entry.second;
@@ -73,8 +76,9 @@ public:
 
     void print()
     {
-        if (!enabled)
+        if (!enabled) {
             return;
+        }
         std::stringstream ss;
         ss << "\n--- Solver Profiling (ms) ---\n";
         for (auto const& [name, time] : times) {
@@ -125,8 +129,7 @@ public:
             if (Model::generated_integrator != config.integrator) {
                 std::cerr << "MiniSolver: Model was generated for "
                           << static_cast<int>(Model::generated_integrator)
-                          << " but config.integrator is "
-                          << static_cast<int>(config.integrator)
+                          << " but config.integrator is " << static_cast<int>(config.integrator)
                           << ". Fused Riccati kernel will be skipped.\n";
             }
         }
@@ -143,12 +146,15 @@ public:
         }
 
         // Initialize Maps
-        for (int i = 0; i < NX; ++i)
+        for (int i = 0; i < NX; ++i) {
             state_map[Model::state_names[i]] = i;
-        for (int i = 0; i < NU; ++i)
+        }
+        for (int i = 0; i < NU; ++i) {
             control_map[Model::control_names[i]] = i;
-        for (int i = 0; i < NP; ++i)
+        }
+        for (int i = 0; i < NP; ++i) {
             param_map[Model::param_names[i]] = i;
+        }
     }
 
     // Reset Function
@@ -162,8 +168,9 @@ public:
         last_dual_inf = 0.0;
         slack_reset_consecutive_count = 0;
         // 2. Reset Components
-        if (line_search)
+        if (line_search) {
             line_search->reset();
+        }
         timer.reset();
 
         // 3. Reset Trajectory Data (Optional)
@@ -181,24 +188,27 @@ public:
     int get_state_idx(const std::string& name) const
     {
         auto it = state_map.find(name);
-        if (it != state_map.end())
+        if (it != state_map.end()) {
             return it->second;
+        }
         return -1;
     }
 
     int get_control_idx(const std::string& name) const
     {
         auto it = control_map.find(name);
-        if (it != control_map.end())
+        if (it != control_map.end()) {
             return it->second;
+        }
         return -1;
     }
 
     int get_param_idx(const std::string& name) const
     {
         auto it = param_map.find(name);
-        if (it != param_map.end())
+        if (it != param_map.end()) {
             return it->second;
+        }
         return -1;
     }
 
@@ -251,45 +261,52 @@ public:
     // 1. Initial State
     void set_initial_state(const std::vector<double>& x0)
     {
-        if (x0.size() != NX)
+        if (x0.size() != NX) {
             return;
+        }
         auto& kp = trajectory[0];
-        for (int i = 0; i < NX; ++i)
+        for (int i = 0; i < NX; ++i) {
             kp.x(i) = x0[i];
+        }
     }
 
     void set_initial_state(const std::string& name, double value)
     {
         int idx = get_state_idx(name);
-        if (idx != -1)
+        if (idx != -1) {
             trajectory[0].x(idx) = value;
-        else
+        } else {
             std::cerr << "Warning: Unknown state " << name << "\n";
+        }
     }
 
     // 2. Parameters
     void set_parameter(int stage, int idx, double value)
     {
-        if (stage > N || stage < 0)
+        if (stage > N || stage < 0) {
             return;
-        if (idx >= NP || idx < 0)
+        }
+        if (idx >= NP || idx < 0) {
             return;
+        }
         trajectory[stage].p(idx) = value;
     }
 
     void set_parameter(int stage, const std::string& name, double value)
     {
         int idx = get_param_idx(name);
-        if (idx != -1)
+        if (idx != -1) {
             set_parameter(stage, idx, value);
-        else
+        } else {
             std::cerr << "Warning: Unknown param " << name << "\n";
+        }
     }
 
     void set_global_parameter(int idx, double value)
     {
-        if (idx >= NP || idx < 0)
+        if (idx >= NP || idx < 0) {
             return;
+        }
         for (int k = 0; k <= N; ++k) {
             trajectory[k].p(idx) = value;
         }
@@ -298,58 +315,66 @@ public:
     void set_global_parameter(const std::string& name, double value)
     {
         int idx = get_param_idx(name);
-        if (idx != -1)
+        if (idx != -1) {
             set_global_parameter(idx, value);
-        else
+        } else {
             std::cerr << "Warning: Unknown param " << name << "\n";
+        }
     }
 
     double get_parameter(int stage, int idx) const
     {
-        if (stage > N || stage < 0 || idx >= NP || idx < 0)
+        if (stage > N || stage < 0 || idx >= NP || idx < 0) {
             return 0.0;
+        }
         return trajectory[stage].p(idx);
     }
 
     double get_parameter(int stage, const std::string& name) const
     {
         int idx = get_param_idx(name);
-        if (idx != -1)
+        if (idx != -1) {
             return get_parameter(stage, idx);
+        }
         return 0.0;
     }
 
     std::vector<double> get_parameters(int stage) const
     {
-        if (stage > N || stage < 0)
+        if (stage > N || stage < 0) {
             return {};
+        }
         const auto& kp = trajectory[stage];
         std::vector<double> res(NP);
-        for (int i = 0; i < NP; ++i)
+        for (int i = 0; i < NP; ++i) {
             res[i] = kp.p(i);
+        }
         return res;
     }
 
     // 3. State Access
     void set_state_guess(int stage, int idx, double value)
     {
-        if (stage > N || stage < 0 || idx >= NX || idx < 0)
+        if (stage > N || stage < 0 || idx >= NX || idx < 0) {
             return;
+        }
         trajectory[stage].x(idx) = value;
     }
 
     void set_state_guess(int stage, const std::string& name, double value)
     {
         int idx = get_state_idx(name);
-        if (idx != -1)
+        if (idx != -1) {
             set_state_guess(stage, idx, value);
+        }
     }
 
     void set_state_guess_traj(const std::string& name, const std::vector<double>& values)
     {
         int idx = get_state_idx(name);
-        if (idx == -1)
+        if (idx == -1) {
             return;
+        }
         int count = std::min((int)values.size(), N + 1);
         for (int k = 0; k < count; ++k) {
             trajectory[k].x(idx) = values[k];
@@ -359,53 +384,61 @@ public:
     std::vector<double> get_state_traj(const std::string& name) const
     {
         int idx = get_state_idx(name);
-        if (idx == -1)
+        if (idx == -1) {
             return {};
+        }
         std::vector<double> res;
         res.reserve(N + 1);
-        for (int k = 0; k <= N; ++k)
+        for (int k = 0; k <= N; ++k) {
             res.push_back(trajectory[k].x(idx));
+        }
         return res;
     }
 
     std::vector<double> get_state(int stage) const
     {
-        if (stage > N || stage < 0)
+        if (stage > N || stage < 0) {
             return {};
+        }
         const auto& kp = trajectory[stage];
         std::vector<double> res(NX);
-        for (int i = 0; i < NX; ++i)
+        for (int i = 0; i < NX; ++i) {
             res[i] = kp.x(i);
+        }
         return res;
     }
 
     double get_state(int stage, int idx) const
     {
-        if (stage > N || stage < 0 || idx >= NX || idx < 0)
+        if (stage > N || stage < 0 || idx >= NX || idx < 0) {
             return 0.0;
+        }
         return trajectory[stage].x(idx);
     }
 
     // 4. Control Access
     void set_control_guess(int stage, int idx, double value)
     {
-        if (stage >= N || stage < 0 || idx >= NU || idx < 0)
+        if (stage >= N || stage < 0 || idx >= NU || idx < 0) {
             return;
+        }
         trajectory[stage].u(idx) = value;
     }
 
     void set_control_guess(int stage, const std::string& name, double value)
     {
         int idx = get_control_idx(name);
-        if (idx != -1)
+        if (idx != -1) {
             set_control_guess(stage, idx, value);
+        }
     }
 
     void set_control_guess_traj(const std::string& name, const std::vector<double>& values)
     {
         int idx = get_control_idx(name);
-        if (idx == -1)
+        if (idx == -1) {
             return;
+        }
         int count = std::min((int)values.size(), N);
         for (int k = 0; k < count; ++k) {
             trajectory[k].u(idx) = values[k];
@@ -415,89 +448,103 @@ public:
     std::vector<double> get_control_traj(const std::string& name) const
     {
         int idx = get_control_idx(name);
-        if (idx == -1)
+        if (idx == -1) {
             return {};
+        }
         std::vector<double> res;
         res.reserve(N);
-        for (int k = 0; k < N; ++k)
+        for (int k = 0; k < N; ++k) {
             res.push_back(trajectory[k].u(idx));
+        }
         return res;
     }
 
     std::vector<double> get_control(int stage) const
     {
-        if (stage >= N || stage < 0)
+        if (stage >= N || stage < 0) {
             return {};
+        }
         const auto& kp = trajectory[stage];
         std::vector<double> res(NU);
-        for (int i = 0; i < NU; ++i)
+        for (int i = 0; i < NU; ++i) {
             res[i] = kp.u(i);
+        }
         return res;
     }
 
     double get_control(int stage, int idx) const
     {
-        if (stage >= N || stage < 0 || idx >= NU || idx < 0)
+        if (stage >= N || stage < 0 || idx >= NU || idx < 0) {
             return 0.0;
+        }
         return trajectory[stage].u(idx);
     }
 
     // 5. Slack / Dual Access
     void set_slack_guess(int stage, int idx, double value)
     {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) {
             return;
+        }
         trajectory[stage].s(idx) = value;
     }
 
     void set_dual_guess(int stage, int idx, double value)
     {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) {
             return;
+        }
         trajectory[stage].lam(idx) = value;
     }
 
     std::vector<double> get_slack(int stage) const
     {
-        if (stage > N || stage < 0)
+        if (stage > N || stage < 0) {
             return {};
+        }
         const auto& kp = trajectory[stage];
         std::vector<double> res(NC);
-        for (int i = 0; i < NC; ++i)
+        for (int i = 0; i < NC; ++i) {
             res[i] = kp.s(i);
+        }
         return res;
     }
 
     std::vector<double> get_dual(int stage) const
     {
-        if (stage > N || stage < 0)
+        if (stage > N || stage < 0) {
             return {};
+        }
         const auto& kp = trajectory[stage];
         std::vector<double> res(NC);
-        for (int i = 0; i < NC; ++i)
+        for (int i = 0; i < NC; ++i) {
             res[i] = kp.lam(i);
+        }
         return res;
     }
 
     double get_slack(int stage, int idx) const
     {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) {
             return 0.0;
+        }
         return trajectory[stage].s(idx);
     }
 
     double get_dual(int stage, int idx) const
     {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) {
             return 0.0;
+        }
         return trajectory[stage].lam(idx);
     }
 
     // 6. Cost Access
     double get_stage_cost(int stage) const
     {
-        if (stage > N || stage < 0)
+        if (stage > N || stage < 0) {
             return 0.0;
+        }
         return trajectory[stage].cost;
     }
 
@@ -509,8 +556,9 @@ public:
     // Helper to get constraint value
     double get_constraint_val(int stage, int idx) const
     {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0)
+        if (stage > N || stage < 0 || idx >= NC || idx < 0) {
             return 0.0;
+        }
         return trajectory[stage].g_val(idx);
     }
 
@@ -520,13 +568,15 @@ public:
             std::cerr << "Warning: DT vector too large.\n";
         }
         int count = std::min((int)dts.size(), N);
-        for (int i = 0; i < count; ++i)
+        for (int i = 0; i < count; ++i) {
             dt_traj[i] = dts[i];
+        }
 
         // [FIX] Initialize remaining steps to avoid garbage values
         double fill_val = (count > 0) ? dts[count - 1] : config.default_dt;
-        for (int i = count; i < MAX_N; ++i)
+        for (int i = count; i < MAX_N; ++i) {
             dt_traj[i] = fill_val;
+        }
     }
 
     void set_dt(double dt) { dt_traj.fill(dt); }
@@ -536,8 +586,8 @@ public:
         auto& traj = trajectory.active();
         for (int k = 0; k < N; ++k) {
             double current_dt = dt_traj[k];
-            traj[k + 1].x
-                = detail::dispatch_integrate<Model>(traj[k].x, traj[k].u, traj[k].p, current_dt, config.integrator, config.newton_config);
+            traj[k + 1].x = detail::dispatch_integrate<Model>(traj[k].x, traj[k].u, traj[k].p,
+                current_dt, config.integrator, config.newton_config);
         }
     }
 
@@ -578,13 +628,16 @@ private:
         }
         case BarrierStrategy::MEHROTRA: {
             double ratio = avg_gap / mu;
-            if (ratio > 1.0)
+            if (ratio > 1.0) {
                 ratio = 1.0;
+            }
             double sigma = std::pow(ratio, 3);
-            if (sigma < 0.05)
+            if (sigma < 0.05) {
                 sigma = 0.05;
-            if (sigma > 0.8)
+            }
+            if (sigma > 0.8) {
                 sigma = 0.8;
+            }
             double next_mu = std::max(config.mu_final, mu * sigma);
             mu = next_mu;
             break;
@@ -600,8 +653,9 @@ private:
         return;
 #endif
 
-        if (config.print_level < PrintLevel::ITER)
+        if (config.print_level < PrintLevel::ITER) {
             return;
+        }
 
         std::stringstream ss;
         if (header) {
@@ -629,8 +683,9 @@ private:
             const auto& kp = traj[k];
             total_cost += kp.cost;
             for (int i = 0; i < NC; ++i) {
-                if (kp.s(i) < min_slack)
+                if (kp.s(i) < min_slack) {
                     min_slack = kp.s(i);
+                }
             }
             // q_bar contains Vx (cost-to-go gradient / dynamics multiplier).
             // It is NOT a residual and should not be zero.
@@ -638,8 +693,9 @@ private:
             double g_norm = 0.0; // MatOps::norm_inf(kp.q_bar);
             double r_norm = MatOps::norm_inf(kp.r_bar);
             double dual = std::max(g_norm, r_norm);
-            if (dual > max_dual_inf)
+            if (dual > max_dual_inf) {
                 max_dual_inf = dual;
+            }
         }
 
         ss << std::left << std::setw(5) << current_iter << std::scientific << std::setprecision(3)
@@ -660,15 +716,17 @@ private:
         // Only checks fields that are sources of NaN: search directions, cost, Jacobians.
         for (int k = 0; k <= N; ++k) {
             const auto& kp = t[k];
-            if (MatOps::has_nan(kp.dx) || MatOps::has_nan(kp.du)
-                || MatOps::has_nan(kp.ds) || MatOps::has_nan(kp.dlam)
-                || MatOps::has_nan(kp.dsoft_s))
+            if (MatOps::has_nan(kp.dx) || MatOps::has_nan(kp.du) || MatOps::has_nan(kp.ds)
+                || MatOps::has_nan(kp.dlam) || MatOps::has_nan(kp.dsoft_s)) {
                 return true;
-            if (!MatOps::is_finite_scalar(kp.cost))
+            }
+            if (!MatOps::is_finite_scalar(kp.cost)) {
                 return true;
+            }
             // Dynamics outputs — NaN here propagates into defect checks/Riccati.
-            if (MatOps::has_nan(kp.f_resid) || MatOps::has_nan(kp.A) || MatOps::has_nan(kp.B))
+            if (MatOps::has_nan(kp.f_resid) || MatOps::has_nan(kp.A) || MatOps::has_nan(kp.B)) {
                 return true;
+            }
         }
         return false;
     }
@@ -677,14 +735,17 @@ private:
     {
         for (int k = 0; k <= N; ++k) {
             const auto& kp = t[k];
-            if (MatOps::has_nan(kp.x) || MatOps::has_nan(kp.u) || MatOps::has_nan(kp.p))
+            if (MatOps::has_nan(kp.x) || MatOps::has_nan(kp.u) || MatOps::has_nan(kp.p)) {
                 return false;
-            if (MatOps::has_nan(kp.s) || MatOps::has_nan(kp.lam))
+            }
+            if (MatOps::has_nan(kp.s) || MatOps::has_nan(kp.lam)) {
                 return false;
+            }
 
             for (int i = 0; i < NC; ++i) {
-                if (kp.s(i) <= 0.0 || kp.lam(i) <= 0.0)
+                if (kp.s(i) <= 0.0 || kp.lam(i) <= 0.0) {
                     return false;
+                }
 
                 double w = 0.0;
                 int type = 0;
@@ -696,10 +757,12 @@ private:
                 }
 
                 if (type == 1 && w > 1e-6) {
-                    if (!MatOps::is_finite_scalar(kp.soft_s(i)) || kp.soft_s(i) <= 0.0)
+                    if (!MatOps::is_finite_scalar(kp.soft_s(i)) || kp.soft_s(i) <= 0.0) {
                         return false;
-                    if (w - kp.lam(i) <= config.min_barrier_slack)
+                    }
+                    if (w - kp.lam(i) <= config.min_barrier_slack) {
                         return false;
+                    }
                 }
             }
         }
@@ -708,8 +771,9 @@ private:
 
     bool feasibility_restoration()
     {
-        if (config.print_level >= PrintLevel::DEBUG)
+        if (config.print_level >= PrintLevel::DEBUG) {
             MLOG_DEBUG("Entering Feasibility Restoration Phase.");
+        }
         double saved_mu = mu;
         double saved_reg = reg;
         mu = config.restoration_mu;
@@ -721,7 +785,8 @@ private:
         for (int r_iter = 0; r_iter < config.max_restoration_iters; ++r_iter) {
             for (int k = 0; k <= N; ++k) {
                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
+                detail::dispatch_compute_dynamics<Model>(
+                    traj[k], config.integrator, current_dt, config.newton_config);
                 Model::compute_constraints(traj[k]);
 
                 traj[k].Q.setIdentity();
@@ -777,10 +842,12 @@ private:
                     double ds = traj[k].ds(i);
                     double lam = traj[k].lam(i);
                     double dlam = traj[k].dlam(i);
-                    if (ds < 0)
+                    if (ds < 0) {
                         alpha = std::min(alpha, -config.restoration_alpha * s / ds);
-                    if (dlam < 0)
+                    }
+                    if (dlam < 0) {
                         alpha = std::min(alpha, -config.restoration_alpha * lam / dlam);
+                    }
 
                     // For L1 soft constraints, maintain:
                     // - soft_s > 0
@@ -796,8 +863,9 @@ private:
                     if (type == 1 && w > 1e-6) {
                         const double soft_s = traj[k].soft_s(i);
                         const double dsoft_s = traj[k].dsoft_s(i);
-                        if (dsoft_s < 0)
+                        if (dsoft_s < 0) {
                             alpha = std::min(alpha, -config.restoration_alpha * soft_s / dsoft_s);
+                        }
 
                         if (dlam > 0) {
                             const double gap = (w - lam) - config.min_barrier_slack;
@@ -830,8 +898,9 @@ private:
         for (int k = 0; k <= N; ++k) {
             for (int i = 0; i < NC; ++i) {
                 // Ensure s is positive
-                if (traj[k].s(i) < 1e-9)
+                if (traj[k].s(i) < 1e-9) {
                     traj[k].s(i) = 1e-9;
+                }
 
                 double w = 0.0;
                 int type = 0;
@@ -849,8 +918,9 @@ private:
                 if (type == 1 && w > 1e-6) {
                     // Keep lam strictly inside the dual box so barrier terms remain well-defined.
                     double lam_max = w - config.min_barrier_slack;
-                    if (lam_max < config.min_barrier_slack)
+                    if (lam_max < config.min_barrier_slack) {
                         lam_max = config.min_barrier_slack;
+                    }
                     traj[k].lam(i) = std::min(traj[k].lam(i), lam_max);
                     traj[k].lam(i) = std::max(traj[k].lam(i), lam_min);
 
@@ -904,8 +974,9 @@ public:
             // A. 完美收敛 -> 记录状态并跳出，交给 postsolve 复核
             if (step_stat == SolverStatus::OPTIMAL) {
                 loop_exit_status = SolverStatus::OPTIMAL;
-                if (config.print_level >= PrintLevel::INFO)
+                if (config.print_level >= PrintLevel::INFO) {
                     MLOG_INFO("Converged in " << iter + 1 << " iterations.");
+                }
                 break;
             }
 
@@ -926,8 +997,9 @@ public:
             // on objective stagnation, since IPM may still be progressing by reducing μ.
             // The intended use is to catch "μ frozen above μ_final" style stalls.
             double current_cost = 0.0;
-            for (int k = 0; k <= N; ++k)
+            for (int k = 0; k <= N; ++k) {
                 current_cost += trajectory.active()[k].cost;
+            }
 
             // 只有在满足一定可行性时，Cost 停滞才有意义
             // 使用上一步计算的 max_prim_inf (last_prim_inf)
@@ -985,8 +1057,9 @@ private:
                 const double s = traj[k].s(i);
                 const double lam = traj[k].lam(i);
                 double comp = std::abs(s * lam - mu);
-                if (comp > max_kkt_error)
+                if (comp > max_kkt_error) {
                     max_kkt_error = comp;
+                }
 
                 total_gap += s * lam;
                 total_gap_dim += 1;
@@ -1005,8 +1078,9 @@ private:
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - lam);
                     double comp_soft = std::abs(soft_s * soft_dual - mu);
-                    if (comp_soft > max_kkt_error)
+                    if (comp_soft > max_kkt_error) {
                         max_kkt_error = comp_soft;
+                    }
 
                     total_gap += soft_s * soft_dual;
                     total_gap_dim += 1;
@@ -1059,13 +1133,16 @@ private:
                 // Use new enum for exact/GN
                 aff_success = linear_solver->solve(
                     affine_traj, N, 0.0, reg, config.inertia_strategy, config);
-                if (aff_success)
+                if (aff_success) {
                     break;
-                if (reg < config.reg_min)
+                }
+                if (reg < config.reg_min) {
                     reg = config.reg_min;
+                }
                 reg *= config.reg_scale_up;
-                if (reg > config.reg_max)
+                if (reg > config.reg_max) {
                     reg = config.reg_max;
+                }
             }
 
             if (!aff_success) {
@@ -1086,13 +1163,15 @@ private:
 
                     if (ds < 0) {
                         double a = -s / ds;
-                        if (a < alpha_aff)
+                        if (a < alpha_aff) {
                             alpha_aff = a;
+                        }
                     }
                     if (dlam < 0) {
                         double a = -lam / dlam;
-                        if (a < alpha_aff)
+                        if (a < alpha_aff) {
                             alpha_aff = a;
+                        }
                     }
 
                     // L1 soft: soft_s > 0 and (w - lam) > 0
@@ -1109,16 +1188,18 @@ private:
                         double dsoft_s = affine_traj[k].dsoft_s(i);
                         if (dsoft_s < 0) {
                             double a = -soft_s / dsoft_s;
-                            if (a < alpha_aff)
+                            if (a < alpha_aff) {
                                 alpha_aff = a;
+                            }
                         }
                         // soft dual: (w - lam) with direction -dlam
                         double soft_dual = w - lam;
                         double dsoft_dual = -dlam; // d(w-lam)/dalpha = -dlam
                         if (dsoft_dual < 0) {
                             double a = -soft_dual / dsoft_dual;
-                            if (a < alpha_aff)
+                            if (a < alpha_aff) {
                                 alpha_aff = a;
+                            }
                         }
                     }
                 }
@@ -1133,10 +1214,12 @@ private:
                 for (int i = 0; i < NC; ++i) {
                     double s_new = traj[k].s(i) + alpha_aff * affine_traj[k].ds(i);
                     double lam_new = traj[k].lam(i) + alpha_aff * affine_traj[k].dlam(i);
-                    if (s_new < 0)
+                    if (s_new < 0) {
                         s_new = 1e-8; // Should not happen with fraction_to_boundary
-                    if (lam_new < 0)
+                    }
+                    if (lam_new < 0) {
                         lam_new = 1e-8;
+                    }
                     total_comp += s_new * lam_new;
                     total_dim++;
 
@@ -1150,12 +1233,15 @@ private:
                         }
                     }
                     if (type == 1 && w > 1e-6) {
-                        double soft_s_new = traj[k].soft_s(i) + alpha_aff * affine_traj[k].dsoft_s(i);
+                        double soft_s_new
+                            = traj[k].soft_s(i) + alpha_aff * affine_traj[k].dsoft_s(i);
                         double soft_dual_new = w - lam_new;
-                        if (soft_s_new < 0)
+                        if (soft_s_new < 0) {
                             soft_s_new = 1e-8;
-                        if (soft_dual_new < 0)
+                        }
+                        if (soft_dual_new < 0) {
                             soft_dual_new = 1e-8;
+                        }
                         total_comp += soft_s_new * soft_dual_new;
                         total_dim++;
                     }
@@ -1201,14 +1287,17 @@ private:
                 }
             }
 
-            if (sigma > 1.0)
+            if (sigma > 1.0) {
                 sigma = 1.0;
-            if (sigma < 1e-4)
+            }
+            if (sigma < 1e-4) {
                 sigma = 1e-4; // Prevent too small sigma
+            }
 
             double mu_target = sigma * mu_curr;
-            if (mu_target < config.mu_final)
+            if (mu_target < config.mu_final) {
                 mu_target = config.mu_final; // Enforce lower bound
+            }
 
             // 2. Corrector Step
             // Solve with mu_target and affine correction term
@@ -1217,42 +1306,50 @@ private:
                 for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
                     solve_success = linear_solver->solve(
                         traj, N, mu_target, reg, config.inertia_strategy, config, &affine_traj);
-                    if (solve_success)
+                    if (solve_success) {
                         break;
+                    }
                     // If failed, regularize and retry (note: reg might have increased in affine
                     // step already)
                     reg *= config.reg_scale_up;
-                    if (reg > config.reg_max)
+                    if (reg > config.reg_max) {
                         reg = config.reg_max;
+                    }
                 }
             } else {
                 // Predictor only (just update mu but don't add correction term)
                 for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
                     solve_success = linear_solver->solve(
                         traj, N, mu_target, reg, config.inertia_strategy, config);
-                    if (solve_success)
+                    if (solve_success) {
                         break;
+                    }
                     reg *= config.reg_scale_up;
-                    if (reg > config.reg_max)
+                    if (reg > config.reg_max) {
                         reg = config.reg_max;
+                    }
                 }
             }
 
-            if (solve_success)
+            if (solve_success) {
                 mu = mu_target;
+            }
 
         } else {
             // Standard IPM
             for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
                 solve_success
                     = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
-                if (solve_success)
+                if (solve_success) {
                     break;
-                if (reg < config.reg_min)
+                }
+                if (reg < config.reg_min) {
                     reg = config.reg_min;
+                }
                 reg *= config.reg_scale_up;
-                if (reg > config.reg_max)
+                if (reg > config.reg_max) {
                     reg = config.reg_max;
+                }
             }
         }
 
@@ -1285,16 +1382,18 @@ private:
 
         timer.stop();
 
-        if (!solve_success)
+        if (!solve_success) {
             return SolverStatus::NUMERICAL_ERROR;
+        }
 
         // Quick NaN check on search directions — catches Riccati producing NaN.
         // Single-element check: if NaN appears, it propagates to all elements
         // within 1-2 iterations, so checking dx[0]/du[0] is sufficient.
         // This replaces the old full has_nans() scan that ran before Riccati.
         if (MatOps::is_nan_scalar(traj[0].dx(0)) || MatOps::is_nan_scalar(traj[0].du(0))) {
-            if (config.print_level >= PrintLevel::INFO)
+            if (config.print_level >= PrintLevel::INFO) {
                 MLOG_ERROR("Numerical Error: NaN detected in search direction.");
+            }
             return SolverStatus::NUMERICAL_ERROR;
         }
 
@@ -1304,14 +1403,16 @@ private:
         max_dual_inf = 0.0;
         for (int k = 0; k <= N; ++k) {
             double r_norm = MatOps::norm_inf(traj[k].r_bar);
-            if (r_norm > max_dual_inf)
+            if (r_norm > max_dual_inf) {
                 max_dual_inf = r_norm;
+            }
         }
 
         // Convergence check (Primal + Dual + Mu) using the freshly computed dual residual.
         // The final convergence verdict is always made in postsolve() with fresh data.
-        if (current_iter > 1 && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error))
+        if (current_iter > 1 && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) {
             return SolverStatus::OPTIMAL;
+        }
 
         // Notify the line search if μ decreased during this step so it can
         // discard barrier-dependent history (filter entries, ratcheted merit_nu).
@@ -1365,9 +1466,10 @@ private:
             // loop), this time we force skipping Step 1 and go directly to Step 2 (Restoration).
             if (config.enable_slack_reset && alpha < config.slack_reset_trigger
                 && slack_reset_consecutive_count < 1) {
-                if (config.print_level >= PrintLevel::DEBUG)
+                if (config.print_level >= PrintLevel::DEBUG) {
                     MLOG_DEBUG("Triggering Slack Reset (Attempt "
                         << slack_reset_consecutive_count + 1 << ").");
+                }
 
                 apply_slack_reset_(traj_after_ls);
                 // Try one solve to see if a valid direction can be obtained
@@ -1379,8 +1481,9 @@ private:
                     slack_reset_consecutive_count++;
                 }
             } else if (config.enable_slack_reset && slack_reset_consecutive_count >= 1) {
-                if (config.print_level >= PrintLevel::DEBUG)
+                if (config.print_level >= PrintLevel::DEBUG) {
                     MLOG_DEBUG("Skipping Slack Reset to prevent cycle. Forcing Restoration.");
+                }
             }
 
             // 3. Step 2: Feasibility Restoration (If Step 1 failed or was skipped)
@@ -1416,8 +1519,9 @@ private:
             for (int k = 0; k <= N; ++k) {
                 // Use MatOps::norm_inf to support both Eigen and MiniMatrix
                 double dx_norm = MatOps::norm_inf(trajectory.active()[k].dx);
-                if (dx_norm > max_dx)
+                if (dx_norm > max_dx) {
                     max_dx = dx_norm;
+                }
             }
             // Use unscaled Newton step (max_dx) to check stationarity.
             // Using (alpha * max_dx) is dangerous because small alpha (blocked step)
@@ -1441,8 +1545,9 @@ private:
     {
         // [Enable/Disable Profiling]
         timer.enabled = config.enable_profiling;
-        if (line_search)
+        if (line_search) {
             line_search->reset();
+        }
 
         current_iter = 0;
         slack_reset_consecutive_count = 0;
@@ -1495,8 +1600,9 @@ private:
                             lam_val = w / 2.0;
                         } else {
                             double delta = b * b - 4 * a * c;
-                            if (delta < 0)
+                            if (delta < 0) {
                                 delta = 0;
+                            }
                             lam_val = (-b + std::sqrt(delta)) / (2 * a);
                         }
 
@@ -1543,8 +1649,9 @@ private:
             return SolverStatus::NUMERICAL_ERROR;
         }
         if (config.print_level >= PrintLevel::INFO) {
-            if (loop_status == SolverStatus::UNSOLVED)
+            if (loop_status == SolverStatus::UNSOLVED) {
                 MLOG_INFO("Max iterations or stagnation.");
+            }
         }
         // [Fix 2 Logic] 强制刷新导数
         // 无论是因为收敛还是因为耗尽步数退出，我们都重新计算一次精确的残差，
@@ -1558,15 +1665,18 @@ private:
 
             // 2. Check NaNs (bit-level, works under -ffast-math)
             for (int i = 0; i < NC; ++i) {
-                if (MatOps::is_nan_scalar(traj[k].g_val(i)) || MatOps::is_nan_scalar(traj[k].s(i)))
+                if (MatOps::is_nan_scalar(traj[k].g_val(i))
+                    || MatOps::is_nan_scalar(traj[k].s(i))) {
                     return SolverStatus::NUMERICAL_ERROR;
+                }
             }
 
             // 3. KKT complementarity (including L1-soft secondary pair).
             for (int i = 0; i < NC; ++i) {
                 double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu);
-                if (comp > max_kkt_error)
+                if (comp > max_kkt_error) {
                     max_kkt_error = comp;
+                }
 
                 double w = 0.0;
                 int type = 0;
@@ -1581,8 +1691,9 @@ private:
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - traj[k].lam(i));
                     double comp_soft = std::abs(soft_s * soft_dual - mu);
-                    if (comp_soft > max_kkt_error)
+                    if (comp_soft > max_kkt_error) {
                         max_kkt_error = comp_soft;
+                    }
                 }
             }
         }
@@ -1602,8 +1713,9 @@ private:
             max_dual_inf = 0.0;
             for (int k = 0; k <= N; ++k) {
                 const double r_norm = MatOps::norm_inf(traj[k].r_bar);
-                if (r_norm > max_dual_inf)
+                if (r_norm > max_dual_inf) {
                     max_dual_inf = r_norm;
+                }
             }
         }
         // [最终评级]
@@ -1661,10 +1773,12 @@ private:
                     }
                     if (type == 1 && w > 1e-6) {
                         double lam_max = w - config.min_barrier_slack;
-                        if (lam_max < config.min_barrier_slack)
+                        if (lam_max < config.min_barrier_slack) {
                             lam_max = config.min_barrier_slack;
-                        if (kp.lam(i) > lam_max)
+                        }
+                        if (kp.lam(i) > lam_max) {
                             kp.lam(i) = lam_max;
+                        }
                         // Keep soft slack on the central path so barrier terms remain
                         // well-defined.
                         kp.soft_s(i) = std::max(config.min_barrier_slack, mu / (w - kp.lam(i)));
@@ -1701,16 +1815,18 @@ private:
                 } else { // Hard
                     viol = std::abs(kp.g_val(i) + kp.s(i));
                 }
-                if (viol > max_viol)
+                if (viol > max_viol) {
                     max_viol = viol;
+                }
             }
 
             // 2. Dynamics defect (multiple shooting): x_{k+1} - f(x_k, u_k)
             if (k < N) {
                 for (int j = 0; j < NX; ++j) {
                     double defect = std::abs(traj[k + 1].x(j) - kp.f_resid(j));
-                    if (defect > max_viol)
+                    if (defect > max_viol) {
                         max_viol = defect;
+                    }
                 }
             }
         }
@@ -1732,8 +1848,9 @@ private:
 
     void ensure_solver_components_ready()
     {
-        if (!components_dirty)
+        if (!components_dirty) {
             return;
+        }
         rebuild_solver_components();
         components_dirty = false;
     }

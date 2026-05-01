@@ -137,7 +137,8 @@ TEST(FeaturesTest, GPUBackendFallback)
     SolverStatus status = solver.solve();
 
     EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE)
-        << "GPU fallback should produce a valid solution (status=" << static_cast<int>(status) << ")";
+        << "GPU fallback should produce a valid solution (status=" << static_cast<int>(status)
+        << ")";
 }
 
 // =============================================================================

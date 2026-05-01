@@ -8,8 +8,7 @@
 namespace minisolver {
 
 // Continuous Jacobians of f(x, u, p) — the ODE right-hand side.
-template <typename T, int NX, int NU>
-struct ContinuousJacobians {
+template <typename T, int NX, int NU> struct ContinuousJacobians {
     MSMat<T, NX, NX> Jx; // df/dx
     MSMat<T, NX, NU> Ju; // df/du
 };
@@ -18,9 +17,7 @@ struct ContinuousJacobians {
 // Model must provide: static MSVec<T,NX> dynamics_continuous(x, u, p)
 template <typename Model, typename T>
 ContinuousJacobians<T, Model::NX, Model::NU> compute_numerical_jacobian(
-    const MSVec<T, Model::NX>& x,
-    const MSVec<T, Model::NU>& u,
-    const MSVec<T, Model::NP>& p,
+    const MSVec<T, Model::NX>& x, const MSVec<T, Model::NU>& u, const MSVec<T, Model::NP>& p,
     double eps = 1e-7)
 {
     constexpr int NX = Model::NX;

@@ -34,16 +34,19 @@ public:
         candidate_ptr = &memory_B;
 
         // Initialize
-        for (auto& kp : *active_ptr)
+        for (auto& kp : *active_ptr) {
             kp.initialize_defaults();
-        for (auto& kp : *candidate_ptr)
+        }
+        for (auto& kp : *candidate_ptr) {
             kp.initialize_defaults();
+        }
     }
 
     void resize(int new_n)
     {
-        if (new_n < 0 || new_n > MAX_N)
+        if (new_n < 0 || new_n > MAX_N) {
             return; // Error handling needed
+        }
         if (new_n > N) {
             // Initialize newly exposed tail knots in both buffers to avoid stale state
             // resurfacing after shrink -> grow.
