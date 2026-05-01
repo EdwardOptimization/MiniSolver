@@ -100,7 +100,8 @@ Completed after the initial loop extraction:
   `DirectionResult`, `GlobalizationResult`, `LoopExitDecision`, and
   `PostsolveResiduals`.
 - A test-only reference config helper exists in `tests/test_reference_config.h`
-  and is exercised by the analytical QP correctness test.
+  and is exercised by analytical QP correctness tests, including a
+  reference/default agreement check.
 - The first useful internal kernels are extracted:
   `BarrierUpdateKernel`, `TerminationKernel`, and `InitializationKernel`.
 
@@ -350,6 +351,8 @@ Validation:
 Exit criteria:
 
 - Every advanced default has an obvious lower-complexity comparison path.
+- At least one simple analytical problem checks default behavior against the
+  reference config.
 
 ### Phase 4: Strategy Seams For Real Variation Points
 
@@ -448,13 +451,13 @@ Do not mix:
 
 ## Near-Term Next Steps
 
-1. Add small internal phase result structs only where current reference
-   parameters are awkward.
-2. Move `mu`, `reg`, and iteration metrics into `SolverContext` behind a minimal
-   internal API.
-3. Add a reference-config helper in tests first, then decide whether it deserves
-   public documentation.
-4. Convert barrier update into the first internal kernel only after context state
-   movement is stable.
-5. Re-run nmpc-bench after context/phase-result work to ensure no runtime
-   regression from the refactor.
+1. Keep the current lite build-state boundary stable; do not expand it into a
+   public strategy framework without a second real implementation.
+2. Add zero-malloc instrumentation before claiming the new build boundary is
+   hard-real-time safe under all supported diagnostics settings.
+3. Extend reference/default checks only when the problem has a clear correctness
+   oracle or stable reference metric.
+4. Consider `RestorationKernel` only after a focused test shows the current
+   restoration coupling blocks a correctness or debuggability fix.
+5. Re-run nmpc-bench after any further phase-boundary change to ensure no
+   runtime regression from structural refactors.

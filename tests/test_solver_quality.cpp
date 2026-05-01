@@ -13,6 +13,7 @@
 
 #include "../examples/01_car_tutorial/generated/car_model.h"
 #include "minisolver/solver/solver.h"
+#include "test_reference_config.h"
 #include <cmath>
 #include <gtest/gtest.h>
 #include <numeric>
@@ -359,10 +360,8 @@ TEST(SolverQualityTest, AnalyticalSolutionUnconstrained)
     double dt = 0.1;
     double x0 = 5.0;
 
-    SolverConfig config;
-    config.print_level = PrintLevel::NONE;
+    SolverConfig config = minisolver::test::make_reference_solver_config();
     config.max_iters = 100;
-    config.barrier_strategy = BarrierStrategy::MONOTONE;
 
     MiniSolver<SimpleQPModel, 30> solver(N, Backend::CPU_SERIAL, config);
     solver.set_dt(dt);
@@ -400,6 +399,54 @@ TEST(SolverQualityTest, AnalyticalSolutionUnconstrained)
         double x_next_actual = solver.get_state(k + 1, 0);
         EXPECT_NEAR(x_next_actual, x_next_expected, 1e-6) << "Dynamics violated at k=" << k;
     }
+}
+
+TEST(SolverQualityTest, ReferenceAndDefaultAgreeOnSimpleQP)
+{
+    constexpr int N = 20;
+    const double dt = 0.1;
+    const double x0 = 5.0;
+
+    struct SolveSummary {
+        SolverStatus status = SolverStatus::UNSOLVED;
+        double total_cost = 0.0;
+        double terminal_x = 0.0;
+        double first_u = 0.0;
+    };
+
+    auto solve_with_config = [&](SolverConfig config) {
+        config.print_level = PrintLevel::NONE;
+        config.enable_profiling = false;
+        config.max_iters = 100;
+
+        MiniSolver<SimpleQPModel, 30> solver(N, Backend::CPU_SERIAL, config);
+        solver.set_dt(dt);
+        solver.set_initial_state("x", x0);
+        solver.rollout_dynamics();
+
+        SolveSummary summary;
+        summary.status = solver.solve();
+        for (int k = 0; k <= N; ++k) {
+            summary.total_cost += solver.get_stage_cost(k);
+        }
+        summary.terminal_x = solver.get_state(N, 0);
+        summary.first_u = solver.get_control(0, 0);
+        return summary;
+    };
+
+    SolverConfig reference_config = minisolver::test::make_reference_solver_config();
+    SolverConfig default_config;
+
+    const SolveSummary reference = solve_with_config(reference_config);
+    const SolveSummary default_result = solve_with_config(default_config);
+
+    ASSERT_TRUE(reference.status == SolverStatus::OPTIMAL || reference.status == SolverStatus::FEASIBLE);
+    ASSERT_TRUE(
+        default_result.status == SolverStatus::OPTIMAL || default_result.status == SolverStatus::FEASIBLE);
+
+    EXPECT_NEAR(default_result.total_cost, reference.total_cost, 1e-2);
+    EXPECT_NEAR(default_result.terminal_x, reference.terminal_x, 1e-3);
+    EXPECT_NEAR(default_result.first_u, reference.first_u, 1e-3);
 }
 
 // =============================================================================
