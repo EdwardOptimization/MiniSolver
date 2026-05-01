@@ -2,6 +2,7 @@
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include "minisolver/integrator/implicit_integrator.h"
+#include "minisolver/integrator/numerical_jacobian.h"
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -90,6 +91,141 @@ struct NonlinearDecayModel {
         }
     }
 };
+
+struct LargeScaleLinearJacobianModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> dynamics_continuous(
+        const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/)
+    {
+        MSVec<T, NX> xdot;
+        xdot(0) = static_cast<T>(3.0) * x(0) + static_cast<T>(2.0) * u(0);
+        return xdot;
+    }
+};
+
+TEST(NumericalJacobianTest, UsesScaleAwarePerturbationForLargeStates)
+{
+    MSVec<double, 1> x;
+    x(0) = 1e12;
+    MSVec<double, 1> u;
+    u(0) = -1e12;
+    MSVec<double, 0> p;
+
+    auto jac = compute_numerical_jacobian<LargeScaleLinearJacobianModel, double>(x, u, p);
+
+    EXPECT_NEAR(jac.Jx(0, 0), 3.0, 1e-9);
+    EXPECT_NEAR(jac.Ju(0, 0), 2.0, 1e-9);
+}
+
+struct SingularImplicitJacobianModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> dynamics_continuous(
+        const MSVec<T, NX>& x, const MSVec<T, NU>& /*u*/, const MSVec<T, NP>& /*p*/)
+    {
+        MSVec<T, NX> xdot;
+        xdot(0) = x(0);
+        return xdot;
+    }
+
+    template <typename T>
+    static ContinuousJacobians<T, NX, NU> jacobian_continuous(
+        const MSVec<T, NX>& /*x*/, const MSVec<T, NU>& /*u*/, const MSVec<T, NP>& /*p*/)
+    {
+        ContinuousJacobians<T, NX, NU> jac;
+        jac.Jx(0, 0) = static_cast<T>(1.0);
+        jac.Ju(0, 0) = static_cast<T>(0.0);
+        return jac;
+    }
+};
+
+TEST(ImplicitIntegratorTest, SingularJacobianMarksDynamicsInvalid)
+{
+    KnotPoint<double, 1, 1, 0, 0> kp;
+    kp.set_zero();
+    kp.x(0) = 1.0;
+
+    ImplicitIntegrator<SingularImplicitJacobianModel>::compute_dynamics(
+        kp, IntegratorType::EULER_IMPLICIT, 1.0);
+
+    EXPECT_TRUE(MatOps::has_nan(kp.A));
+    EXPECT_TRUE(MatOps::has_nan(kp.B));
+}
+
+TEST(ImplicitIntegratorTest, RejectsUnsupportedDirectIntegratorType)
+{
+    KnotPoint<double, 1, 1, 0, 0> kp;
+    kp.set_zero();
+    MSVec<double, 1> x;
+    x(0) = 1.0;
+    MSVec<double, 1> u;
+    u.setZero();
+    MSVec<double, 0> p;
+
+    EXPECT_THROW(ImplicitIntegrator<NonlinearDecayModel>::compute_dynamics(
+                     kp, IntegratorType::EULER_EXPLICIT, 0.1),
+        std::invalid_argument);
+    EXPECT_THROW(ImplicitIntegrator<NonlinearDecayModel>::integrate(
+                     x, u, p, 0.1, IntegratorType::EULER_EXPLICIT),
+        std::invalid_argument);
+}
+
+TEST(ImplicitIntegratorTest, FailedNewtonSolveInvalidatesDynamics)
+{
+    KnotPoint<double, 1, 1, 0, 0> kp;
+    kp.set_zero();
+    kp.x(0) = 1.0;
+
+    NewtonConfig cfg;
+    cfg.max_iters = 1;
+    cfg.tol = 1e-14;
+
+    ImplicitIntegrator<NonlinearDecayModel>::compute_dynamics(
+        kp, IntegratorType::EULER_IMPLICIT, 1.0, cfg);
+
+    EXPECT_TRUE(MatOps::has_nan(kp.f_resid));
+    EXPECT_TRUE(MatOps::has_nan(kp.A));
+    EXPECT_TRUE(MatOps::has_nan(kp.B));
+}
+
+TEST(ImplicitIntegratorTest, FailedNewtonSolveInvalidatesStandaloneIntegrate)
+{
+    MSVec<double, 1> x;
+    x(0) = 1.0;
+    MSVec<double, 1> u;
+    u.setZero();
+    MSVec<double, 0> p;
+
+    NewtonConfig cfg;
+    cfg.max_iters = 1;
+    cfg.tol = 1e-14;
+
+    auto z = ImplicitIntegrator<NonlinearDecayModel>::integrate(
+        x, u, p, 1.0, IntegratorType::EULER_IMPLICIT, cfg);
+
+    EXPECT_TRUE(MatOps::has_nan(z));
+}
 
 TEST(IntegratorTest, AccuracyComparison)
 {
@@ -230,6 +366,30 @@ TEST(ImplicitIntegratorTest, NewtonSolverConvergence)
 
     EXPECT_TRUE(converged);
     EXPECT_NEAR(x(0), std::sqrt(2.0), 1e-10);
+}
+
+TEST(ImplicitIntegratorTest, NewtonDetectsConvergenceAfterFinalStep)
+{
+    MSVec<double, 1> x;
+    x(0) = 0.0;
+
+    NewtonConfig cfg;
+    cfg.max_iters = 1;
+    cfg.tol = 1e-12;
+    cfg.regularization = 0.0;
+
+    NewtonSolver<double, 1> ns;
+    bool ok = ns.solve(
+        x,
+        [](const MSVec<double, 1>& z, MSVec<double, 1>& F, MSMat<double, 1, 1>& J) {
+            F(0) = z(0) - 1.0;
+            J(0, 0) = 1.0;
+        },
+        cfg,
+        false);
+
+    EXPECT_TRUE(ok);
+    EXPECT_NEAR(x(0), 1.0, 1e-12);
 }
 
 // --- Backward Euler accuracy: O(dt^2) ---

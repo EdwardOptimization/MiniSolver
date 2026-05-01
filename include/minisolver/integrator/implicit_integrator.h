@@ -6,6 +6,8 @@
 #include "minisolver/integrator/newton_solver.h"
 #include "minisolver/integrator/numerical_jacobian.h"
 
+#include <limits>
+#include <stdexcept>
 #include <type_traits>
 
 namespace minisolver {
@@ -80,7 +82,7 @@ public:
             compute_gauss_legendre_2(kp, dt, config);
             break;
         default:
-            break;
+            throw std::invalid_argument("ImplicitIntegrator received unsupported integrator type");
         }
     }
 
@@ -101,7 +103,9 @@ public:
                 F = z_in - x - Model::dynamics_continuous(m, u, p) * dt;
                 J = MSMat<double, NX, NX>::Identity() - jac.Jx * (dt * 0.5);
             };
-            NewtonSolver<double, NX> ns; ns.solve(z, eval, config);
+            NewtonSolver<double, NX> ns;
+            if (!ns.solve(z, eval, config))
+                return invalid_state();
         } else if (type == IntegratorType::RK4_IMPLICIT) {
             // Gauss-Legendre 2-stage: coupled 2*NX system
             constexpr int N2 = 2 * NX;
@@ -133,11 +137,13 @@ public:
                 J.template block<NX, NX>(NX, NX) = I_NX - jac2.Jx * (dt * a22);
             };
 
-            NewtonSolver<double, N2> ns; ns.solve(K, eval, config);
+            NewtonSolver<double, N2> ns;
+            if (!ns.solve(K, eval, config))
+                return invalid_state();
             auto k1 = K.template head<NX>();
             auto k2 = K.template tail<NX>();
             z = x + (k1 + k2) * (dt * 0.5);
-        } else {
+        } else if (type == IntegratorType::EULER_IMPLICIT) {
             // Backward Euler (default)
             auto eval = [&](const MSVec<double, NX>& z_in, MSVec<double, NX>& F,
                             MSMat<double, NX, NX>& J) {
@@ -145,7 +151,11 @@ public:
                 F = z_in - x - Model::dynamics_continuous(z_in, u, p) * dt;
                 J = MSMat<double, NX, NX>::Identity() - jac.Jx * dt;
             };
-            NewtonSolver<double, NX> ns; ns.solve(z, eval, config);
+            NewtonSolver<double, NX> ns;
+            if (!ns.solve(z, eval, config))
+                return invalid_state();
+        } else {
+            throw std::invalid_argument("ImplicitIntegrator received unsupported integrator type");
         }
         return z;
     }
@@ -173,6 +183,32 @@ private:
         return MatOps::lu_solve_matrix(M, I, M_inv);
     }
 
+    static void mark_jacobians_invalid(Knot& kp)
+    {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NX; ++j)
+                kp.A(i, j) = nan;
+            for (int j = 0; j < NU; ++j)
+                kp.B(i, j) = nan;
+        }
+    }
+
+    static MSVec<double, NX> invalid_state()
+    {
+        MSVec<double, NX> z;
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        for (int i = 0; i < NX; ++i)
+            z(i) = nan;
+        return z;
+    }
+
+    static void mark_dynamics_invalid(Knot& kp)
+    {
+        kp.f_resid = invalid_state();
+        mark_jacobians_invalid(kp);
+    }
+
     // --- Backward Euler ---
     // Solve: z = x + dt * f(z, u)
     // Jacobians: A = (I - dt*Jf)^{-1}, B = A * dt * Ju
@@ -192,7 +228,11 @@ private:
             J = MSMat<double, NX, NX>::Identity() - jac.Jx * dt;
         };
 
-        NewtonSolver<double, NX> ns; ns.solve(z, eval, config);
+        NewtonSolver<double, NX> ns;
+        if (!ns.solve(z, eval, config)) {
+            mark_dynamics_invalid(kp);
+            return;
+        }
 
         // Compute Jacobians at converged point
         auto jac = get_continuous_jacobians(z, u, p);
@@ -206,9 +246,7 @@ private:
             kp.A = M_inv;
             kp.B.noalias() = M_inv * (jac.Ju * dt);
         } else {
-            // Fallback: identity (should not happen with regularization)
-            kp.A.setIdentity();
-            kp.B.setZero();
+            mark_jacobians_invalid(kp);
         }
     }
 
@@ -234,7 +272,11 @@ private:
             J = MSMat<double, NX, NX>::Identity() - jac.Jx * (dt * 0.5);
         };
 
-        NewtonSolver<double, NX> ns; ns.solve(z, eval, config);
+        NewtonSolver<double, NX> ns;
+        if (!ns.solve(z, eval, config)) {
+            mark_dynamics_invalid(kp);
+            return;
+        }
 
         // Jacobians at midpoint
         MSVec<double, NX> m = (x + z) * 0.5;
@@ -249,8 +291,7 @@ private:
             kp.A.noalias() = M_minus_inv * M_plus;
             kp.B.noalias() = M_minus_inv * (jac.Ju * dt);
         } else {
-            kp.A.setIdentity();
-            kp.B.setZero();
+            mark_jacobians_invalid(kp);
         }
     }
 
@@ -310,7 +351,11 @@ private:
             J.template block<NX, NX>(NX, NX) = I_NX - jac2.Jx * (dt * a22);
         };
 
-        NewtonSolver<double, N2> ns; ns.solve(K, eval, config);
+        NewtonSolver<double, N2> ns;
+        if (!ns.solve(K, eval, config)) {
+            mark_dynamics_invalid(kp);
+            return;
+        }
 
         auto k1 = K.template head<NX>();
         auto k2 = K.template tail<NX>();
@@ -340,8 +385,7 @@ private:
 
         MSMat<double, N2, NX> dK_dx;
         if (!MatOps::lu_solve_matrix(JK, RHS_x, dK_dx)) {
-            kp.A.setIdentity();
-            kp.B.setZero();
+            mark_jacobians_invalid(kp);
             return;
         }
 
@@ -355,7 +399,7 @@ private:
 
         MSMat<double, N2, NU> dK_du;
         if (!MatOps::lu_solve_matrix(JK, RHS_u, dK_du)) {
-            kp.B.setZero();
+            mark_jacobians_invalid(kp);
             return;
         }
 

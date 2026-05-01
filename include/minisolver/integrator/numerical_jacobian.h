@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+
 #include "minisolver/matrix/matrix_defs.h"
 
 namespace minisolver {
@@ -29,25 +32,27 @@ ContinuousJacobians<T, Model::NX, Model::NU> compute_numerical_jacobian(
     // df/dx via centered differences
     MSVec<T, NX> x_work = x;
     for (int j = 0; j < NX; ++j) {
-        double saved = x_work(j);
-        x_work(j) = saved + eps;
+        T saved = x_work(j);
+        double h = eps * std::max(1.0, std::abs(static_cast<double>(saved)));
+        x_work(j) = saved + static_cast<T>(h);
         f_plus = Model::dynamics_continuous(x_work, u, p);
-        x_work(j) = saved - eps;
+        x_work(j) = saved - static_cast<T>(h);
         f_minus = Model::dynamics_continuous(x_work, u, p);
         x_work(j) = saved;
-        jac.Jx.col(j) = (f_plus - f_minus) / (2.0 * eps);
+        jac.Jx.col(j) = (f_plus - f_minus) / (2.0 * h);
     }
 
     // df/du via centered differences
     MSVec<T, NU> u_work = u;
     for (int j = 0; j < NU; ++j) {
-        double saved = u_work(j);
-        u_work(j) = saved + eps;
+        T saved = u_work(j);
+        double h = eps * std::max(1.0, std::abs(static_cast<double>(saved)));
+        u_work(j) = saved + static_cast<T>(h);
         f_plus = Model::dynamics_continuous(x, u_work, p);
-        u_work(j) = saved - eps;
+        u_work(j) = saved - static_cast<T>(h);
         f_minus = Model::dynamics_continuous(x, u_work, p);
         u_work(j) = saved;
-        jac.Ju.col(j) = (f_plus - f_minus) / (2.0 * eps);
+        jac.Ju.col(j) = (f_plus - f_minus) / (2.0 * h);
     }
 
     return jac;

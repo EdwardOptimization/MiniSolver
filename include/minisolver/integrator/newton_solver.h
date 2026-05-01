@@ -46,6 +46,7 @@ public:
             x -= delta_;
         }
 
+        eval_func(x, F_, J_);
         if (MatOps::norm_inf(F_) < config.tol) {
             x_prev_ = x;
             converged_last_ = true;
