@@ -218,6 +218,67 @@ TEST(MemoryTest, ZeroMalloc_Compliance_Test)
         << "Detected " << g_allocation_count << " heap allocations during solve() loop!";
 }
 
+TEST(MemoryTest, DefaultConfigSolveDoesNotAllocate)
+{
+    constexpr int N = 10;
+    SolverConfig config;
+
+    MiniSolver<CarModel, 20> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+
+    g_allocation_count = 0;
+    g_memory_check_active = true;
+    solver.solve();
+    g_memory_check_active = false;
+
+    EXPECT_EQ(g_allocation_count, 0)
+        << "Default SolverConfig must keep solve() heap-allocation free.";
+}
+
+TEST(MemoryTest, ZeroMalloc_ConfigMatrixSolve)
+{
+    struct Scenario {
+        LineSearchType line_search_type;
+        bool rollout;
+        bool soc;
+        int max_iters;
+        const char* name;
+    };
+
+    const Scenario scenarios[] = {
+        { LineSearchType::FILTER, false, false, 5, "filter_no_rollout_no_soc_short" },
+        { LineSearchType::FILTER, true, false, 5, "filter_rollout_no_soc_short" },
+        { LineSearchType::FILTER, false, true, 5, "filter_no_rollout_soc_short" },
+        { LineSearchType::FILTER, true, true, 300, "filter_rollout_soc_long" },
+        { LineSearchType::MERIT, false, false, 5, "merit_no_rollout_no_soc_short" },
+        { LineSearchType::MERIT, true, false, 300, "merit_rollout_no_soc_long" },
+        { LineSearchType::NONE, false, false, 5, "none_no_rollout_short" },
+        { LineSearchType::NONE, true, false, 300, "none_rollout_long" },
+    };
+
+    for (const auto& scenario : scenarios) {
+        SolverConfig config;
+        config.print_level = PrintLevel::NONE;
+        config.enable_profiling = false;
+        config.line_search_type = scenario.line_search_type;
+        config.enable_line_search_rollout = scenario.rollout;
+        config.enable_soc = scenario.soc;
+        config.max_iters = scenario.max_iters;
+
+        MiniSolver<CarModel, 20> solver(/*initial_N=*/10, Backend::CPU_SERIAL, config);
+        solver.set_dt(0.1);
+
+        g_allocation_count = 0;
+        g_memory_check_active = true;
+        solver.solve();
+        g_memory_check_active = false;
+
+        EXPECT_EQ(g_allocation_count, 0)
+            << "Detected " << g_allocation_count << " heap allocations during solve() for "
+            << scenario.name;
+    }
+}
+
 TEST(MemoryTest, ZeroMalloc_FilterSOC_Path)
 {
     // Construct everything before enabling memory instrumentation.

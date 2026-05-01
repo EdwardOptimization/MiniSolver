@@ -9,7 +9,7 @@
 
 **MiniSolver** is a professional-grade, header-only C++17 library for solving Nonlinear Model Predictive Control (NMPC) problems.
 
-Engineered specifically for **embedded robotics** and **autonomous driving**, it combines the flexibility of Python-based symbolic modeling with the raw performance of highly optimized, template-generated C++ code. It explicitly guarantees **Zero Dynamic Memory Allocation (Zero-Malloc)** during the solve phase, making it deterministic and safe for hard real-time systems.
+Engineered specifically for **embedded robotics** and **autonomous driving**, it combines the flexibility of Python-based symbolic modeling with the raw performance of highly optimized, template-generated C++ code. The default real-time configuration is designed for **Zero Dynamic Memory Allocation (Zero-Malloc)** during the solve phase; profiling and iteration logging are opt-in diagnostics and should stay disabled in hard real-time loops.
 
 ---
 
@@ -22,7 +22,7 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
 * **🔥 Fused Riccati Kernels**: Unlike solvers that use generic matrix libraries, MiniSolver uses Python (SymPy) to symbolically fuse the Riccati backward pass (`Q + A'PA`) into a single, flattened C++ function. This eliminates all loop overhead and explicitly bypasses multiplication by zero, achieving **perfect sparsity exploitation** for small-to-medium systems ($N_x < 20$).
 
 ### 🛡️ Embedded Safety & Robustness
-* **Zero-Malloc Guarantee**: All memory is allocated on the stack (or `.bss`) via `std::array` and C++ templates (`MAX_N`). No `new`/`malloc` calls occur during the `solve()` loop.
+* **Zero-Malloc Solve Path**: The default solver configuration performs no `new`/`malloc` calls during `solve()`. Keep profiling and iteration logging disabled for hard real-time use.
 * **Robust Interior Point Method (IPM)**:
     * **Mehrotra Predictor-Corrector**: Drastically reduces iteration counts by utilizing higher-order corrections.
     * **Filter Line Search**: Ensures global convergence without the tedious tuning of merit function parameters.
