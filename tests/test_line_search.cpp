@@ -182,10 +182,74 @@ struct RolloutLineSearchModel {
     template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
 };
 
+struct L2ResidualFilterModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 1.0 };
+    static constexpr std::array<int, NC> constraint_types = { 2 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> out;
+        out(0) = x(0) + u(0) * dt;
+        return out;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = kp.x(0);
+        kp.C(0, 0) = 1.0;
+        kp.D(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = 0.0;
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setZero();
+        kp.R.setIdentity();
+        kp.H.setZero();
+    }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
 class RolloutStubLinearSolver
     : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2>::TrajArray> {
 public:
     using TrajArray = Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2>::TrajArray;
+    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        return true;
+    }
+};
+
+class L2ResidualStubLinearSolver
+    : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1>::TrajArray> {
+public:
+    using TrajArray = Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1>::TrajArray;
     bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
@@ -219,6 +283,41 @@ TEST(LineSearchTest, MeritFunctionBacktracking)
     }
 }
 
+TEST(LineSearchTest, FilterRejectsPureL2KktResidualIncrease)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 3;
+    config.enable_soc = false;
+
+    using Model = L2ResidualFilterModel;
+    FilterLineSearch<Model, 1> ls;
+    L2ResidualStubLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 0.0;
+    active[0].u(0) = 0.0;
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0; // L2 residual g+s-lam/w is initially zero.
+    active[0].ds(0) = 0.1; // Increases g+s and therefore L2 KKT residual.
+    active[0].dlam(0) = 0.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    const double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+
+    EXPECT_DOUBLE_EQ(alpha, 0.0)
+        << "Filter theta must include the L2 residual g+s-lam/w, otherwise a pure "
+           "L2 KKT residual increase is accepted.";
+}
+
 TEST(LineSearchTest, MeritRolloutProducesConsistentStates)
 {
     constexpr int N = 2;
@@ -227,6 +326,7 @@ TEST(LineSearchTest, MeritRolloutProducesConsistentStates)
     config.line_search_type = LineSearchType::MERIT;
     config.enable_line_search_rollout = true;
     config.line_search_max_iters = 5;
+    config.armijo_c1 = 0.0; // This test targets rollout state construction, not Armijo acceptance.
 
     using Model = RolloutLineSearchModel;
     MeritLineSearch<Model, N> ls;
@@ -361,6 +461,34 @@ TEST(LineSearchTest, NoLineSearchRefreshesAcceptedPointEvaluations)
     EXPECT_NEAR(after[0].u(0), 1.0, 1e-12);
     EXPECT_NEAR(after[0].cost, 82.0, 1e-12); // 9^2 + 1^2
     EXPECT_NEAR(after[0].f_resid(0), 9.1, 1e-12); // x + u*dt
+}
+
+TEST(LineSearchTest, NoLineSearchDoesNotUpdateTerminalControl)
+{
+    constexpr int N = 1;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::NONE;
+
+    using Model = NoLineSearchEvalModel;
+    NoLineSearch<Model, N> ls;
+    NoLineSearchStubLinearSolver<N> linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, N> trajectory(N);
+
+    std::array<double, N> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    for (int k = 0; k <= N; ++k) {
+        active[k].set_zero();
+        active[k].u(0) = 0.0;
+        active[k].du(0) = 7.0;
+    }
+
+    double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    EXPECT_GT(alpha, 0.0);
+    EXPECT_DOUBLE_EQ(trajectory.active()[N].u(0), 0.0)
+        << "u_N is not a decision variable and must not be advanced by line search.";
 }
 
 TEST(LineSearchTest, NoLineSearchRolloutProducesConsistentStates)

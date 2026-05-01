@@ -372,6 +372,8 @@ add_minisolver_bench(line_search_rollout_bench tools/line_search_rollout_bench.c
 add_dependencies(line_search_rollout_bench minisolver_test_models)
 target_include_directories(line_search_rollout_bench PRIVATE ${TEST_GENERATED_DIR})
 
+add_minisolver_bench(merit_armijo_bench tools/merit_armijo_bench.cpp)
+
 add_executable(test_asset_regressions
     tests/test_asset_regressions.cpp
     ${KINEMATIC_BICYCLE_TEST_MODEL}

@@ -1,8 +1,10 @@
 #pragma once
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <memory>
-#include <vector>
+#include <utility>
 
 #include "minisolver/algorithms/linear_solver.h"
 #include "minisolver/algorithms/model_evaluation.h"
@@ -68,7 +70,11 @@ public:
             // Multiple-shooting style trial point: x/u moved by linear step.
             for (int k = 0; k <= N; ++k) {
                 candidate[k].x = active[k].x + active[k].dx * alpha;
-                candidate[k].u = active[k].u + active[k].du * alpha;
+                if (k < N) {
+                    candidate[k].u = active[k].u + active[k].du * alpha;
+                } else {
+                    candidate[k].u.setZero();
+                }
                 candidate[k].s = active[k].s + active[k].ds * alpha;
                 candidate[k].lam = active[k].lam + active[k].dlam * alpha;
                 candidate[k].soft_s = active[k].soft_s + active[k].dsoft_s * alpha;
@@ -81,14 +87,18 @@ public:
             // - propagate x forward via the integrator to maintain dynamic consistency
             candidate[0].x = active[0].x;
             for (int k = 0; k <= N; ++k) {
-                candidate[k].u = active[k].u + active[k].du * alpha;
+                if (k < N) {
+                    candidate[k].u = active[k].u + active[k].du * alpha;
+                } else {
+                    candidate[k].u.setZero();
+                }
                 candidate[k].s = active[k].s + active[k].ds * alpha;
                 candidate[k].lam = active[k].lam + active[k].dlam * alpha;
                 candidate[k].soft_s = active[k].soft_s + active[k].dsoft_s * alpha;
                 candidate[k].p = active[k].p;
 
                 const double current_dt = (k < N) ? dt_traj[static_cast<size_t>(k)] : 0.0;
-                detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
+                detail::evaluate_model_stage<Model>(candidate[k], config, current_dt, k == N);
                 if (k < N) {
                     candidate[k + 1].x = candidate[k].f_resid;
                 }
@@ -102,7 +112,7 @@ public:
         if (!config.enable_line_search_rollout) {
             for (int k = 0; k <= N; ++k) {
                 const double current_dt = (k < N) ? dt_traj[static_cast<size_t>(k)] : 0.0;
-                detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
+                detail::evaluate_model_stage<Model>(candidate[k], config, current_dt, k == N);
             }
         }
 
@@ -190,7 +200,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 if (type == 1 && w > 1e-6) {
                     total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
                 } else if (type == 2 && w > 1e-6) {
-                    // L2 Soft: No hard violation penalty (handled in Cost)
+                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i) / w);
                 } else {
                     total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i));
                 }
@@ -206,6 +216,52 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
             }
         }
         return total_merit;
+    }
+
+    void build_trial(TrajArray& candidate, const TrajArray& active,
+        const std::array<double, MAX_N>& dt_traj, int N, double alpha, const SolverConfig& config)
+    {
+        if (!config.enable_line_search_rollout) {
+            // Multiple-shooting style trial point: x/u moved by linear step.
+            for (int k = 0; k <= N; ++k) {
+                candidate[k].x = active[k].x + alpha * active[k].dx;
+                if (k < N) {
+                    candidate[k].u = active[k].u + alpha * active[k].du;
+                } else {
+                    candidate[k].u.setZero();
+                }
+                candidate[k].s = active[k].s + alpha * active[k].ds;
+                candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+                candidate[k].p = active[k].p;
+
+                double current_dt = (k < N) ? dt_traj[k] : 0.0;
+                detail::evaluate_model_stage<Model>(candidate[k], config, current_dt, k == N);
+            }
+        } else {
+            // Single-shooting rollout trial point:
+            // - keep x0 fixed
+            // - apply the step to u/s/lam/soft_s
+            // - propagate x forward via the integrator to maintain dynamic consistency
+            candidate[0].x = active[0].x;
+            for (int k = 0; k <= N; ++k) {
+                if (k < N) {
+                    candidate[k].u = active[k].u + alpha * active[k].du;
+                } else {
+                    candidate[k].u.setZero();
+                }
+                candidate[k].s = active[k].s + alpha * active[k].ds;
+                candidate[k].lam = active[k].lam + alpha * active[k].dlam;
+                candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
+                candidate[k].p = active[k].p;
+
+                double current_dt = (k < N) ? dt_traj[k] : 0.0;
+                detail::evaluate_model_stage<Model>(candidate[k], config, current_dt, k == N);
+                if (k < N) {
+                    candidate[k + 1].x = candidate[k].f_resid;
+                }
+            }
+        }
     }
 
 public:
@@ -253,57 +309,33 @@ public:
         bool accepted = false;
         int ls_iter = 0;
 
-        while (ls_iter < config.line_search_max_iters) {
-            if (!config.enable_line_search_rollout) {
-                // Multiple-shooting style trial point: x/u moved by linear step.
-                for (int k = 0; k <= N; ++k) {
-                    candidate[k].x = active[k].x + alpha * active[k].dx;
-                    candidate[k].u = active[k].u + alpha * active[k].du;
-                    candidate[k].s = active[k].s + alpha * active[k].ds;
-                    candidate[k].lam = active[k].lam + alpha * active[k].dlam;
-
-                    // Update soft vars
-                    candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
-
-                    candidate[k].p = active[k].p;
-
-                    double current_dt = (k < N) ? dt_traj[k] : 0.0;
-
-                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
-                }
-            } else {
-                // Single-shooting rollout trial point:
-                // - keep x0 fixed
-                // - apply the step to u/s/lam/soft_s
-                // - propagate x forward via the integrator to maintain dynamic consistency
-                candidate[0].x = active[0].x;
-                for (int k = 0; k <= N; ++k) {
-                    candidate[k].u = active[k].u + alpha * active[k].du;
-                    candidate[k].s = active[k].s + alpha * active[k].ds;
-                    candidate[k].lam = active[k].lam + alpha * active[k].dlam;
-                    candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
-                    candidate[k].p = active[k].p;
-
-                    double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
-                    if (k < N) {
-                        candidate[k + 1].x = candidate[k].f_resid;
-                    }
-                }
+        dphi_ = 0.0;
+        if (config.armijo_c1 > 0.0 && alpha > 0.0) {
+            const double eps_alpha = std::min(1.0e-6, std::max(1.0e-10, alpha * 1.0e-6));
+            build_trial(candidate, active, dt_traj, N, eps_alpha, config);
+            const double phi_eps = compute_merit(candidate, N, mu, config);
+            dphi_ = (phi_eps - phi_0) / eps_alpha;
+            if (!std::isfinite(dphi_)) {
+                dphi_ = 0.0;
             }
+        }
+
+        while (ls_iter < config.line_search_max_iters) {
+            build_trial(candidate, active, dt_traj, N, alpha, config);
 
             double phi_alpha = compute_merit(candidate, N, mu, config);
 
-            // Armijo sufficient decrease (relative form).
-            // Require: phi(alpha) <= phi(0) * (1 - c1 * alpha).
-            // This is a simplified Armijo that avoids computing the
-            // directional derivative explicitly. The c1 * alpha term
-            // enforces proportional decrease: larger steps must achieve
-            // larger absolute reductions. When c1=0, reverts to simple
-            // decrease (legacy behavior).
+            // Standard Armijo sufficient decrease:
+            //   phi(alpha) <= phi(0) + c1 * alpha * dphi
+            // dphi is estimated once by a tiny finite-difference step along
+            // the same trial-point construction. If the direction is not a
+            // merit descent direction, fall back to strict decrease rather
+            // than accepting a non-descent "Armijo" step.
             if (config.armijo_c1 > 0.0) {
-                double threshold = phi_0 * (1.0 - config.armijo_c1 * alpha);
-                if (phi_alpha <= threshold) {
+                const double threshold = phi_0 + config.armijo_c1 * alpha * dphi_;
+                if (dphi_ < 0.0 && phi_alpha <= threshold) {
+                    accepted = true;
+                } else if (dphi_ >= 0.0 && phi_alpha < phi_0) {
                     accepted = true;
                 }
             } else {
@@ -337,7 +369,10 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     using typename Base::TrajArray;
     using typename Base::TrajectoryType;
 
-    std::vector<std::pair<double, double>> filter;
+    static constexpr size_t FILTER_CAPACITY = 1024;
+    std::array<std::pair<double, double>, FILTER_CAPACITY> filter {};
+    size_t filter_size_ = 0;
+    size_t filter_next_ = 0;
 
     std::pair<double, double> compute_metrics(
         const TrajArray& t, int N, double mu, const SolverConfig& config)
@@ -412,14 +447,10 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                     // L1: Check extended system residual
                     theta += std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
                 } else if (type == 2 && w > 1e-6) {
-                    // L2: Soft constraint means no hard infeasibility.
-                    // The penalty is in the objective (Phi).
-                    // However, we still have the equality g + s - lam/w = 0 in KKT?
-                    // No, primal form is unconstrained (penalty).
-                    // Ideally theta contribution is 0.
-                    // But to keep 's' consistent with 'g', we might want to check g+s?
-                    // If we treat it as unconstrained, theta=0 for this index.
-                    // Check if Model added penalty to Cost. Yes.
+                    // L2 soft constraints use the primal-dual residual
+                    // g + s - lam/w = 0. Keep filter theta consistent with
+                    // compute_max_violation() and Riccati's KKT system.
+                    theta += std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i) / w);
                 } else {
                     // Hard
                     theta += std::abs(kp.g_val(i) + kp.s(i));
@@ -450,7 +481,8 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         }
 
         // Check against filter
-        for (const auto& entry : filter) {
+        for (size_t idx = 0; idx < filter_size_; ++idx) {
+            const auto& entry = filter[idx];
             double theta_j = entry.first;
             double phi_j = entry.second;
             bool sufficient_wrt_filter = (theta <= (1.0 - config.filter_gamma_theta) * theta_j)
@@ -472,22 +504,21 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     */
 
 public:
-    FilterLineSearch()
-    {
-        // Real-time friendly: allocate once during construction (typically in MiniSolver ctor),
-        // and avoid heap allocations inside solve()/search().
-        filter.reserve(256);
-    }
+    FilterLineSearch() = default;
 
-    void reset() override { filter.clear(); }
+    void reset() override
+    {
+        filter_size_ = 0;
+        filter_next_ = 0;
+    }
 
     // IPOPT §3.1: φ = cost − μ·Σ log(s) — filter entries recorded under the
     // old μ contain stale φ values that are not comparable at the new μ. Clear
     // the filter so the next search() builds a fresh history under the new μ.
-    void on_barrier_update() override { filter.clear(); }
+    void on_barrier_update() override { reset(); }
 
     // Test / diagnostic accessor.
-    size_t filter_size() const { return filter.size(); }
+    size_t filter_size() const { return filter_size_; }
 
     double search(TrajectoryType& trajectory, LinearSolver<TrajArray>& linear_solver,
         const std::array<double, MAX_N>& dt_traj, double mu, double reg,
@@ -515,7 +546,11 @@ public:
             if (!config.enable_line_search_rollout) {
                 for (int k = 0; k <= N; ++k) {
                     candidate[k].x = active[k].x + alpha * active[k].dx;
-                    candidate[k].u = active[k].u + alpha * active[k].du;
+                    if (k < N) {
+                        candidate[k].u = active[k].u + alpha * active[k].du;
+                    } else {
+                        candidate[k].u.setZero();
+                    }
                     candidate[k].s = active[k].s + alpha * active[k].ds;
                     candidate[k].lam = active[k].lam + alpha * active[k].dlam;
                     candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
@@ -523,12 +558,16 @@ public:
 
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
-                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
+                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt, k == N);
                 }
             } else {
                 candidate[0].x = active[0].x;
                 for (int k = 0; k <= N; ++k) {
-                    candidate[k].u = active[k].u + alpha * active[k].du;
+                    if (k < N) {
+                        candidate[k].u = active[k].u + alpha * active[k].du;
+                    } else {
+                        candidate[k].u.setZero();
+                    }
                     candidate[k].s = active[k].s + alpha * active[k].ds;
                     candidate[k].lam = active[k].lam + alpha * active[k].dlam;
                     candidate[k].soft_s = active[k].soft_s + alpha * active[k].dsoft_s;
@@ -536,7 +575,7 @@ public:
 
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
-                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
+                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt, k == N);
                     if (k < N) {
                         candidate[k + 1].x = candidate[k].f_resid;
                     }
@@ -579,7 +618,11 @@ public:
                         if (!config.enable_line_search_rollout) {
                             candidate[k].x += soc_data[k].dx;
                         }
-                        candidate[k].u += soc_data[k].du;
+                        if (k < N) {
+                            candidate[k].u += soc_data[k].du;
+                        } else {
+                            candidate[k].u.setZero();
+                        }
                         candidate[k].s += soc_data[k].ds;
                         candidate[k].lam += soc_data[k].dlam;
                         candidate[k].soft_s += soc_data[k].dsoft_s;
@@ -592,7 +635,8 @@ public:
                             }
                         }
 
-                        detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
+                        detail::evaluate_model_stage<Model>(
+                            candidate[k], config, current_dt, k == N);
                         if (config.enable_line_search_rollout && k < N) {
                             candidate[k + 1].x = candidate[k].f_resid;
                         }
@@ -622,7 +666,13 @@ public:
 
         if (accepted) {
             trajectory.swap();
-            filter.push_back({ theta_0, phi_0 });
+            if (filter_size_ < FILTER_CAPACITY) {
+                filter[filter_size_] = { theta_0, phi_0 };
+                ++filter_size_;
+            } else {
+                filter[filter_next_] = { theta_0, phi_0 };
+                filter_next_ = (filter_next_ + 1) % FILTER_CAPACITY;
+            }
         } else {
             return 0.0; // Fail
         }
