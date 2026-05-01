@@ -27,9 +27,23 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     }
     static bool has_nans(Solver& s, const typename Solver::TrajArray& t) { return s.has_nans(t); }
     static typename Solver::TrajArray& get_trajectory(Solver& s) { return s.trajectory.active(); }
+    static StepResidualSummary evaluate_step_model(Solver& s, typename Solver::TrajArray& traj)
+    {
+        return s.evaluate_step_model_(traj);
+    }
+    static bool check_convergence(
+        Solver& s, const StepResidualSummary& residuals, double max_dual_inf)
+    {
+        return s.check_convergence(residuals, max_dual_inf);
+    }
     static SolverStatus postsolve(Solver& s, SolverStatus loop_status)
     {
         return s.postsolve(loop_status);
+    }
+    static PostsolveResiduals refresh_postsolve_residuals(
+        Solver& s, typename Solver::TrajArray& traj)
+    {
+        return s.refresh_postsolve_residuals_(traj);
     }
     static SolverStatus step(Solver& s) { return s.execute_solve_iteration_(); }
     static void set_linear_solver(
@@ -645,7 +659,7 @@ TEST(BugfixTest, CostStagnationNotGatedOnMuFinal)
     config.barrier_strategy = BarrierStrategy::MONOTONE;
     config.mu_init = 1e-2;
     config.mu_final = 1e-6;
-    config.barrier_tolerance_factor = 0.0; // max_kkt_error < 0 never holds
+    config.barrier_tolerance_factor = 0.0; // complementarity residual < 0 never holds
 
     MiniSolver<BugTestModel, 20> solver(N, Backend::CPU_SERIAL, config);
     solver.set_dt(0.1);
@@ -718,6 +732,82 @@ TEST(BugfixTest, SetConfigDefersPlanRebuildUntilSolve)
     EXPECT_FALSE(Access::build_dirty(solver));
     EXPECT_EQ(Access::plan_line_search_type(solver), LineSearchType::MERIT);
     EXPECT_EQ(Access::plan_backend(solver), Backend::CPU_SERIAL);
+}
+
+TEST(BugfixTest, StepResidualSummaryRecordsBarrierMuSnapshot)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto& traj = Access::get_trajectory(solver);
+    for (int k = 0; k <= N; ++k) {
+        traj[k].set_zero();
+        traj[k].s(0) = 0.25;
+        traj[k].lam(0) = 0.5;
+    }
+
+    Access::mu(solver) = 1e-2;
+    const StepResidualSummary residuals = Access::evaluate_step_model(solver, traj);
+
+    EXPECT_DOUBLE_EQ(residuals.barrier_mu, 1e-2);
+    EXPECT_NEAR(residuals.max_barrier_complementarity_residual, std::abs(0.25 * 0.5 - 1e-2), 1e-14);
+}
+
+TEST(BugfixTest, ConvergenceUsesResidualSnapshotMuNotCurrentSolverMu)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.mu_final = 1e-6;
+    config.tol_con = 1e-8;
+    config.tol_dual = 1e-8;
+    config.tol_mu = 1e-8;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+
+    StepResidualSummary residuals;
+    residuals.barrier_mu = 1e-2;
+    residuals.max_primal_inf = 0.0;
+    residuals.max_barrier_complementarity_residual = 5e-6;
+
+    // Simulate a barrier update after residual evaluation. The old wrapper
+    // used context_.solve.mu and would incorrectly accept this stale snapshot.
+    Access::mu(solver) = config.mu_final;
+
+    EXPECT_FALSE(Access::check_convergence(solver, residuals, 0.0))
+        << "termination must interpret residuals with residuals.barrier_mu";
+}
+
+TEST(BugfixTest, PostsolveResidualsRecordBarrierMuSnapshot)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto& traj = Access::get_trajectory(solver);
+    for (int k = 0; k <= N; ++k) {
+        traj[k].set_zero();
+        traj[k].s(0) = 0.25;
+        traj[k].lam(0) = 0.5;
+    }
+
+    Access::mu(solver) = 2e-2;
+    const PostsolveResiduals residuals = Access::refresh_postsolve_residuals(solver, traj);
+
+    EXPECT_DOUBLE_EQ(residuals.barrier_mu, 2e-2);
+    EXPECT_NEAR(residuals.max_barrier_complementarity_residual, std::abs(0.25 * 0.5 - 2e-2), 1e-14);
 }
 
 // =============================================================================
@@ -1657,9 +1747,8 @@ namespace {
 template <typename TrajArray>
 class LateNaNDirectionRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
-    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
-        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
-        const TrajArray* /*affine_traj*/ = nullptr) override
+    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
     {
         for (int k = 0; k <= N; ++k) {
             traj[k].dx.setZero();

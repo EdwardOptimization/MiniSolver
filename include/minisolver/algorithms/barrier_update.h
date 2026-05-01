@@ -7,22 +7,23 @@
 namespace minisolver::detail {
 
 struct BarrierUpdateKernel {
-    static double update_mu(
-        const SolverConfig& config, double current_mu, double max_kkt_error, double avg_gap)
+    static double update_mu(const SolverConfig& config, double current_mu,
+        double max_barrier_complementarity_residual, double avg_complementarity_gap)
     {
         switch (config.barrier_strategy) {
         case BarrierStrategy::MONOTONE:
-            if (max_kkt_error < config.barrier_tolerance_factor * current_mu) {
+            if (max_barrier_complementarity_residual
+                < config.barrier_tolerance_factor * current_mu) {
                 return std::max(config.mu_final, current_mu * config.mu_linear_decrease_factor);
             }
             return current_mu;
         case BarrierStrategy::ADAPTIVE: {
-            double target = avg_gap * config.mu_safety_margin;
+            double target = avg_complementarity_gap * config.mu_safety_margin;
             // Allow mu to hold steady if residuals are not ready for a decrease.
             return std::max(config.mu_final, std::min(current_mu, target));
         }
         case BarrierStrategy::MEHROTRA: {
-            double ratio = avg_gap / current_mu;
+            double ratio = avg_complementarity_gap / current_mu;
             if (ratio > 1.0) {
                 ratio = 1.0;
             }

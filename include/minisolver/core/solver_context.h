@@ -29,9 +29,10 @@ struct SolverMetrics {
 };
 
 struct StepResidualSummary {
-    double max_kkt_error = 0.0;
-    double max_prim_inf = 0.0;
-    double avg_gap = 0.0;
+    double barrier_mu = 0.0;
+    double max_barrier_complementarity_residual = 0.0;
+    double max_primal_inf = 0.0;
+    double avg_complementarity_gap = 0.0;
 };
 
 struct SolveState {
@@ -50,18 +51,20 @@ struct SolveState {
 };
 
 struct ResidualState {
-    double max_kkt_error = 0.0;
-    double max_prim_inf = 0.0;
+    double barrier_mu = 0.0;
+    double max_barrier_complementarity_residual = 0.0;
+    double max_primal_inf = 0.0;
     double max_dual_inf = 0.0;
-    double avg_gap = 0.0;
+    double avg_complementarity_gap = 0.0;
     double objective_cost = 0.0;
 
     void reset_iteration()
     {
-        max_kkt_error = 0.0;
-        max_prim_inf = 0.0;
+        barrier_mu = 0.0;
+        max_barrier_complementarity_residual = 0.0;
+        max_primal_inf = 0.0;
         max_dual_inf = 0.0;
-        avg_gap = 0.0;
+        avg_complementarity_gap = 0.0;
         objective_cost = 0.0;
     }
 };
@@ -124,9 +127,10 @@ struct LoopExitDecision {
 struct PostsolveResiduals {
     bool residuals_ok = true;
     bool linear_ok = false;
-    double max_viol = 0.0;
+    double barrier_mu = 0.0;
+    double max_primal_inf = 0.0;
     double max_dual_inf = 0.0;
-    double max_kkt_error = 0.0;
+    double max_barrier_complementarity_residual = 0.0;
 };
 
 struct SolverContext {

@@ -8,20 +8,20 @@
 namespace minisolver::detail {
 
 struct TerminationKernel {
-    static bool check_convergence(const SolverConfig& config, double mu, double max_viol,
-        double max_dual, double max_kkt_error)
+    static bool check_convergence(const SolverConfig& config, double mu, double max_primal_inf,
+        double max_dual, double max_barrier_complementarity_residual)
     {
         const bool mu_converged = (mu <= config.mu_final);
-        const bool primal_ok = (max_viol <= config.tol_con);
+        const bool primal_ok = (max_primal_inf <= config.tol_con);
         const bool dual_ok = (max_dual <= config.tol_dual);
-        const bool kkt_ok = (max_kkt_error <= std::max(config.tol_mu, 10.0 * mu));
+        const bool kkt_ok
+            = (max_barrier_complementarity_residual <= std::max(config.tol_mu, 10.0 * mu));
 
         return mu_converged && primal_ok && dual_ok && kkt_ok;
     }
 
-    static bool should_stop_for_cost_stagnation(const SolverConfig& config,
-        double last_prim_inf, double current_cost, double last_cost, double current_mu,
-        double last_mu)
+    static bool should_stop_for_cost_stagnation(const SolverConfig& config, double last_prim_inf,
+        double current_cost, double last_cost, double current_mu, double last_mu)
     {
         const double feasible_bound = config.tol_con * config.feasible_tol_scale;
         if (last_prim_inf > feasible_bound) {

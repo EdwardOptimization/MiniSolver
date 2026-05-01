@@ -576,10 +576,17 @@ public:
     }
 
 private:
-    bool check_convergence(double max_viol, double max_dual, double max_kkt_error)
+    bool check_convergence(const StepResidualSummary& residuals, double max_dual)
     {
-        return detail::TerminationKernel::check_convergence(
-            config, context_.solve.mu, max_viol, max_dual, max_kkt_error);
+        return detail::TerminationKernel::check_convergence(config, residuals.barrier_mu,
+            residuals.max_primal_inf, max_dual, residuals.max_barrier_complementarity_residual);
+    }
+
+    bool check_convergence(const PostsolveResiduals& residuals)
+    {
+        return detail::TerminationKernel::check_convergence(config, residuals.barrier_mu,
+            residuals.max_primal_inf, residuals.max_dual_inf,
+            residuals.max_barrier_complementarity_residual);
     }
 
     double compute_objective_cost_(const TrajArray& traj) const
@@ -601,6 +608,8 @@ private:
     StepResidualSummary evaluate_step_model_(TrajArray& traj)
     {
         StepResidualSummary summary;
+        summary.barrier_mu = context_.solve.mu;
+        const double mu_eval = summary.barrier_mu;
         double total_gap = 0.0;
         int total_gap_dim = 0;
 
@@ -612,9 +621,9 @@ private:
             for (int i = 0; i < NC; ++i) {
                 const double s = traj[k].s(i);
                 const double lam = traj[k].lam(i);
-                double comp = std::abs(s * lam - context_.solve.mu);
-                if (comp > summary.max_kkt_error) {
-                    summary.max_kkt_error = comp;
+                double comp = std::abs(s * lam - mu_eval);
+                if (comp > summary.max_barrier_complementarity_residual) {
+                    summary.max_barrier_complementarity_residual = comp;
                 }
 
                 total_gap += s * lam;
@@ -633,9 +642,9 @@ private:
                 if (type == 1 && w > 1e-6) {
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - lam);
-                    double comp_soft = std::abs(soft_s * soft_dual - context_.solve.mu);
-                    if (comp_soft > summary.max_kkt_error) {
-                        summary.max_kkt_error = comp_soft;
+                    double comp_soft = std::abs(soft_s * soft_dual - mu_eval);
+                    if (comp_soft > summary.max_barrier_complementarity_residual) {
+                        summary.max_barrier_complementarity_residual = comp_soft;
                     }
 
                     total_gap += soft_s * soft_dual;
@@ -644,8 +653,8 @@ private:
             }
         }
 
-        summary.max_prim_inf = compute_max_violation(traj);
-        summary.avg_gap = (total_gap_dim > 0) ? (total_gap / total_gap_dim) : 0.0;
+        summary.max_primal_inf = compute_max_violation(traj);
+        summary.avg_complementarity_gap = (total_gap_dim > 0) ? (total_gap / total_gap_dim) : 0.0;
         return summary;
     }
 
@@ -662,7 +671,8 @@ private:
         // In Mehrotra mode, mu is updated dynamically inside the step via predictor-corrector
         // logic. We only use update_barrier for Monotone/Adaptive strategies or as a fallback.
         if (config.barrier_strategy != BarrierStrategy::MEHROTRA) {
-            update_barrier(residuals.max_kkt_error, residuals.avg_gap);
+            update_barrier(
+                residuals.max_barrier_complementarity_residual, residuals.avg_complementarity_gap);
         }
     }
 
@@ -694,9 +704,8 @@ private:
     {
         bool success = false;
         for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
-            success = linear_solver->solve(
-                traj, N, target_mu, context_.solve.reg, config.inertia_strategy, config,
-                affine_traj);
+            success = linear_solver->solve(traj, N, target_mu, context_.solve.reg,
+                config.inertia_strategy, config, affine_traj);
             if (success) {
                 break;
             }
@@ -880,8 +889,7 @@ private:
         context_.metrics.last_dual_inf = max_dual_inf;
     }
 
-    SolverStatus classify_tiny_step_stagnation_(
-        double max_prim_inf, double max_dual_inf) const
+    SolverStatus classify_tiny_step_stagnation_(double max_prim_inf, double max_dual_inf) const
     {
         return detail::TerminationKernel::classify_tiny_step_stagnation(
             config, max_prim_inf, max_dual_inf);
@@ -911,8 +919,7 @@ private:
                 // Mark: If this Reset failed to get us out of trouble, disallow it next time
                 context_.solve.slack_reset_consecutive_count++;
             }
-        } else if (
-            config.enable_slack_reset && context_.solve.slack_reset_consecutive_count >= 1) {
+        } else if (config.enable_slack_reset && context_.solve.slack_reset_consecutive_count >= 1) {
             if (config.print_level >= PrintLevel::DEBUG) {
                 MLOG_DEBUG("Skipping Slack Reset to prevent cycle. Forcing Restoration.");
             }
@@ -932,13 +939,13 @@ private:
     }
 
     GlobalizationResult globalize_step_(
-        double mu_before_step, double max_prim_inf, double max_dual_inf)
+        double barrier_mu_at_residual_eval, double max_prim_inf, double max_dual_inf)
     {
         GlobalizationResult result;
 
         // Notify the line search if μ decreased during this step so it can
         // discard barrier-dependent history (filter entries, ratcheted merit_nu).
-        if (line_search && context_.solve.mu < mu_before_step) {
+        if (line_search && context_.solve.mu < barrier_mu_at_residual_eval) {
             line_search->on_barrier_update();
         }
 
@@ -1108,10 +1115,10 @@ private:
         return result;
     }
 
-    void update_barrier(double max_kkt_error, double avg_gap)
+    void update_barrier(double max_barrier_complementarity_residual, double avg_complementarity_gap)
     {
-        context_.solve.mu = detail::BarrierUpdateKernel::update_mu(
-            config, context_.solve.mu, max_kkt_error, avg_gap);
+        context_.solve.mu = detail::BarrierUpdateKernel::update_mu(config, context_.solve.mu,
+            max_barrier_complementarity_residual, avg_complementarity_gap);
     }
 
     void print_iteration_log(double alpha, bool header = false)
@@ -1171,8 +1178,8 @@ private:
            << std::setprecision(3) << std::setw(12) << total_cost << std::fixed
            << std::setprecision(2) << std::setw(10) << std::log10(context_.solve.mu)
            << std::setw(10) << std::log10(context_.solve.reg) << std::scientific
-           << std::setprecision(2) << std::setw(10) << max_prim_inf << std::setw(10)
-           << max_dual_inf << std::fixed << std::setprecision(3) << std::setw(10) << alpha;
+           << std::setprecision(2) << std::setw(10) << max_prim_inf << std::setw(10) << max_dual_inf
+           << std::fixed << std::setprecision(3) << std::setw(10) << alpha;
 
         if (config.print_level >= PrintLevel::DEBUG) {
             ss << std::scientific << std::setprecision(2) << std::setw(12) << min_slack;
@@ -1216,8 +1223,7 @@ private:
                 }
             }
             for (int i = 0; i < NC; ++i) {
-                if (!MatOps::is_finite_scalar(kp.ds(i))
-                    || !MatOps::is_finite_scalar(kp.dlam(i))
+                if (!MatOps::is_finite_scalar(kp.ds(i)) || !MatOps::is_finite_scalar(kp.dlam(i))
                     || !MatOps::is_finite_scalar(kp.dsoft_s(i))) {
                     return true;
                 }
@@ -1542,8 +1548,7 @@ private:
                 break;
             }
 
-            LoopExitDecision stagnation_exit
-                = should_exit_for_cost_stagnation_(last_cost, last_mu);
+            LoopExitDecision stagnation_exit = should_exit_for_cost_stagnation_(last_cost, last_mu);
             if (stagnation_exit.should_exit) {
                 loop_exit_status = stagnation_exit.status;
                 context_.termination.loop_exit_status = stagnation_exit.status;
@@ -1558,18 +1563,9 @@ private:
     SolverStatus execute_solve_iteration_()
     {
         context_.solve.current_iter++;
-        // Snapshot μ at the top of the step so we can notify the line search
-        // (IPOPT §3.1: filter/merit history is not comparable across μ changes).
-        // Both the non-Mehrotra update_barrier() path and the Mehrotra
-        // mu = mu_target path mutate mu between here and the line-search call
-        // below; the single comparison covers both.
-        const double mu_before_step = context_.solve.mu;
-
         auto& traj = trajectory.active();
 
         StepResidualSummary residuals = evaluate_derivatives_phase_(traj);
-        double max_kkt_error = residuals.max_kkt_error;
-        double max_prim_inf = residuals.max_prim_inf;
         update_barrier_for_step_(residuals);
 
         DirectionResult direction = compute_search_direction_(traj);
@@ -1580,13 +1576,12 @@ private:
 
         // Convergence check (Primal + Dual + Mu) using the freshly computed dual residual.
         // The final convergence verdict is always made in postsolve() with fresh data.
-        if (context_.solve.current_iter > 1
-            && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) {
+        if (context_.solve.current_iter > 1 && check_convergence(residuals, max_dual_inf)) {
             return SolverStatus::OPTIMAL;
         }
 
         GlobalizationResult globalization
-            = globalize_step_(mu_before_step, max_prim_inf, max_dual_inf);
+            = globalize_step_(residuals.barrier_mu, residuals.max_primal_inf, max_dual_inf);
         if (globalization.status != SolverStatus::UNSOLVED) {
             return globalization.status;
         }
@@ -1594,7 +1589,7 @@ private:
         // Final Convergence Check using Step Size and Residuals.
         // Avoids wasting a full derivative computation in next step if we are already done.
         if (should_stop_after_line_search_(
-                trajectory.active(), globalization.alpha, max_prim_inf, max_dual_inf)) {
+                trajectory.active(), globalization.alpha, residuals.max_primal_inf, max_dual_inf)) {
             return SolverStatus::OPTIMAL;
         }
 
@@ -1654,6 +1649,8 @@ private:
     PostsolveResiduals refresh_postsolve_residuals_(TrajArray& traj)
     {
         PostsolveResiduals residuals;
+        residuals.barrier_mu = context_.solve.mu;
+        const double mu_eval = residuals.barrier_mu;
         residuals.max_dual_inf = std::numeric_limits<double>::infinity();
 
         for (int k = 0; k <= N; ++k) {
@@ -1670,11 +1667,11 @@ private:
                 }
             }
 
-            // 3. KKT complementarity (including L1-soft secondary pair).
+            // 3. Barrier complementarity (including L1-soft secondary pair).
             for (int i = 0; i < NC; ++i) {
-                double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - context_.solve.mu);
-                if (comp > residuals.max_kkt_error) {
-                    residuals.max_kkt_error = comp;
+                double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu_eval);
+                if (comp > residuals.max_barrier_complementarity_residual) {
+                    residuals.max_barrier_complementarity_residual = comp;
                 }
 
                 double w = 0.0;
@@ -1689,16 +1686,15 @@ private:
                 if (type == 1 && w > 1e-6) {
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - traj[k].lam(i));
-                    double comp_soft
-                        = std::abs(soft_s * soft_dual - context_.solve.mu);
-                    if (comp_soft > residuals.max_kkt_error) {
-                        residuals.max_kkt_error = comp_soft;
+                    double comp_soft = std::abs(soft_s * soft_dual - mu_eval);
+                    if (comp_soft > residuals.max_barrier_complementarity_residual) {
+                        residuals.max_barrier_complementarity_residual = comp_soft;
                     }
                 }
             }
         }
 
-        residuals.max_viol = compute_max_violation(traj);
+        residuals.max_primal_inf = compute_max_violation(traj);
         return residuals;
     }
 
@@ -1712,7 +1708,7 @@ private:
         if (linear_solver) {
             trajectory.prepare_candidate_full();
             residuals.linear_ok = linear_solver->evaluate_dual_residual(trajectory.candidate(), N,
-                context_.solve.mu, context_.solve.reg, config.inertia_strategy, config,
+                residuals.barrier_mu, context_.solve.reg, config.inertia_strategy, config,
                 residuals.max_dual_inf);
         }
     }
@@ -1721,24 +1717,22 @@ private:
     {
         // Level 1: SOLVED (Optimal)
         // 即使 Loop 是因为 Stagnation 退出的，如果此时恰好满足最优性，也给 SOLVED
-        if (residuals.linear_ok
-            && check_convergence(
-                residuals.max_viol, residuals.max_dual_inf, residuals.max_kkt_error)) {
+        if (residuals.linear_ok && check_convergence(residuals)) {
             return SolverStatus::OPTIMAL;
         }
         // Level 2: FEASIBLE (Acceptable)
         double feasible_bound = config.tol_con * config.feasible_tol_scale;
-        if (residuals.max_viol <= feasible_bound) {
+        if (residuals.max_primal_inf <= feasible_bound) {
             if (config.print_level >= PrintLevel::INFO) {
-                MLOG_INFO("Result: FEASIBLE (Viol: "
-                    << residuals.max_viol << " <= " << feasible_bound << ")");
+                MLOG_INFO("Result: FEASIBLE (Viol: " << residuals.max_primal_inf
+                                                     << " <= " << feasible_bound << ")");
             }
             return SolverStatus::FEASIBLE;
         }
         // Level 3: INFEASIBLE (Failed)
         if (config.print_level >= PrintLevel::WARN) {
-            MLOG_WARN("Result: INFEASIBLE (Viol: "
-                << residuals.max_viol << " > " << feasible_bound << ")");
+            MLOG_WARN("Result: INFEASIBLE (Viol: " << residuals.max_primal_inf << " > "
+                                                   << feasible_bound << ")");
         }
         return SolverStatus::INFEASIBLE;
     }
