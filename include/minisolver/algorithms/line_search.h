@@ -87,11 +87,10 @@ public:
                 candidate[k].soft_s = active[k].soft_s + active[k].dsoft_s * alpha;
                 candidate[k].p = active[k].p;
 
-                if (k < N) {
-                    const double current_dt = dt_traj[static_cast<size_t>(k)];
-                    candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
-                        candidate[k].p, current_dt, config.integrator, config.newton_config);
-                }
+                const double current_dt = (k < N) ? dt_traj[static_cast<size_t>(k)] : 0.0;
+                detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
+                if (k < N)
+                    candidate[k + 1].x = candidate[k].f_resid;
             }
         }
 
@@ -99,9 +98,11 @@ public:
         // prepare_candidate() only copies KnotState (including cached cost/g_val/f_resid from the
         // old iterate). Refresh them once at the accepted point so logging/heuristics and defect
         // metrics reflect the new (x,u,...) rather than stale values.
-        for (int k = 0; k <= N; ++k) {
-            const double current_dt = (k < N) ? dt_traj[static_cast<size_t>(k)] : 0.0;
-            detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
+        if (!config.enable_line_search_rollout) {
+            for (int k = 0; k <= N; ++k) {
+                const double current_dt = (k < N) ? dt_traj[static_cast<size_t>(k)] : 0.0;
+                detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
+            }
         }
 
         trajectory.swap();
@@ -279,11 +280,8 @@ public:
 
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
                     detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
-
-                    if (k < N) {
-                        candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
-                            candidate[k].p, current_dt, config.integrator, config.newton_config);
-                    }
+                    if (k < N)
+                        candidate[k + 1].x = candidate[k].f_resid;
                 }
             }
 
@@ -526,11 +524,8 @@ public:
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
                     detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
-
-                    if (k < N) {
-                        candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
-                            candidate[k].p, current_dt, config.integrator, config.newton_config);
-                    }
+                    if (k < N)
+                        candidate[k + 1].x = candidate[k].f_resid;
                 }
             }
 
@@ -574,18 +569,16 @@ public:
                         candidate[k].lam += soc_data[k].dlam;
                         candidate[k].soft_s += soc_data[k].dsoft_s;
 
-                        // Re-evaluate dynamics/constraints for SOC candidate
                         double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                        if (config.enable_line_search_rollout && k < N) {
-                            // Keep x0 fixed and re-propagate after applying SOC correction to
-                            // u/s/lam/soft_s.
+                        if (config.enable_line_search_rollout) {
+                            // Keep x0 fixed and re-propagate after applying SOC correction.
                             if (k == 0)
                                 candidate[0].x = active[0].x;
-                            candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
-                                candidate[k].p, current_dt, config.integrator, config.newton_config);
                         }
 
                         detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
+                        if (config.enable_line_search_rollout && k < N)
+                            candidate[k + 1].x = candidate[k].f_resid;
                     }
 
                     auto m_soc = compute_metrics(candidate, N, mu, config);
