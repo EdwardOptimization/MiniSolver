@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "minisolver/core/logger.h"
+#include "minisolver/core/model_traits.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/trajectory.h"
 #include "minisolver/core/types.h"
@@ -35,24 +36,6 @@ template <typename Model, int MAX_N> class SolverSerializer;
 // growing the public API.
 namespace test {
     template <typename, int> struct SolverInternalAccess;
-}
-
-// Detection for the optional `static constexpr IntegratorType
-// generated_integrator` marker emitted by MiniModel.py. The marker pins the
-// fused Riccati kernel to the integrator used at code-generation time;
-// runtime `config.integrator` must match to avoid a silently-wrong sweep.
-// Models without the marker (hand-written tests, legacy pre-marker models)
-// opt out of the check.
-namespace detail {
-    template <typename, typename = void>
-    struct has_generated_integrator : std::false_type { };
-
-    template <typename M>
-    struct has_generated_integrator<M, std::void_t<decltype(M::generated_integrator)>>
-        : std::true_type { };
-
-    template <typename M>
-    static constexpr bool has_generated_integrator_v = has_generated_integrator<M>::value;
 }
 
 class SolverTimer {

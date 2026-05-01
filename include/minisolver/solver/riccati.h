@@ -3,6 +3,7 @@
 #ifdef USE_EIGEN
 #include <Eigen/Dense>
 #endif
+#include "minisolver/core/model_traits.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include "minisolver/matrix/matrix_defs.h"
@@ -39,23 +40,10 @@ namespace internal {
         std::void_t<decltype(&T::template compute_fused_riccati_step<double>)>> : std::true_type {
     };
 
-    // Optional marker emitted by MiniModel.py. Fused Riccati kernels are generated
-    // against one discrete integrator's A/B expressions; using them with a different
-    // runtime integrator can silently produce the wrong backward pass.
-    template <typename T, typename = void> struct has_generated_integrator : std::false_type { };
-
-    template <typename T>
-    struct has_generated_integrator<T, std::void_t<decltype(T::generated_integrator)>>
-        : std::true_type { };
-
     template <typename ModelType>
     bool is_fused_riccati_integrator_compatible(IntegratorType integrator)
     {
-        if constexpr (has_generated_integrator<ModelType>::value) {
-            return ModelType::generated_integrator == integrator;
-        } else {
-            return true;
-        }
+        return detail::generated_integrator_matches<ModelType>(integrator);
     }
 
     inline double positive_barrier_gap(double value, double min_value)
