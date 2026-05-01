@@ -975,9 +975,11 @@ private:
         return recovered;
     }
 
-    SolverStatus globalize_step_(
-        double mu_before_step, double max_prim_inf, double max_dual_inf, double& alpha)
+    GlobalizationResult globalize_step_(
+        double mu_before_step, double max_prim_inf, double max_dual_inf)
     {
+        GlobalizationResult result;
+
         // Notify the line search if μ decreased during this step so it can
         // discard barrier-dependent history (filter entries, ratcheted merit_nu).
         if (line_search && context_.solve.mu < mu_before_step) {
@@ -985,16 +987,16 @@ private:
         }
 
         timer.start("Line Search");
-        alpha = line_search->search(
+        result.alpha = line_search->search(
             trajectory, *linear_solver, dt_traj, context_.solve.mu, context_.solve.reg, config);
-        alpha_log_.push_back(alpha);
-        context_.metrics.last_alpha = alpha;
+        alpha_log_.push_back(result.alpha);
+        context_.metrics.last_alpha = result.alpha;
         // IMPORTANT: line_search may swap trajectory buffers.
         // Do not use references to trajectory.active() taken before this call.
         auto& traj_after_ls = trajectory.active();
 
         // If step size is valid, reset the counter.
-        if (alpha > 1e-8) {
+        if (result.alpha > 1e-8) {
             context_.solve.slack_reset_consecutive_count = 0;
         } else {
             SolverStatus stagnation_status
@@ -1006,7 +1008,8 @@ private:
                         << "). Terminating as SOLVED.");
                 }
                 timer.stop();
-                return SolverStatus::OPTIMAL;
+                result.status = SolverStatus::OPTIMAL;
+                return result;
             }
             if (stagnation_status == SolverStatus::FEASIBLE) {
                 if (config.print_level >= PrintLevel::INFO) {
@@ -1014,23 +1017,27 @@ private:
                         << max_prim_inf << "). Terminating as FEASIBLE.");
                 }
                 timer.stop();
-                return SolverStatus::FEASIBLE;
+                result.status = SolverStatus::FEASIBLE;
+                return result;
             }
 
-            bool recovered = attempt_tiny_step_recovery_(traj_after_ls, alpha);
+            result.recovered = attempt_tiny_step_recovery_(traj_after_ls, result.alpha);
 
-            if (!recovered) {
+            if (!result.recovered) {
                 // Both Slack Reset and Feasibility Restoration failed (or were disabled).
                 timer.stop();
-                print_iteration_log(alpha);
-                return SolverStatus::INFEASIBLE;
+                print_iteration_log(result.alpha);
+                result.status = SolverStatus::INFEASIBLE;
+                return result;
             }
         }
 
         timer.stop();
 
-        print_iteration_log(alpha);
-        return SolverStatus::UNSOLVED;
+        context_.globalization.accepted_alpha = result.alpha;
+        context_.globalization.recovered = result.recovered;
+        print_iteration_log(result.alpha);
+        return result;
     }
 
     double compute_mehrotra_target_mu_(double mu_curr, double mu_aff, double alpha_aff) const
@@ -1130,11 +1137,14 @@ private:
         return solve_linear_system_with_retries_(traj, context_.solve.mu, nullptr, true);
     }
 
-    SolverStatus validate_search_direction_(
-        const TrajArray& traj, bool solve_success, double& max_dual_inf)
+    DirectionResult validate_search_direction_(const TrajArray& traj, bool solve_success)
     {
+        DirectionResult result;
+        result.solve_success = solve_success;
+
         if (!solve_success) {
-            return SolverStatus::NUMERICAL_ERROR;
+            result.status = SolverStatus::NUMERICAL_ERROR;
+            return result;
         }
 
         // Direction check after Riccati: scan the whole valid horizon so a
@@ -1143,17 +1153,18 @@ private:
             if (config.print_level >= PrintLevel::INFO) {
                 MLOG_ERROR("Numerical Error: invalid search direction detected.");
             }
-            return SolverStatus::NUMERICAL_ERROR;
+            result.status = SolverStatus::NUMERICAL_ERROR;
+            return result;
         }
 
         // Dual infeasibility metric: use Qu (stored in r_bar after the Riccati backward pass).
         // This is only valid after a successful linear solve (r_bar is stale right after
         // line-search swaps).
-        max_dual_inf = compute_dual_infeasibility_(traj);
-        return SolverStatus::UNSOLVED;
+        result.max_dual_inf = compute_dual_infeasibility_(traj);
+        return result;
     }
 
-    SolverStatus compute_search_direction_(TrajArray& traj, double& max_dual_inf)
+    DirectionResult compute_search_direction_(TrajArray& traj)
     {
         timer.start("Linear Solve");
         prepare_direction_workspace_();
@@ -1180,7 +1191,10 @@ private:
 
         timer.stop();
 
-        return validate_search_direction_(traj, solve_success, max_dual_inf);
+        DirectionResult result = validate_search_direction_(traj, solve_success);
+        context_.direction.solve_success = result.solve_success;
+        context_.direction.max_dual_inf = result.max_dual_inf;
+        return result;
     }
 
     void update_barrier(double max_kkt_error, double avg_gap)
@@ -1565,42 +1579,47 @@ private:
         context_.metrics.reset_solve();
     }
 
-    bool should_exit_after_step_status_(
-        SolverStatus step_stat, int iter, SolverStatus& loop_exit_status) const
+    LoopExitDecision should_exit_after_step_status_(SolverStatus step_stat, int iter) const
     {
+        LoopExitDecision decision;
+
         // SQP-RTI 模式：做一步即走，状态由 postsolve 判定。
         // Preserve the existing priority: RTI exits before inspecting step_stat.
         if (config.enable_rti) {
-            loop_exit_status = SolverStatus::UNSOLVED;
-            return true;
+            decision.should_exit = true;
+            return decision;
         }
 
         // 完美收敛 -> 记录状态并跳出，交给 postsolve 复核。
         if (step_stat == SolverStatus::OPTIMAL) {
-            loop_exit_status = SolverStatus::OPTIMAL;
+            decision.should_exit = true;
+            decision.status = SolverStatus::OPTIMAL;
             if (config.print_level >= PrintLevel::INFO) {
                 MLOG_INFO("Converged in " << iter + 1 << " iterations.");
             }
-            return true;
+            return decision;
         }
 
         if (step_stat == SolverStatus::FEASIBLE || step_stat == SolverStatus::INFEASIBLE) {
-            loop_exit_status = step_stat;
-            return true;
+            decision.should_exit = true;
+            decision.status = step_stat;
+            return decision;
         }
 
         // 数值错误 -> 立即中止。
         if (step_stat == SolverStatus::NUMERICAL_ERROR) {
-            loop_exit_status = SolverStatus::NUMERICAL_ERROR;
-            return true;
+            decision.should_exit = true;
+            decision.status = SolverStatus::NUMERICAL_ERROR;
+            return decision;
         }
 
-        return false;
+        return decision;
     }
 
-    bool should_exit_for_cost_stagnation_(
-        double& last_cost, double& last_mu, SolverStatus& loop_exit_status)
+    LoopExitDecision should_exit_for_cost_stagnation_(double& last_cost, double& last_mu)
     {
+        LoopExitDecision decision;
+
         // Objective cost is comparable across μ updates (barrier terms are not part of
         // KnotPoint::cost). However, if μ is actively decreasing we should not stop purely
         // on objective stagnation, since IPM may still be progressing by reducing μ.
@@ -1612,13 +1631,14 @@ private:
                 MLOG_INFO("Cost Stagnation detected. Stopping early.");
             }
             // 标记为 UNSOLVED，表示非自然收敛，交给 postsolve 判定是 Feasible 还是 Optimal。
-            loop_exit_status = SolverStatus::UNSOLVED;
-            return true;
+            decision.should_exit = true;
+            decision.cost_stagnated = true;
+            return decision;
         }
 
         last_cost = current_cost;
         last_mu = context_.solve.mu;
-        return false;
+        return decision;
     }
 
     SolverStatus run_solve_loop_()
@@ -1633,11 +1653,19 @@ private:
             SolverStatus step_stat = execute_solve_iteration_();
             timer.stop();
 
-            if (should_exit_after_step_status_(step_stat, iter, loop_exit_status)) {
+            LoopExitDecision step_exit = should_exit_after_step_status_(step_stat, iter);
+            if (step_exit.should_exit) {
+                loop_exit_status = step_exit.status;
+                context_.termination.loop_exit_status = step_exit.status;
                 break;
             }
 
-            if (should_exit_for_cost_stagnation_(last_cost, last_mu, loop_exit_status)) {
+            LoopExitDecision stagnation_exit
+                = should_exit_for_cost_stagnation_(last_cost, last_mu);
+            if (stagnation_exit.should_exit) {
+                loop_exit_status = stagnation_exit.status;
+                context_.termination.loop_exit_status = stagnation_exit.status;
+                context_.termination.cost_stagnated = stagnation_exit.cost_stagnated;
                 break;
             }
         }
@@ -1660,13 +1688,13 @@ private:
         StepResidualSummary residuals = evaluate_derivatives_phase_(traj);
         double max_kkt_error = residuals.max_kkt_error;
         double max_prim_inf = residuals.max_prim_inf;
-        double max_dual_inf = 0.0;
         update_barrier_for_step_(residuals);
 
-        SolverStatus direction_status = compute_search_direction_(traj, max_dual_inf);
-        if (direction_status != SolverStatus::UNSOLVED) {
-            return direction_status;
+        DirectionResult direction = compute_search_direction_(traj);
+        if (direction.status != SolverStatus::UNSOLVED) {
+            return direction.status;
         }
+        double max_dual_inf = direction.max_dual_inf;
 
         // Convergence check (Primal + Dual + Mu) using the freshly computed dual residual.
         // The final convergence verdict is always made in postsolve() with fresh data.
@@ -1675,16 +1703,16 @@ private:
             return SolverStatus::OPTIMAL;
         }
 
-        double alpha = 1.0;
-        SolverStatus globalization_status
-            = globalize_step_(mu_before_step, max_prim_inf, max_dual_inf, alpha);
-        if (globalization_status != SolverStatus::UNSOLVED) {
-            return globalization_status;
+        GlobalizationResult globalization
+            = globalize_step_(mu_before_step, max_prim_inf, max_dual_inf);
+        if (globalization.status != SolverStatus::UNSOLVED) {
+            return globalization.status;
         }
 
         // Final Convergence Check using Step Size and Residuals.
         // Avoids wasting a full derivative computation in next step if we are already done.
-        if (should_stop_after_line_search_(trajectory.active(), alpha, max_prim_inf, max_dual_inf)) {
+        if (should_stop_after_line_search_(
+                trajectory.active(), globalization.alpha, max_prim_inf, max_dual_inf)) {
             return SolverStatus::OPTIMAL;
         }
 
@@ -1804,8 +1832,11 @@ private:
     // ============================================================
     // [Phase 3] Postsolve: Finalization & Verdict
     // ============================================================
-    bool refresh_postsolve_residuals_(TrajArray& traj, double& max_kkt_error)
+    PostsolveResiduals refresh_postsolve_residuals_(TrajArray& traj)
     {
+        PostsolveResiduals residuals;
+        residuals.max_dual_inf = std::numeric_limits<double>::infinity();
+
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
@@ -1815,15 +1846,16 @@ private:
             for (int i = 0; i < NC; ++i) {
                 if (MatOps::is_nan_scalar(traj[k].g_val(i))
                     || MatOps::is_nan_scalar(traj[k].s(i))) {
-                    return false;
+                    residuals.residuals_ok = false;
+                    return residuals;
                 }
             }
 
             // 3. KKT complementarity (including L1-soft secondary pair).
             for (int i = 0; i < NC; ++i) {
                 double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - context_.solve.mu);
-                if (comp > max_kkt_error) {
-                    max_kkt_error = comp;
+                if (comp > residuals.max_kkt_error) {
+                    residuals.max_kkt_error = comp;
                 }
 
                 double w = 0.0;
@@ -1840,51 +1872,54 @@ private:
                     const double soft_dual = (w - traj[k].lam(i));
                     double comp_soft
                         = std::abs(soft_s * soft_dual - context_.solve.mu);
-                    if (comp_soft > max_kkt_error) {
-                        max_kkt_error = comp_soft;
+                    if (comp_soft > residuals.max_kkt_error) {
+                        residuals.max_kkt_error = comp_soft;
                     }
                 }
             }
         }
 
-        return true;
+        residuals.max_viol = compute_max_violation(traj);
+        return residuals;
     }
 
-    bool evaluate_postsolve_dual_residual_(double& max_dual_inf)
+    void evaluate_postsolve_dual_residual_(PostsolveResiduals& residuals)
     {
         // Dual infeasibility metric: require a fresh Riccati backward pass so Qu includes
         // the dynamic multipliers (B^T * pi_{k+1}). Use the inactive trajectory buffer as
         // scratch so postsolve never overwrites the active solution directions/gains.
-        max_dual_inf = std::numeric_limits<double>::infinity();
+        residuals.max_dual_inf = std::numeric_limits<double>::infinity();
+        residuals.linear_ok = false;
         if (linear_solver) {
             trajectory.prepare_candidate_full();
-            return linear_solver->evaluate_dual_residual(trajectory.candidate(), N,
+            residuals.linear_ok = linear_solver->evaluate_dual_residual(trajectory.candidate(), N,
                 context_.solve.mu, context_.solve.reg, config.inertia_strategy, config,
-                max_dual_inf);
+                residuals.max_dual_inf);
         }
-        return false;
     }
 
-    SolverStatus classify_postsolve_result_(
-        double max_viol, double max_dual_inf, double max_kkt_error, bool linear_ok)
+    SolverStatus classify_postsolve_result_(const PostsolveResiduals& residuals)
     {
         // Level 1: SOLVED (Optimal)
         // 即使 Loop 是因为 Stagnation 退出的，如果此时恰好满足最优性，也给 SOLVED
-        if (linear_ok && check_convergence(max_viol, max_dual_inf, max_kkt_error)) {
+        if (residuals.linear_ok
+            && check_convergence(
+                residuals.max_viol, residuals.max_dual_inf, residuals.max_kkt_error)) {
             return SolverStatus::OPTIMAL;
         }
         // Level 2: FEASIBLE (Acceptable)
         double feasible_bound = config.tol_con * config.feasible_tol_scale;
-        if (max_viol <= feasible_bound) {
+        if (residuals.max_viol <= feasible_bound) {
             if (config.print_level >= PrintLevel::INFO) {
-                MLOG_INFO(
-                    "Result: FEASIBLE (Viol: " << max_viol << " <= " << feasible_bound << ")");
+                MLOG_INFO("Result: FEASIBLE (Viol: "
+                    << residuals.max_viol << " <= " << feasible_bound << ")");
             }
             return SolverStatus::FEASIBLE;
         }
         // Level 3: INFEASIBLE (Failed)
         if (config.print_level >= PrintLevel::WARN) {
-            MLOG_WARN("Result: INFEASIBLE (Viol: " << max_viol << " > " << feasible_bound << ")");
+            MLOG_WARN("Result: INFEASIBLE (Viol: "
+                << residuals.max_viol << " > " << feasible_bound << ")");
         }
         return SolverStatus::INFEASIBLE;
     }
@@ -1903,19 +1938,15 @@ private:
         // 无论是因为收敛还是因为耗尽步数退出，我们都重新计算一次精确的残差，
         // 以便做出最公正的最终评判。
         auto& traj = trajectory.active();
-        double max_kkt_error = 0.0;
-        if (!refresh_postsolve_residuals_(traj, max_kkt_error)) {
+        PostsolveResiduals residuals = refresh_postsolve_residuals_(traj);
+        if (!residuals.residuals_ok) {
             return SolverStatus::NUMERICAL_ERROR;
         }
 
-        // Primal feasibility uses the recomputed constraints/dynamics defects.
-        double max_viol = compute_max_violation(traj);
-
-        double max_dual_inf = std::numeric_limits<double>::infinity();
-        bool linear_ok = evaluate_postsolve_dual_residual_(max_dual_inf);
+        evaluate_postsolve_dual_residual_(residuals);
 
         // [最终评级]
-        return classify_postsolve_result_(max_viol, max_dual_inf, max_kkt_error, linear_ok);
+        return classify_postsolve_result_(residuals);
     }
 
 private:

@@ -81,6 +81,12 @@ struct DirectionState {
     }
 };
 
+struct DirectionResult {
+    SolverStatus status = SolverStatus::UNSOLVED;
+    bool solve_success = false;
+    double max_dual_inf = 0.0;
+};
+
 struct GlobalizationState {
     double accepted_alpha = 1.0;
     bool recovered = false;
@@ -92,6 +98,12 @@ struct GlobalizationState {
     }
 };
 
+struct GlobalizationResult {
+    SolverStatus status = SolverStatus::UNSOLVED;
+    double alpha = 1.0;
+    bool recovered = false;
+};
+
 struct TerminationState {
     SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
     bool cost_stagnated = false;
@@ -101,6 +113,20 @@ struct TerminationState {
         loop_exit_status = SolverStatus::UNSOLVED;
         cost_stagnated = false;
     }
+};
+
+struct LoopExitDecision {
+    bool should_exit = false;
+    SolverStatus status = SolverStatus::UNSOLVED;
+    bool cost_stagnated = false;
+};
+
+struct PostsolveResiduals {
+    bool residuals_ok = true;
+    bool linear_ok = false;
+    double max_viol = 0.0;
+    double max_dual_inf = 0.0;
+    double max_kkt_error = 0.0;
 };
 
 struct SolverContext {
