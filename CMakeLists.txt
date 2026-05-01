@@ -363,6 +363,11 @@ add_dependencies(test_implicit_sparse_riccati minisolver_test_models)
 target_link_libraries(test_implicit_sparse_riccati minisolver_lib gtest_main)
 target_include_directories(test_implicit_sparse_riccati PRIVATE ${TEST_GENERATED_DIR})
 add_test(NAME test_implicit_sparse_riccati COMMAND test_implicit_sparse_riccati)
+
+add_minisolver_bench(implicit_sparse_riccati_bench tools/implicit_sparse_riccati_bench.cpp)
+add_dependencies(implicit_sparse_riccati_bench minisolver_test_models)
+target_include_directories(implicit_sparse_riccati_bench PRIVATE ${TEST_GENERATED_DIR})
+
 add_executable(test_asset_regressions
     tests/test_asset_regressions.cpp
     ${KINEMATIC_BICYCLE_TEST_MODEL}
