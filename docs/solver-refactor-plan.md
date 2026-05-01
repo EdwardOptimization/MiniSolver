@@ -142,6 +142,45 @@ Deferred deliberately:
 - Frozen `SolverPlan`: still premature until more seams have real variants or
   plan construction starts accumulating compatibility checks.
 
+## Restoration Route
+
+`feasibility_restoration()` is a recovery phase, not one fixed algorithm. Its
+contract is to take a trajectory that the normal IPM step/globalization could
+not advance and try to return it to a region where the primal residuals and
+barrier interior are usable again. It may change `x/u/s/lam/soft_s`, but it
+must leave the main IPM with duals/slacks that are valid for the original OCP
+barrier problem.
+
+The current implementation is a quadratic-penalty feasibility restoration. It
+temporarily solves a surrogate problem of the form:
+
+```text
+min 0.5 ||dx||^2 + 0.5 ||du||^2
+  + 0.5 * rho * ||C dx + D du + g||^2
+```
+
+using the existing Riccati direction machinery. In code this appears as
+stage-local additions such as `Q += rho * C^T C`, `R += rho * D^T D`, and
+`q += rho * C^T g`. This is an ALM/ALADIN-adjacent penalty idea, but it is not
+a full ALADIN solver and not an augmented-Lagrangian outer loop: there is no
+separate consensus QP, multiplier coordination, or adaptive penalty update.
+
+That distinction matters for future architecture. `feasibility_restoration`
+should remain the phase name; quadratic-penalty restoration is only the current
+implementation. Other possible implementations include:
+
+- slack-reset-only recovery.
+- min-norm correction.
+- dynamics rollout repair.
+- constraint projection.
+- elastic-mode restoration.
+- trust-region restoration.
+- ALM-style restoration with explicit multiplier and penalty updates.
+
+`RestorationKernel` is therefore the right future seam, but not yet the right
+current extraction. Introduce it only when a second restoration implementation
+or a focused correctness/debuggability issue needs a narrow recovery contract.
+
 ## Current State After Solver Build-State Pass
 
 Completed after the kernel pass:

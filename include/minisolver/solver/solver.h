@@ -1301,13 +1301,14 @@ private:
                 }
             }
 
-            // Restoration linear solve
-            // [ALADIN-Inspired] Augmented Lagrangian Restoration
+            // Restoration linear solve.
+            // Quadratic-penalty feasibility restoration:
             // Minimizing 0.5*||dx||^2 + 0.5*rho*||C*dx + D*du + g + s||^2
             // This pulls the solution towards the constraint manifold more aggressively than simple
-            // min-norm.
+            // min-norm. This is a restoration heuristic, not a full ALADIN or augmented-Lagrangian
+            // outer loop.
             if (config.barrier_strategy != BarrierStrategy::MEHROTRA) {
-                double rho = 1000.0; // Penalty weight from ALADIN concepts
+                double rho = 1000.0; // Fixed quadratic restoration penalty.
                 for (int k = 0; k <= N; ++k) {
                     auto& kp = traj[k];
 
