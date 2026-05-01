@@ -20,10 +20,13 @@
 #include "minisolver/core/trajectory.h"
 #include "minisolver/core/types.h"
 
+#include "minisolver/algorithms/barrier_update.h"
+#include "minisolver/algorithms/initialization.h"
 #include "minisolver/algorithms/line_search.h"
 #include "minisolver/algorithms/linear_solver.h"
 #include "minisolver/algorithms/model_evaluation.h"
 #include "minisolver/algorithms/riccati_solver.h"
+#include "minisolver/algorithms/termination.h"
 #include "minisolver/integrator/implicit_integrator.h"
 
 #include "minisolver/backend/backend_interface.h"
@@ -592,21 +595,8 @@ public:
 private:
     bool check_convergence(double max_viol, double max_dual, double max_kkt_error)
     {
-        // must satisfy all of the following conditions:
-        // 1. barrier parameter mu is small enough (target precision)
-        // 2. primal constraints are satisfied (Feasible)
-        // 3. dual gradient is satisfied (Stationary)
-        // 4. complementarity is satisfied (Complementarity): s*lam is close to mu
-
-        bool mu_converged = (context_.solve.mu <= config.mu_final);
-        bool primal_ok = (max_viol <= config.tol_con);
-        bool dual_ok = (max_dual <= config.tol_dual);
-
-        // complementarity error tolerance is usually set to kappa * mu or a slightly relaxed fixed
-        // value here we require it to converge to tol_cost or tol_mu level
-        bool kkt_ok = (max_kkt_error <= std::max(config.tol_mu, 10.0 * context_.solve.mu));
-
-        return mu_converged && primal_ok && dual_ok && kkt_ok;
+        return detail::TerminationKernel::check_convergence(
+            config, context_.solve.mu, max_viol, max_dual, max_kkt_error);
     }
 
     double compute_objective_cost_(const TrajArray& traj) const
@@ -621,20 +611,8 @@ private:
     bool should_stop_for_cost_stagnation_(
         double current_cost, double last_cost, double last_mu) const
     {
-        // 只有在满足一定可行性时，Cost 停滞才有意义。
-        const double feasible_bound = config.tol_con * config.feasible_tol_scale;
-        if (context_.metrics.last_prim_inf > feasible_bound) {
-            return false;
-        }
-
-        const double cost_diff = std::abs(current_cost - last_cost);
-        if (cost_diff >= config.tol_cost) {
-            return false;
-        }
-
-        const bool mu_decreased = (context_.solve.mu < last_mu);
-        const bool mu_small = (context_.solve.mu <= config.mu_final);
-        return mu_small || !mu_decreased;
+        return detail::TerminationKernel::should_stop_for_cost_stagnation(config,
+            context_.metrics.last_prim_inf, current_cost, last_cost, context_.solve.mu, last_mu);
     }
 
     StepResidualSummary evaluate_step_model_(TrajArray& traj)
@@ -922,13 +900,8 @@ private:
     SolverStatus classify_tiny_step_stagnation_(
         double max_prim_inf, double max_dual_inf) const
     {
-        if (max_prim_inf > config.tol_con) {
-            return SolverStatus::UNSOLVED;
-        }
-        if (max_dual_inf <= config.tol_dual) {
-            return SolverStatus::OPTIMAL;
-        }
-        return SolverStatus::FEASIBLE;
+        return detail::TerminationKernel::classify_tiny_step_stagnation(
+            config, max_prim_inf, max_dual_inf);
     }
 
     bool attempt_tiny_step_recovery_(TrajArray& traj_after_ls, double alpha)
@@ -1040,52 +1013,6 @@ private:
         return result;
     }
 
-    double compute_mehrotra_target_mu_(double mu_curr, double mu_aff, double alpha_aff) const
-    {
-        // Aggressive Update: Use sigma^k with k >= 1
-        // Heuristic: If affine step is good (large alpha_aff), be aggressive.
-        // If alpha_aff is small, be conservative.
-        double sigma_base = std::pow(mu_aff / mu_curr, 3);
-        double sigma = sigma_base;
-
-        // Aggressive Strategy
-        // If alpha_aff close to 1, we can reduce mu significantly.
-        if (config.enable_aggressive_barrier) {
-            if (alpha_aff > 0.9) {
-                sigma = std::min(
-                    sigma, 0.01); // [AGGRESSIVE] Force 100x reduction if direction is good.
-            }
-            // If we are far from solution (large gap), allow faster drop.
-            if (mu_curr > 1.0) {
-                sigma = std::min(sigma, 0.1);
-            }
-        } else {
-            // Mehrotra Centering Parameter Heuristic
-            // Limit sigma to avoid aggressive reduction when affine step is bad.
-            if (alpha_aff < 0.1) {
-                // If affine direction is blocked quickly, we are close to boundary.
-                // Be conservative to allow centering.
-                sigma = std::max(sigma, 0.5);
-            } else if (alpha_aff > 0.9) {
-                // If affine direction is good, we can reduce mu significantly.
-                sigma = std::min(sigma, 0.1);
-            }
-        }
-
-        if (sigma > 1.0) {
-            sigma = 1.0;
-        }
-        if (sigma < 1e-4) {
-            sigma = 1e-4; // Prevent too small sigma.
-        }
-
-        double mu_target = sigma * mu_curr;
-        if (mu_target < config.mu_final) {
-            mu_target = config.mu_final; // Enforce lower bound.
-        }
-        return mu_target;
-    }
-
     bool compute_mehrotra_direction_(TrajArray& traj)
     {
         // 1. Affine Step (Predictor)
@@ -1111,7 +1038,8 @@ private:
                                                  << ", alpha_aff=" << alpha_aff);
         }
 
-        double mu_target = compute_mehrotra_target_mu_(mu_curr, mu_aff, alpha_aff);
+        double mu_target
+            = detail::BarrierUpdateKernel::mehrotra_target_mu(config, mu_curr, mu_aff, alpha_aff);
 
         // 2. Corrector Step
         // Solve with mu_target and affine correction term.
@@ -1199,37 +1127,8 @@ private:
 
     void update_barrier(double max_kkt_error, double avg_gap)
     {
-        switch (config.barrier_strategy) {
-        case BarrierStrategy::MONOTONE:
-            if (max_kkt_error < config.barrier_tolerance_factor * context_.solve.mu) {
-                double next_mu = std::max(
-                    config.mu_final, context_.solve.mu * config.mu_linear_decrease_factor);
-                context_.solve.mu = next_mu;
-            }
-            break;
-        case BarrierStrategy::ADAPTIVE: {
-            double target = avg_gap * config.mu_safety_margin;
-            // Removed forced decrease to allow mu to hold steady if needed for convergence
-            context_.solve.mu = std::max(config.mu_final, std::min(context_.solve.mu, target));
-            break;
-        }
-        case BarrierStrategy::MEHROTRA: {
-            double ratio = avg_gap / context_.solve.mu;
-            if (ratio > 1.0) {
-                ratio = 1.0;
-            }
-            double sigma = std::pow(ratio, 3);
-            if (sigma < 0.05) {
-                sigma = 0.05;
-            }
-            if (sigma > 0.8) {
-                sigma = 0.8;
-            }
-            double next_mu = std::max(config.mu_final, context_.solve.mu * sigma);
-            context_.solve.mu = next_mu;
-            break;
-        }
-        }
+        context_.solve.mu = detail::BarrierUpdateKernel::update_mu(
+            config, context_.solve.mu, max_kkt_error, avg_gap);
     }
 
     void print_iteration_log(double alpha, bool header = false)
@@ -1736,72 +1635,8 @@ private:
 
     bool should_initialize_primal_dual_() const
     {
-        if (config.initialization != InitializationMode::REUSE_PRIMAL_DUAL) {
-            return true;
-        }
-        return !has_valid_primal_dual_guess(trajectory.active());
-    }
-
-    void initialize_constraint_primal_dual_(Knot& kp, int i)
-    {
-        double g = kp.g_val(i);
-        double w = 0.0;
-        int type = 0;
-        if constexpr (NC > 0) {
-            if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                type = Model::constraint_types[i];
-                w = Model::constraint_weights[i];
-            }
-        }
-
-        if (type == 1 && w > 1e-6) { // L1 Soft Constraint
-            // Central Path:
-            // 1) g + s - soft_s = 0
-            // 2) s * lam = mu
-            // 3) soft_s * (w - lam) = mu
-            // Reduce to quadratic in lam: g*lam^2 - (g*w - 2*mu)*lam - mu*w = 0
-            double a = g;
-            double b = -(g * w - 2 * context_.solve.mu);
-            double c = -context_.solve.mu * w;
-
-            double lam_val;
-            if (std::abs(a) < 1e-9) {
-                // Linear case (g ≈ 0): 2*mu*lam = mu*w → lam = w/2
-                lam_val = w / 2.0;
-            } else {
-                double delta = b * b - 4 * a * c;
-                if (delta < 0) {
-                    delta = 0;
-                }
-                lam_val = (-b + std::sqrt(delta)) / (2 * a);
-            }
-
-            // Clamp for safety
-            lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
-
-            kp.lam(i) = lam_val;
-            kp.s(i) = context_.solve.mu / lam_val;
-            kp.soft_s(i) = context_.solve.mu / (w - lam_val);
-        } else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
-            // Central Path:
-            // 1) g + s - lam/w = 0
-            // 2) s * lam = mu
-            // Reduce to quadratic in lam: lam^2 - g*w*lam - mu*w = 0
-            double b = -g * w;
-            double c = -context_.solve.mu * w;
-            // lam = (-b + sqrt(b^2 - 4ac)) / 2a, here a=1
-            // lam = (g*w + sqrt(g^2*w^2 + 4*mu*w)) / 2
-            double delta = b * b - 4 * c; // b^2 + 4*mu*w > 0 always
-            double lam_val = (-b + std::sqrt(delta)) / 2.0;
-
-            kp.lam(i) = std::max(1e-8, lam_val);
-            kp.s(i) = context_.solve.mu / kp.lam(i);
-            // soft_s not used in L2
-        } else { // Hard Constraint
-            double s_val = std::max(1e-6, -g);
-            kp.s(i) = s_val;
-            kp.lam(i) = context_.solve.mu / s_val;
-        }
+        return detail::InitializationKernel::should_initialize_primal_dual(
+            config, has_valid_primal_dual_guess(trajectory.active()));
     }
 
     void initialize_primal_dual_from_model_()
@@ -1812,7 +1647,8 @@ private:
             detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
 
             for (int i = 0; i < NC; ++i) {
-                initialize_constraint_primal_dual_(traj[k], i);
+                detail::InitializationKernel::initialize_constraint_primal_dual<Model>(
+                    traj[k], i, context_.solve.mu);
             }
         }
     }
