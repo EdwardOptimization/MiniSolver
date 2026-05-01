@@ -35,13 +35,20 @@ public:
                 return true;
             }
 
-            // Regularize for robustness (Levenberg-Marquardt style damping)
-            MSMat<T, N, N> J_reg = J_;
-            for (int i = 0; i < N; ++i)
-                J_reg(i, i) += config.regularization;
+            // Use the exact Newton step whenever the Jacobian is solvable.
+            // Diagonal damping is a fallback for singular systems; applying it
+            // unconditionally can stall valid but ill-conditioned linear steps.
+            if (!MatOps::lu_solve(J_, F_, delta_)) {
+                if (config.regularization <= T(0))
+                    return false;
 
-            if (!MatOps::lu_solve(J_reg, F_, delta_))
-                return false;
+                MSMat<T, N, N> J_reg = J_;
+                for (int i = 0; i < N; ++i)
+                    J_reg(i, i) += config.regularization;
+
+                if (!MatOps::lu_solve(J_reg, F_, delta_))
+                    return false;
+            }
 
             x -= delta_;
         }

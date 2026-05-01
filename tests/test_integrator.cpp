@@ -392,6 +392,41 @@ TEST(ImplicitIntegratorTest, NewtonDetectsConvergenceAfterFinalStep)
     EXPECT_NEAR(x(0), 1.0, 1e-12);
 }
 
+TEST(ImplicitIntegratorTest, NewtonDoesNotDampSolvableIllConditionedJacobian)
+{
+    MSVec<double, 2> x;
+    x(0) = 0.0;
+    x(1) = 0.0;
+
+    const double eps = 1e-12;
+    MSVec<double, 2> root;
+    root(0) = 1.0;
+    root(1) = -1.0;
+
+    NewtonConfig cfg;
+    cfg.max_iters = 6;
+    cfg.tol = 1e-18;
+    cfg.regularization = 1e-12;
+
+    auto eval = [&](const MSVec<double, 2>& z, MSVec<double, 2>& F,
+                    MSMat<double, 2, 2>& J) {
+        J(0, 0) = 1.0;
+        J(0, 1) = 1.0;
+        J(1, 0) = 1.0;
+        J(1, 1) = 1.0 + eps;
+
+        const MSVec<double, 2> e = z - root;
+        F = J * e;
+    };
+
+    NewtonSolver<double, 2> ns;
+    const bool ok = ns.solve(x, eval, cfg, false);
+
+    EXPECT_TRUE(ok);
+    EXPECT_NEAR(x(0), root(0), 1e-9);
+    EXPECT_NEAR(x(1), root(1), 1e-9);
+}
+
 // --- Backward Euler accuracy: O(dt^2) ---
 TEST(ImplicitIntegratorTest, BackwardEulerAccuracy)
 {

@@ -17,7 +17,7 @@ enum class BarrierStrategy { MONOTONE, ADAPTIVE, MEHROTRA };
 struct NewtonConfig {
     int max_iters = 20;
     double tol = 1e-10;
-    double regularization = 1e-12; // Levenberg-Marquardt damping
+    double regularization = 1e-12; // Fallback diagonal damping for singular Jacobians
 };
 
 enum class InertiaStrategy {
