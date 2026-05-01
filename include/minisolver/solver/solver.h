@@ -20,6 +20,7 @@
 
 #include "minisolver/algorithms/line_search.h"
 #include "minisolver/algorithms/linear_solver.h"
+#include "minisolver/algorithms/model_evaluation.h"
 #include "minisolver/algorithms/riccati_solver.h"
 #include "minisolver/integrator/implicit_integrator.h"
 
@@ -995,16 +996,7 @@ private:
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
-            // Conditionally use GN or Exact compute
-            if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                Model::compute_cost_gn(traj[k]);
-                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
-                Model::compute_constraints(traj[k]);
-            } else {
-                Model::compute_cost_exact(traj[k]);
-                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
-                Model::compute_constraints(traj[k]);
-            }
+            detail::evaluate_model_stage<Model>(traj[k], config, current_dt);
 
             for (int i = 0; i < NC; ++i) {
                 const double s = traj[k].s(i);
@@ -1579,16 +1571,7 @@ private:
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
-            // 1. Recompute Primal/Dual properties
-            if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                Model::compute_cost_gn(traj[k]);
-                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
-                Model::compute_constraints(traj[k]);
-            } else {
-                Model::compute_cost_exact(traj[k]);
-                detail::dispatch_compute_dynamics<Model>(traj[k], config.integrator, current_dt, config.newton_config);
-                Model::compute_constraints(traj[k]);
-            }
+            detail::evaluate_model_stage<Model>(traj[k], config, current_dt);
 
             // 2. Check NaNs (bit-level, works under -ffast-math)
             for (int i = 0; i < NC; ++i) {

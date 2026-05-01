@@ -5,10 +5,10 @@
 #include <vector>
 
 #include "minisolver/algorithms/linear_solver.h"
+#include "minisolver/algorithms/model_evaluation.h"
 #include "minisolver/core/logger.h" // [NEW] Needed for MLOG_DEBUG
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/trajectory.h"
-#include "minisolver/integrator/implicit_integrator.h"
 #include "minisolver/core/types.h"
 #include "minisolver/solver/line_search_utils.h" // [NEW] Needed for fraction_to_boundary_rule
 
@@ -101,16 +101,7 @@ public:
         // metrics reflect the new (x,u,...) rather than stale values.
         for (int k = 0; k <= N; ++k) {
             const double current_dt = (k < N) ? dt_traj[static_cast<size_t>(k)] : 0.0;
-
-            if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                Model::compute_cost_gn(candidate[k]);
-                Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-                Model::compute_constraints(candidate[k]);
-            } else {
-                Model::compute_cost_exact(candidate[k]);
-                Model::compute_dynamics(candidate[k], config.integrator, current_dt);
-                Model::compute_constraints(candidate[k]);
-            }
+            detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
         }
 
         trajectory.swap();
@@ -271,16 +262,7 @@ public:
 
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
-                    // Compute Residuals
-                    if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                        Model::compute_cost_gn(candidate[k]);
-                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                        Model::compute_constraints(candidate[k]);
-                    } else {
-                        Model::compute_cost_exact(candidate[k]);
-                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                        Model::compute_constraints(candidate[k]);
-                    }
+                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
                 }
             } else {
                 // Single-shooting rollout trial point:
@@ -296,15 +278,7 @@ public:
                     candidate[k].p = active[k].p;
 
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                    if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                        Model::compute_cost_gn(candidate[k]);
-                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                        Model::compute_constraints(candidate[k]);
-                    } else {
-                        Model::compute_cost_exact(candidate[k]);
-                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                        Model::compute_constraints(candidate[k]);
-                    }
+                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
 
                     if (k < N) {
                         candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
@@ -538,16 +512,7 @@ public:
 
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
-                    // Compute Residuals
-                    if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                        Model::compute_cost_gn(candidate[k]);
-                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                        Model::compute_constraints(candidate[k]);
-                    } else {
-                        Model::compute_cost_exact(candidate[k]);
-                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                        Model::compute_constraints(candidate[k]);
-                    }
+                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
                 }
             } else {
                 candidate[0].x = active[0].x;
@@ -560,16 +525,7 @@ public:
 
                     double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
-                    // Compute Residuals
-                    if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                        Model::compute_cost_gn(candidate[k]);
-                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                        Model::compute_constraints(candidate[k]);
-                    } else {
-                        Model::compute_cost_exact(candidate[k]);
-                        detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                        Model::compute_constraints(candidate[k]);
-                    }
+                    detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
 
                     if (k < N) {
                         candidate[k + 1].x = detail::dispatch_integrate<Model>(candidate[k].x, candidate[k].u,
@@ -629,16 +585,7 @@ public:
                                 candidate[k].p, current_dt, config.integrator, config.newton_config);
                         }
 
-                        // Compute Residuals
-                        if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
-                            Model::compute_cost_gn(candidate[k]);
-                            detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                            Model::compute_constraints(candidate[k]);
-                        } else {
-                            Model::compute_cost_exact(candidate[k]);
-                            detail::dispatch_compute_dynamics<Model>(candidate[k], config.integrator, current_dt, config.newton_config);
-                            Model::compute_constraints(candidate[k]);
-                        }
+                        detail::evaluate_model_stage<Model>(candidate[k], config, current_dt);
                     }
 
                     auto m_soc = compute_metrics(candidate, N, mu, config);
