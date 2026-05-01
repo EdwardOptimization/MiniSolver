@@ -37,6 +37,12 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         s.linear_solver = std::move(solver);
     }
+    static bool build_dirty(const Solver& s) { return s.build_state_.dirty; }
+    static LineSearchType plan_line_search_type(const Solver& s)
+    {
+        return s.build_state_.plan.line_search_type;
+    }
+    static Backend plan_backend(const Solver& s) { return s.build_state_.plan.backend; }
 };
 } // namespace minisolver::test
 
@@ -684,6 +690,34 @@ TEST(BugfixTest, SetConfigPreservesBackendInvariant)
     // Before fix: set_config does `config = conf` and backend becomes GPU_PCR.
     EXPECT_EQ(solver.get_config().backend, Backend::GPU_MPX)
         << "set_config must preserve the constructor-set backend invariant";
+}
+
+TEST(BugfixTest, SetConfigDefersPlanRebuildUntilSolve)
+{
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+    conf.max_iters = 0;
+    conf.line_search_type = LineSearchType::FILTER;
+
+    MiniSolver<BugTestModel, 10> solver(3, Backend::CPU_SERIAL, conf);
+    ASSERT_FALSE(Access::build_dirty(solver));
+    ASSERT_EQ(Access::plan_line_search_type(solver), LineSearchType::FILTER);
+
+    SolverConfig new_conf = solver.get_config();
+    new_conf.line_search_type = LineSearchType::MERIT;
+    solver.set_config(new_conf);
+
+    EXPECT_TRUE(Access::build_dirty(solver));
+    EXPECT_EQ(Access::plan_line_search_type(solver), LineSearchType::FILTER)
+        << "set_config should only mark the build state dirty, not rebuild immediately";
+
+    (void)solver.solve();
+
+    EXPECT_FALSE(Access::build_dirty(solver));
+    EXPECT_EQ(Access::plan_line_search_type(solver), LineSearchType::MERIT);
+    EXPECT_EQ(Access::plan_backend(solver), Backend::CPU_SERIAL);
 }
 
 // =============================================================================

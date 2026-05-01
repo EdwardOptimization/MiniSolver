@@ -17,6 +17,7 @@
 #include "minisolver/core/model_traits.h"
 #include "minisolver/core/solver_context.h"
 #include "minisolver/core/solver_options.h"
+#include "minisolver/core/solver_plan.h"
 #include "minisolver/core/trajectory.h"
 #include "minisolver/core/types.h"
 
@@ -122,23 +123,8 @@ public:
         config.backend = b;
         context_.reset_algorithmic(config.mu_init, config.reg_init);
 
-        // Fused Riccati kernel is CSE'd against a specific integrator's A/B
-        // sparsity at code-gen time. Running with a different runtime
-        // integrator may produce wrong fused-kernel results. Warn at
-        // construction; the Riccati dispatch already skips the fused kernel
-        // when the integrator doesn't match, so a hard throw here would block
-        // legitimate non-fused usage.
-        if constexpr (detail::has_generated_integrator_v<Model>) {
-            if (Model::generated_integrator != config.integrator) {
-                std::cerr << "MiniSolver: Model was generated for "
-                          << static_cast<int>(Model::generated_integrator)
-                          << " but config.integrator is " << static_cast<int>(config.integrator)
-                          << ". Fused Riccati kernel will be skipped.\n";
-            }
-        }
-
         dt_traj.fill(conf.default_dt);
-        rebuild_solver_components();
+        rebuild_solver_components_if_dirty_();
 
         // Pre-size the diagnostic line-search trace so solve()'s push_back
         // stays pointer-bump only (zero-malloc hot path). If the user later
@@ -231,7 +217,6 @@ public:
 
     void set_config(const SolverConfig& conf)
     {
-        bool line_search_changed = conf.line_search_type != config.line_search_type;
         // Backend is fixed at construction time (see ctor note: "explicit
         // backend argument; keep it as the source of truth"). Preserve it
         // across set_config so a caller passing a default-constructed conf
@@ -242,9 +227,7 @@ public:
         if (config.max_iters > 0 && static_cast<int>(alpha_log_.capacity()) < config.max_iters) {
             alpha_log_.reserve(static_cast<size_t>(config.max_iters));
         }
-        if (line_search_changed) {
-            components_dirty = true;
-        }
+        build_state_.dirty = true;
     }
 
     const SolverConfig& get_config() const { return config; }
@@ -1467,7 +1450,7 @@ public:
 private:
     void begin_solve_()
     {
-        ensure_solver_components_ready();
+        rebuild_solver_components_if_dirty_();
         // 1. Presolve: 数据准备、冷热启动处理、内存复位
         presolve();
 
@@ -1878,26 +1861,67 @@ private:
         return max_viol;
     }
 
-    void rebuild_solver_components()
+    SolverPlanInfo make_solver_plan_info_() const
     {
-        linear_solver = std::make_unique<RiccatiSolver<TrajArray, Model>>();
+        SolverPlanInfo info;
+        info.backend = config.backend;
+        info.line_search_type = config.line_search_type;
+        info.integrator = config.integrator;
+        info.fused_riccati_integrator_compatible
+            = detail::generated_integrator_matches<Model>(config.integrator);
+        info.linear_solver_ready = static_cast<bool>(linear_solver);
+        info.line_search_ready = static_cast<bool>(line_search);
+        return info;
+    }
 
-        if (config.line_search_type == LineSearchType::NONE) {
-            line_search = std::make_unique<NoLineSearch<Model, MAX_N>>();
-        } else if (config.line_search_type == LineSearchType::MERIT) {
-            line_search = std::make_unique<MeritLineSearch<Model, MAX_N>>();
-        } else {
-            line_search = std::make_unique<FilterLineSearch<Model, MAX_N>>();
+    void warn_if_solver_plan_degraded_(const SolverPlanInfo& info) const
+    {
+        if constexpr (detail::has_generated_integrator_v<Model>) {
+            if (!info.fused_riccati_integrator_compatible) {
+                std::cerr << "MiniSolver: Model was generated for "
+                          << static_cast<int>(Model::generated_integrator)
+                          << " but config.integrator is " << static_cast<int>(config.integrator)
+                          << ". Fused Riccati kernel will be skipped.\n";
+            }
         }
     }
 
-    void ensure_solver_components_ready()
+    void rebuild_solver_components_if_dirty_()
     {
-        if (!components_dirty) {
+        if (!build_state_.dirty && linear_solver && line_search) {
             return;
         }
-        rebuild_solver_components();
-        components_dirty = false;
+
+        if (!linear_solver) {
+            linear_solver = std::make_unique<RiccatiSolver<TrajArray, Model>>();
+        }
+
+        if (!no_line_search_) {
+            no_line_search_ = std::make_unique<NoLineSearch<Model, MAX_N>>();
+        }
+        if (!merit_line_search_) {
+            merit_line_search_ = std::make_unique<MeritLineSearch<Model, MAX_N>>();
+        }
+        if (!filter_line_search_) {
+            filter_line_search_ = std::make_unique<FilterLineSearch<Model, MAX_N>>();
+        }
+
+        const bool line_search_changed
+            = !line_search || build_state_.plan.line_search_type != config.line_search_type;
+        if (config.line_search_type == LineSearchType::NONE) {
+            line_search = no_line_search_.get();
+        } else if (config.line_search_type == LineSearchType::MERIT) {
+            line_search = merit_line_search_.get();
+        } else {
+            line_search = filter_line_search_.get();
+        }
+        if (line_search_changed && line_search) {
+            line_search->reset();
+        }
+
+        build_state_.plan = make_solver_plan_info_();
+        warn_if_solver_plan_degraded_(build_state_.plan);
+        build_state_.dirty = false;
     }
 
     // Lookup Maps
@@ -1908,7 +1932,10 @@ private:
     // Components
     // Pass Model type to RiccatiSolver for static constraint info access
     std::unique_ptr<RiccatiSolver<TrajArray, Model>> linear_solver;
-    std::unique_ptr<LineSearchStrategy<Model, MAX_N>> line_search;
+    std::unique_ptr<NoLineSearch<Model, MAX_N>> no_line_search_;
+    std::unique_ptr<MeritLineSearch<Model, MAX_N>> merit_line_search_;
+    std::unique_ptr<FilterLineSearch<Model, MAX_N>> filter_line_search_;
+    LineSearchStrategy<Model, MAX_N>* line_search = nullptr;
 
     // Per-solve line-search α trace (cleared at solve() entry, appended after
     // each step's line search). Purely diagnostic — not serialized.
@@ -1924,6 +1951,6 @@ private:
     SolverTimer timer;
 
     SolverConfig config;
-    bool components_dirty = false;
+    SolverBuildState build_state_;
 };
 }

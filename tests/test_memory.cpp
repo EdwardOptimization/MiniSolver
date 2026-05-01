@@ -279,6 +279,30 @@ TEST(MemoryTest, ZeroMalloc_ConfigMatrixSolve)
     }
 }
 
+TEST(MemoryTest, ZeroMalloc_SolveAfterSetConfigDoesNotAllocate)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.enable_profiling = false;
+    config.line_search_type = LineSearchType::FILTER;
+    config.max_iters = 5;
+
+    MiniSolver<CarModel, 20> solver(/*initial_N=*/10, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+
+    SolverConfig updated = solver.get_config();
+    updated.line_search_type = LineSearchType::MERIT;
+    solver.set_config(updated);
+
+    g_allocation_count = 0;
+    g_memory_check_active = true;
+    solver.solve();
+    g_memory_check_active = false;
+
+    EXPECT_EQ(g_allocation_count, 0)
+        << "set_config() must not defer heap allocation into solve()";
+}
+
 TEST(MemoryTest, ZeroMalloc_FilterSOC_Path)
 {
     // Construct everything before enabling memory instrumentation.

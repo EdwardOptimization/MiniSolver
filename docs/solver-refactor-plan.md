@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 
-Status: Active plan, Phase 1-4 initial pass implemented locally
+Status: Phase 1-5 lite implemented locally; further expansion requires new evidence
 
 Related:
 
@@ -142,6 +142,57 @@ Deferred deliberately:
 - Frozen `SolverPlan`: still premature until more seams have real variants or
   plan construction starts accumulating compatibility checks.
 
+## Current State After Solver Build-State Pass
+
+Completed after the kernel pass:
+
+- Added an internal `SolverBuildState` / `SolverPlanInfo` boundary.
+- `set_config()` now marks the internal build state dirty instead of rebuilding
+  line-search components immediately.
+- `solve()` rebuilds dirty internal components once before presolve.
+- Serializer load now routes through the same dirty-build path after restoring
+  config and algorithmic state.
+- The plan info records the frozen component choices currently needed by the
+  solver: backend, line-search type, integrator, component readiness, and
+  fused-Riccati/integrator compatibility.
+- Line-search kernels are preallocated at construction/build time. A config
+  change can switch the active line-search strategy at the solve boundary
+  without heap allocation inside `solve()`.
+
+Validation:
+
+```bash
+.build/test_bugfixes --gtest_filter=BugfixTest.SetConfigDefersPlanRebuildUntilSolve
+.build/test_memory --gtest_filter=MemoryTest.ZeroMalloc_SolveAfterSetConfigDoesNotAllocate
+git diff --check
+cmake --build .build -j$(nproc)
+ctest --test-dir .build --output-on-failure
+cmake --build .build_custom -j$(nproc)
+ctest --test-dir .build_custom --output-on-failure
+```
+
+Both Eigen and custom MiniMatrix builds passed all 19 tests.
+
+Additional nmpc-bench smoke after the build-state pass:
+
+```bash
+cmake -S /home/quyaonan/workspace/nmpc-bench \
+  -B /tmp/minisolver_refactor_bench_pendulum \
+  -DMINISOLVER_SOURCE_DIR=/home/quyaonan/workspace/MiniSolver \
+  -DMINISOLVER_CASE=pendulum_on_cart
+cmake --build /tmp/minisolver_refactor_bench_pendulum \
+  --target minisolver_official_case_benchmark -j$(nproc)
+/tmp/minisolver_refactor_bench_pendulum/minisolver_official_case_benchmark \
+  --steps 5 --output /tmp/minisolver_refactor_pendulum.csv
+```
+
+Result: `pendulum_on_cart` succeeded `5/5`, median `0.040 ms`, p95
+`0.047 ms`.
+
+This is intentionally not a full `StrategySpec -> StrategyKernel` framework.
+The useful boundary today is: public config changes are cheap, and internal
+component rebuilds happen once at the solve boundary.
+
 ## Target Architecture
 
 ### Layer 1: Public Configuration
@@ -217,9 +268,18 @@ Future internal state groups:
 Do not move all state at once. Move state only when a phase can consume it
 without increasing coupling.
 
-### Layer 5: Frozen SolverPlan, Deferred
+### Layer 5: Solver Build State First, Frozen SolverPlan Later
 
-The final shape may become:
+The current shape is a minimal internal build state:
+
+```text
+SolverConfig
+  -> mark SolverBuildState dirty
+  -> solve() rebuilds internal components once if needed
+  -> solve executes the canonical route
+```
+
+The final shape may still become:
 
 ```text
 SolverConfig
@@ -227,9 +287,9 @@ SolverConfig
   -> solve executes frozen phase ops
 ```
 
-But this should be deferred until at least two or three seams have multiple real
-implementations. Today, a full `StrategySpec -> StrategyKernel` framework would
-be premature.
+But this should wait until at least two or three seams have multiple real
+implementations. Today, a full `StrategySpec -> StrategyKernel` framework is
+still premature.
 
 ## Reference Path vs Default Path
 
@@ -384,6 +444,8 @@ Exit criteria:
 
 ### Phase 5: SolverPlan Build Step
 
+Status: lite version implemented.
+
 Scope:
 
 - Introduce an internal build step only if phase-kernel construction becomes
@@ -399,7 +461,9 @@ Validation:
 
 Exit criteria:
 
-- solve hot path executes frozen phase choices.
+- config mutation is cheap and defers component rebuild to the solve boundary.
+- solve hot path executes frozen component choices currently represented in
+  `SolverPlanInfo`.
 - config changes remain simple for users.
 
 ## Evidence Rules
@@ -453,8 +517,8 @@ Do not mix:
 
 1. Keep the current lite build-state boundary stable; do not expand it into a
    public strategy framework without a second real implementation.
-2. Add zero-malloc instrumentation before claiming the new build boundary is
-   hard-real-time safe under all supported diagnostics settings.
+2. Keep zero-malloc instrumentation on any future build-boundary or diagnostics
+   changes. The current `set_config()` then `solve()` path is covered.
 3. Extend reference/default checks only when the problem has a clear correctness
    oracle or stable reference metric.
 4. Consider `RestorationKernel` only after a focused test shows the current

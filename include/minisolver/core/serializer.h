@@ -514,8 +514,8 @@ public:
         solver.context_.solve.mu = mu_val;
         solver.context_.solve.reg = reg_val;
 
-        solver.rebuild_solver_components();
-        solver.components_dirty = false;
+        solver.build_state_.dirty = true;
+        solver.rebuild_solver_components_if_dirty_();
 
         for (int k = 0; k < N; ++k) {
             solver.dt_traj[k] = dt_local[static_cast<size_t>(k)];
