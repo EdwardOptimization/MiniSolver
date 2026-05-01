@@ -349,6 +349,49 @@ Initial candidate split:
 This split should initially be expressed as helper config presets or tests, not
 as a new public solver class.
 
+## Linear Solver Direction
+
+`RiccatiSolver` should remain MiniSolver's primary linear-solver path for NMPC.
+This is a deliberate design choice, not just the current implementation status.
+
+The NMPC Newton/KKT system has a block time structure. The current Riccati path
+uses that structure directly:
+
+- inequality, slack, and barrier variables are locally eliminated into
+  `Q_bar`, `R_bar`, `H_bar`, `q_bar`, and `r_bar`;
+- the dynamics-coupled state/control system is solved by backward/forward
+  Riccati sweeps;
+- generated fused Riccati kernels can exploit model sparsity and fixed problem
+  dimensions;
+- the memory footprint and runtime behavior stay predictable for embedded and
+  real-time use.
+
+This is different from full condensing. MiniSolver should not first eliminate
+all states into a dense control-only QP unless benchmark evidence shows that a
+specific problem class benefits from it. For the current project goal, preserving
+the sparse OCP structure is more important.
+
+Other possible `LinearSolver` implementations are useful, but they are not the
+main line today:
+
+| Candidate | Role | Current priority |
+| --- | --- | --- |
+| `DenseKKTLDLTSolver` | Direct full KKT solve for reference/debug. | Future, only if needed for correctness oracle. |
+| `SparseKKTLDLTSolver` | More generic sparse KKT backend. | Future, after real sparse non-OCP cases exist. |
+| `CondensingSolver` | State-condensed dense/sparse QP route. | Future, benchmark-driven only. |
+| `GpuRiccatiSolver` | GPU implementation of the Riccati path. | Future, after CPU Riccati correctness/performance stabilizes. |
+| `PDLPSolver` / first-order solver | Large-scale approximate solves. | Low priority for current embedded NMPC scope. |
+
+Near-term linear-solver work should therefore focus on the current Riccati path:
+
+1. correctness against benchmark/reference solutions;
+2. numerical robustness of regularization, inertia handling, and line search
+   interaction;
+3. generated/fused Riccati coverage where model structure is known;
+4. MiniMatrix and small-matrix kernel optimization based on profiling;
+5. GPU Riccati only after the CPU path is stable and measured bottlenecks justify
+   it.
+
 ## Implementation Plan
 
 ### Phase 0: Canonical Loop Extraction
