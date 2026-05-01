@@ -38,7 +38,7 @@ namespace detail {
     void evaluate_model_stage(
         Knot& kp, const SolverConfig& config, double dt, bool is_terminal = false)
     {
-        if (config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+        if (config.hessian_approximation == HessianApproximation::OBJECTIVE_HESSIAN_ONLY) {
             if constexpr (has_compute_terminal_cost_gn<Model, Knot>::value) {
                 if (is_terminal) {
                     Model::template compute_terminal_cost_gn<double>(kp);

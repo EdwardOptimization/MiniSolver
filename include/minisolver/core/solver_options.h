@@ -33,7 +33,11 @@ enum class LineSearchType { MERIT, FILTER, NONE };
 
 enum class HessianApproximation {
     EXACT, // Full Hessian (Objective + Constraints)
-    GAUSS_NEWTON // Gauss-Newton (Objective J^T J only), ignore constraint curvature
+    // Objective Hessian only: keep objective curvature, ignore constraint curvature.
+    // This is not a strict least-squares Gauss-Newton J^T J approximation unless
+    // the generated objective itself is a least-squares residual Hessian.
+    OBJECTIVE_HESSIAN_ONLY,
+    GAUSS_NEWTON = OBJECTIVE_HESSIAN_ONLY // Backward-compatible legacy name
 };
 
 // Print Levels
@@ -162,8 +166,10 @@ struct SolverConfig {
 
     // --- Advanced Features ---
     HessianApproximation hessian_approximation
-        = HessianApproximation::GAUSS_NEWTON; // Default to GN for speed
+        = HessianApproximation::OBJECTIVE_HESSIAN_ONLY; // Default: fast, ignore constraint curvature
 
+    // Historical name. Current implementation is linear defect-rollout correction,
+    // not a full KKT iterative-refinement solve.
     bool enable_iterative_refinement = false;
     int max_refinement_steps = 1;
 

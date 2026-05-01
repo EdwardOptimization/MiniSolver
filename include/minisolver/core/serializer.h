@@ -549,7 +549,8 @@ public:
 
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? solver.dt_traj[k] : 0.0;
-            if (solver.config.hessian_approximation == HessianApproximation::GAUSS_NEWTON) {
+            if (solver.config.hessian_approximation
+                == HessianApproximation::OBJECTIVE_HESSIAN_ONLY) {
                 Model::compute_cost_gn(traj[k]);
                 Model::compute_dynamics(traj[k], solver.config.integrator, current_dt);
                 Model::compute_constraints(traj[k]);
