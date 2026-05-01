@@ -325,6 +325,10 @@ private:
         K.template head<NX>() = f0;
         K.template tail<NX>() = f0;
 
+        ContinuousJacobians<double, NX, NU> jac1_final;
+        ContinuousJacobians<double, NX, NU> jac2_final;
+        bool have_final_jacobians = false;
+
         auto eval = [&](const MSVec<double, N2>& K_in, MSVec<double, N2>& F,
                         MSMat<double, N2, N2>& J) {
             auto k1 = K_in.template head<NX>();
@@ -333,8 +337,9 @@ private:
             MSVec<double, NX> s1 = x + (k1 * a11 + k2 * a12) * dt;
             MSVec<double, NX> s2 = x + (k1 * a21 + k2 * a22) * dt;
 
-            auto jac1 = get_continuous_jacobians(s1, u, p);
-            auto jac2 = get_continuous_jacobians(s2, u, p);
+            jac1_final = get_continuous_jacobians(s1, u, p);
+            jac2_final = get_continuous_jacobians(s2, u, p);
+            have_final_jacobians = true;
 
             MSVec<double, NX> f1 = Model::dynamics_continuous(s1, u, p);
             MSVec<double, NX> f2 = Model::dynamics_continuous(s2, u, p);
@@ -345,10 +350,10 @@ private:
             // J = [I - dt*a11*Jx1,  -dt*a12*Jx1]
             //     [-dt*a21*Jx2,      I - dt*a22*Jx2]
             MSMat<double, NX, NX> I_NX = MSMat<double, NX, NX>::Identity();
-            J.template block<NX, NX>(0, 0) = I_NX - jac1.Jx * (dt * a11);
-            J.template block<NX, NX>(0, NX) = -jac1.Jx * (dt * a12);
-            J.template block<NX, NX>(NX, 0) = -jac2.Jx * (dt * a21);
-            J.template block<NX, NX>(NX, NX) = I_NX - jac2.Jx * (dt * a22);
+            J.template block<NX, NX>(0, 0) = I_NX - jac1_final.Jx * (dt * a11);
+            J.template block<NX, NX>(0, NX) = -jac1_final.Jx * (dt * a12);
+            J.template block<NX, NX>(NX, 0) = -jac2_final.Jx * (dt * a21);
+            J.template block<NX, NX>(NX, NX) = I_NX - jac2_final.Jx * (dt * a22);
         };
 
         NewtonSolver<double, N2> ns;
@@ -361,49 +366,51 @@ private:
         auto k2 = K.template tail<NX>();
 
         kp.f_resid = x + (k1 + k2) * (dt * 0.5);
+        if (!have_final_jacobians) {
+            mark_dynamics_invalid(kp);
+            return;
+        }
 
         // Discrete Jacobians via implicit function theorem.
         // At convergence dR/dK * dK/dx + dR/dx = 0, so dK/dx = -JK^{-1} * Jx_RHS.
         // Then A = I + dt*0.5*(dk1/dx + dk2/dx).
-        MSVec<double, NX> s1 = x + (k1 * a11 + k2 * a12) * dt;
-        MSVec<double, NX> s2 = x + (k1 * a21 + k2 * a22) * dt;
-        auto jac1 = get_continuous_jacobians(s1, u, p);
-        auto jac2 = get_continuous_jacobians(s2, u, p);
-
         // Build JK (same structure as Newton Jacobian)
         MSMat<double, N2, N2> JK;
         MSMat<double, NX, NX> I_NX = MSMat<double, NX, NX>::Identity();
-        JK.template block<NX, NX>(0, 0) = I_NX - jac1.Jx * (dt * a11);
-        JK.template block<NX, NX>(0, NX) = -jac1.Jx * (dt * a12);
-        JK.template block<NX, NX>(NX, 0) = -jac2.Jx * (dt * a21);
-        JK.template block<NX, NX>(NX, NX) = I_NX - jac2.Jx * (dt * a22);
+        JK.template block<NX, NX>(0, 0) = I_NX - jac1_final.Jx * (dt * a11);
+        JK.template block<NX, NX>(0, NX) = -jac1_final.Jx * (dt * a12);
+        JK.template block<NX, NX>(NX, 0) = -jac2_final.Jx * (dt * a21);
+        JK.template block<NX, NX>(NX, NX) = I_NX - jac2_final.Jx * (dt * a22);
 
-        // Solve JK * dK = RHS via one LU factorization (JK is not symmetric).
-        MSMat<double, N2, NX> RHS_x;
-        RHS_x.template block<NX, NX>(0, 0) = jac1.Jx;
-        RHS_x.template block<NX, NX>(NX, 0) = jac2.Jx;
+        // Solve both dK/dx and dK/du with one LU factorization of the same JK.
+        constexpr int NRHS = NX + NU;
+        MSMat<double, N2, NRHS> RHS;
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NX; ++j) {
+                RHS(i, j) = jac1_final.Jx(i, j);
+                RHS(i + NX, j) = jac2_final.Jx(i, j);
+            }
+            for (int j = 0; j < NU; ++j) {
+                RHS(i, NX + j) = jac1_final.Ju(i, j);
+                RHS(i + NX, NX + j) = jac2_final.Ju(i, j);
+            }
+        }
 
-        MSMat<double, N2, NX> dK_dx;
-        if (!MatOps::lu_solve_matrix(JK, RHS_x, dK_dx)) {
+        MSMat<double, N2, NRHS> dK;
+        if (!MatOps::lu_solve_matrix(JK, RHS, dK)) {
             mark_jacobians_invalid(kp);
             return;
         }
 
-        // A = I + dt*0.5*(dk1/dx + dk2/dx)
-        kp.A = I_NX + (dK_dx.template topRows<NX>() + dK_dx.template bottomRows<NX>()) * (dt * 0.5);
-
-        // Solve for dK/du
-        MSMat<double, N2, NU> RHS_u;
-        RHS_u.template block<NX, NU>(0, 0) = jac1.Ju;
-        RHS_u.template block<NX, NU>(NX, 0) = jac2.Ju;
-
-        MSMat<double, N2, NU> dK_du;
-        if (!MatOps::lu_solve_matrix(JK, RHS_u, dK_du)) {
-            mark_jacobians_invalid(kp);
-            return;
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NX; ++j) {
+                kp.A(i, j) = (i == j ? 1.0 : 0.0)
+                    + (dK(i, j) + dK(i + NX, j)) * (dt * 0.5);
+            }
+            for (int j = 0; j < NU; ++j) {
+                kp.B(i, j) = (dK(i, NX + j) + dK(i + NX, NX + j)) * (dt * 0.5);
+            }
         }
-
-        kp.B.noalias() = (dK_du.template topRows<NX>() + dK_du.template bottomRows<NX>()) * (dt * 0.5);
     }
 };
 
