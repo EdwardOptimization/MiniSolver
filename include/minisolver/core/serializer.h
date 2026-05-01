@@ -270,9 +270,9 @@ public:
         state.config = solver.config;
         state.N = solver.N;
         state.status = status;
-        state.iterations = solver.current_iter;
-        state.mu = solver.mu;
-        state.reg = solver.reg;
+        state.iterations = solver.context_.solve.current_iter;
+        state.mu = solver.context_.solve.mu;
+        state.reg = solver.context_.solve.reg;
 
         // 1. Copy Time Steps
         state.dt_traj.resize(solver.N);
@@ -510,9 +510,9 @@ public:
         // Commit to solver only after the full read succeeds.
         solver.resize_horizon(N);
         solver.config = cfg;
-        solver.current_iter = iter;
-        solver.mu = mu_val;
-        solver.reg = reg_val;
+        solver.context_.solve.current_iter = iter;
+        solver.context_.solve.mu = mu_val;
+        solver.context_.solve.reg = reg_val;
 
         solver.rebuild_solver_components();
         solver.components_dirty = false;

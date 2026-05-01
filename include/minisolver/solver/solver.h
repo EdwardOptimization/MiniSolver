@@ -109,8 +109,6 @@ public:
         : trajectory(std::max(0, std::min(initial_N, MAX_N)))
         , N(std::max(0, std::min(initial_N, MAX_N)))
         , config(conf)
-        , mu(conf.mu_init)
-        , reg(conf.reg_init)
     {
 
         if (initial_N < 0 || initial_N > MAX_N) {
@@ -119,6 +117,7 @@ public:
 
         // Constructor has an explicit backend argument; keep it as the source of truth.
         config.backend = b;
+        context_.reset_algorithmic(config.mu_init, config.reg_init);
 
         // Fused Riccati kernel is CSE'd against a specific integrator's A/B
         // sparsity at code-gen time. Running with a different runtime
@@ -162,11 +161,7 @@ public:
     void reset(ResetOption option = ResetOption::ALG_STATE)
     {
         // 1. Reset Algorithmic Scalars
-        mu = config.mu_init;
-        reg = config.reg_init;
-        current_iter = 0;
-        metrics_.reset_algorithmic();
-        slack_reset_consecutive_count = 0;
+        context_.reset_algorithmic(config.mu_init, config.reg_init);
         // 2. Reset Components
         if (line_search) {
             line_search->reset();
@@ -251,7 +246,7 @@ public:
 
     const SolverConfig& get_config() const { return config; }
 
-    int get_iteration_count() const { return current_iter; }
+    int get_iteration_count() const { return context_.solve.current_iter; }
 
     double get_profile_time_ms(const std::string& name) const
     {
@@ -603,13 +598,13 @@ private:
         // 3. dual gradient is satisfied (Stationary)
         // 4. complementarity is satisfied (Complementarity): s*lam is close to mu
 
-        bool mu_converged = (mu <= config.mu_final);
+        bool mu_converged = (context_.solve.mu <= config.mu_final);
         bool primal_ok = (max_viol <= config.tol_con);
         bool dual_ok = (max_dual <= config.tol_dual);
 
         // complementarity error tolerance is usually set to kappa * mu or a slightly relaxed fixed
         // value here we require it to converge to tol_cost or tol_mu level
-        bool kkt_ok = (max_kkt_error <= std::max(config.tol_mu, 10.0 * mu));
+        bool kkt_ok = (max_kkt_error <= std::max(config.tol_mu, 10.0 * context_.solve.mu));
 
         return mu_converged && primal_ok && dual_ok && kkt_ok;
     }
@@ -628,7 +623,7 @@ private:
     {
         // 只有在满足一定可行性时，Cost 停滞才有意义。
         const double feasible_bound = config.tol_con * config.feasible_tol_scale;
-        if (metrics_.last_prim_inf > feasible_bound) {
+        if (context_.metrics.last_prim_inf > feasible_bound) {
             return false;
         }
 
@@ -637,8 +632,8 @@ private:
             return false;
         }
 
-        const bool mu_decreased = (mu < last_mu);
-        const bool mu_small = (mu <= config.mu_final);
+        const bool mu_decreased = (context_.solve.mu < last_mu);
+        const bool mu_small = (context_.solve.mu <= config.mu_final);
         return mu_small || !mu_decreased;
     }
 
@@ -656,7 +651,7 @@ private:
             for (int i = 0; i < NC; ++i) {
                 const double s = traj[k].s(i);
                 const double lam = traj[k].lam(i);
-                double comp = std::abs(s * lam - mu);
+                double comp = std::abs(s * lam - context_.solve.mu);
                 if (comp > summary.max_kkt_error) {
                     summary.max_kkt_error = comp;
                 }
@@ -677,7 +672,7 @@ private:
                 if (type == 1 && w > 1e-6) {
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - lam);
-                    double comp_soft = std::abs(soft_s * soft_dual - mu);
+                    double comp_soft = std::abs(soft_s * soft_dual - context_.solve.mu);
                     if (comp_soft > summary.max_kkt_error) {
                         summary.max_kkt_error = comp_soft;
                     }
@@ -724,12 +719,12 @@ private:
 
     void increase_regularization_after_failed_solve_(bool clamp_to_min)
     {
-        if (clamp_to_min && reg < config.reg_min) {
-            reg = config.reg_min;
+        if (clamp_to_min && context_.solve.reg < config.reg_min) {
+            context_.solve.reg = config.reg_min;
         }
-        reg *= config.reg_scale_up;
-        if (reg > config.reg_max) {
-            reg = config.reg_max;
+        context_.solve.reg *= config.reg_scale_up;
+        if (context_.solve.reg > config.reg_max) {
+            context_.solve.reg = config.reg_max;
         }
     }
 
@@ -739,7 +734,8 @@ private:
         bool success = false;
         for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
             success = linear_solver->solve(
-                traj, N, target_mu, reg, config.inertia_strategy, config, affine_traj);
+                traj, N, target_mu, context_.solve.reg, config.inertia_strategy, config,
+                affine_traj);
             if (success) {
                 break;
             }
@@ -872,8 +868,10 @@ private:
         // A successful Riccati factorization only says the linearized KKT was factorizable at
         // the current reg; it says nothing about whether the resulting step is admissible.
         // The last accepted line-search α is a composite proxy for step quality.
-        if (solve_success && reg > config.reg_min && metrics_.last_alpha > 0.5) {
-            reg = std::max(config.reg_min, reg / config.reg_scale_down);
+        if (solve_success && context_.solve.reg > config.reg_min
+            && context_.metrics.last_alpha > 0.5) {
+            context_.solve.reg
+                = std::max(config.reg_min, context_.solve.reg / config.reg_scale_down);
         }
     }
 
@@ -884,7 +882,8 @@ private:
         }
         // Pass 'traj' (which contains solution dx, du) and 'candidate' (which contains original
         // system).
-        linear_solver->refine(traj, trajectory.candidate(), N, mu, reg, config);
+        linear_solver->refine(
+            traj, trajectory.candidate(), N, context_.solve.mu, context_.solve.reg, config);
     }
 
     bool should_stop_after_line_search_(
@@ -893,7 +892,7 @@ private:
         bool is_feasible = (max_prim_inf < config.tol_con);
         bool is_dual_feasible = (max_dual_inf < config.tol_dual);
 
-        if (mu > config.mu_final || alpha <= 1e-5) {
+        if (context_.solve.mu > config.mu_final || alpha <= 1e-5) {
             return false;
         }
 
@@ -916,8 +915,8 @@ private:
     {
         // For outer-loop heuristics (e.g. cost stagnation), store feasibility of the *current*
         // iterate, i.e. after line-search has potentially swapped buffers.
-        metrics_.last_prim_inf = compute_max_violation(trajectory.active());
-        metrics_.last_dual_inf = max_dual_inf;
+        context_.metrics.last_prim_inf = compute_max_violation(trajectory.active());
+        context_.metrics.last_dual_inf = max_dual_inf;
     }
 
     SolverStatus classify_tiny_step_stagnation_(
@@ -941,22 +940,23 @@ private:
         // This means if SlackReset was used in the last iteration but Alpha=0 still (dead
         // loop), this time we force skipping Step 1 and go directly to Step 2 (Restoration).
         if (config.enable_slack_reset && alpha < config.slack_reset_trigger
-            && slack_reset_consecutive_count < 1) {
+            && context_.solve.slack_reset_consecutive_count < 1) {
             if (config.print_level >= PrintLevel::DEBUG) {
-                MLOG_DEBUG(
-                    "Triggering Slack Reset (Attempt " << slack_reset_consecutive_count + 1 << ").");
+                MLOG_DEBUG("Triggering Slack Reset (Attempt "
+                    << context_.solve.slack_reset_consecutive_count + 1 << ").");
             }
 
             apply_slack_reset_(traj_after_ls);
             // Try one solve to see if a valid direction can be obtained
-            recovered
-                = linear_solver->solve(traj_after_ls, N, mu, reg, config.inertia_strategy, config);
+            recovered = linear_solver->solve(traj_after_ls, N, context_.solve.mu,
+                context_.solve.reg, config.inertia_strategy, config);
 
             if (recovered) {
                 // Mark: If this Reset failed to get us out of trouble, disallow it next time
-                slack_reset_consecutive_count++;
+                context_.solve.slack_reset_consecutive_count++;
             }
-        } else if (config.enable_slack_reset && slack_reset_consecutive_count >= 1) {
+        } else if (
+            config.enable_slack_reset && context_.solve.slack_reset_consecutive_count >= 1) {
             if (config.print_level >= PrintLevel::DEBUG) {
                 MLOG_DEBUG("Skipping Slack Reset to prevent cycle. Forcing Restoration.");
             }
@@ -968,7 +968,7 @@ private:
             // If restoration succeeded (state x moved), we can reset the counter, allowing
             // SlackReset to be used again in the future
             if (recovered) {
-                slack_reset_consecutive_count = 0;
+                context_.solve.slack_reset_consecutive_count = 0;
             }
         }
 
@@ -980,21 +980,22 @@ private:
     {
         // Notify the line search if μ decreased during this step so it can
         // discard barrier-dependent history (filter entries, ratcheted merit_nu).
-        if (line_search && mu < mu_before_step) {
+        if (line_search && context_.solve.mu < mu_before_step) {
             line_search->on_barrier_update();
         }
 
         timer.start("Line Search");
-        alpha = line_search->search(trajectory, *linear_solver, dt_traj, mu, reg, config);
+        alpha = line_search->search(
+            trajectory, *linear_solver, dt_traj, context_.solve.mu, context_.solve.reg, config);
         alpha_log_.push_back(alpha);
-        metrics_.last_alpha = alpha;
+        context_.metrics.last_alpha = alpha;
         // IMPORTANT: line_search may swap trajectory buffers.
         // Do not use references to trajectory.active() taken before this call.
         auto& traj_after_ls = trajectory.active();
 
         // If step size is valid, reset the counter.
         if (alpha > 1e-8) {
-            slack_reset_consecutive_count = 0;
+            context_.solve.slack_reset_consecutive_count = 0;
         } else {
             SolverStatus stagnation_status
                 = classify_tiny_step_stagnation_(max_prim_inf, max_dual_inf);
@@ -1093,10 +1094,10 @@ private:
         // Must cover hard slack (s, lam) AND L1 soft variables (soft_s, w-lam).
         double alpha_aff = compute_fraction_to_boundary_(affine_traj);
 
-        double mu_curr = mu;
+        double mu_curr = context_.solve.mu;
         double mu_aff = compute_affine_barrier_mu_(traj, affine_traj, alpha_aff);
-        metrics_.last_mu_aff = mu_aff;
-        metrics_.last_alpha_aff = alpha_aff;
+        context_.metrics.last_mu_aff = mu_aff;
+        context_.metrics.last_alpha_aff = alpha_aff;
 
         if (config.print_level >= PrintLevel::DEBUG) {
             MLOG_INFO("Mehrotra Debug: mu_curr=" << mu_curr << ", mu_aff=" << mu_aff
@@ -1116,7 +1117,7 @@ private:
         }
 
         if (solve_success) {
-            mu = mu_target;
+            context_.solve.mu = mu_target;
         }
         return solve_success;
     }
@@ -1126,7 +1127,7 @@ private:
         if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
             return compute_mehrotra_direction_(traj);
         }
-        return solve_linear_system_with_retries_(traj, mu, nullptr, true);
+        return solve_linear_system_with_retries_(traj, context_.solve.mu, nullptr, true);
     }
 
     SolverStatus validate_search_direction_(
@@ -1170,7 +1171,7 @@ private:
         // for traces — case resolved two of three failure metrics with
         // this value; matches informal IPM/SQP tuning convention).
         // Interaction note: feasibility_restoration() does not touch
-        // metrics_.last_alpha, so after a collapse-triggered restoration the gate
+        // context_.metrics.last_alpha, so after a collapse-triggered restoration the gate
         // stays closed until the next accepted line-search step. That is
         // the conservative behavior we want post-recovery.
         maybe_decay_regularization_after_solve_(solve_success);
@@ -1186,19 +1187,20 @@ private:
     {
         switch (config.barrier_strategy) {
         case BarrierStrategy::MONOTONE:
-            if (max_kkt_error < config.barrier_tolerance_factor * mu) {
-                double next_mu = std::max(config.mu_final, mu * config.mu_linear_decrease_factor);
-                mu = next_mu;
+            if (max_kkt_error < config.barrier_tolerance_factor * context_.solve.mu) {
+                double next_mu = std::max(
+                    config.mu_final, context_.solve.mu * config.mu_linear_decrease_factor);
+                context_.solve.mu = next_mu;
             }
             break;
         case BarrierStrategy::ADAPTIVE: {
             double target = avg_gap * config.mu_safety_margin;
             // Removed forced decrease to allow mu to hold steady if needed for convergence
-            mu = std::max(config.mu_final, std::min(mu, target));
+            context_.solve.mu = std::max(config.mu_final, std::min(context_.solve.mu, target));
             break;
         }
         case BarrierStrategy::MEHROTRA: {
-            double ratio = avg_gap / mu;
+            double ratio = avg_gap / context_.solve.mu;
             if (ratio > 1.0) {
                 ratio = 1.0;
             }
@@ -1209,8 +1211,8 @@ private:
             if (sigma > 0.8) {
                 sigma = 0.8;
             }
-            double next_mu = std::max(config.mu_final, mu * sigma);
-            mu = next_mu;
+            double next_mu = std::max(config.mu_final, context_.solve.mu * sigma);
+            context_.solve.mu = next_mu;
             break;
         }
         }
@@ -1269,11 +1271,12 @@ private:
             }
         }
 
-        ss << std::left << std::setw(5) << current_iter << std::scientific << std::setprecision(3)
-           << std::setw(12) << total_cost << std::fixed << std::setprecision(2) << std::setw(10)
-           << std::log10(mu) << std::setw(10) << std::log10(reg) << std::scientific
-           << std::setprecision(2) << std::setw(10) << max_prim_inf << std::setw(10) << max_dual_inf
-           << std::fixed << std::setprecision(3) << std::setw(10) << alpha;
+        ss << std::left << std::setw(5) << context_.solve.current_iter << std::scientific
+           << std::setprecision(3) << std::setw(12) << total_cost << std::fixed
+           << std::setprecision(2) << std::setw(10) << std::log10(context_.solve.mu)
+           << std::setw(10) << std::log10(context_.solve.reg) << std::scientific
+           << std::setprecision(2) << std::setw(10) << max_prim_inf << std::setw(10)
+           << max_dual_inf << std::fixed << std::setprecision(3) << std::setw(10) << alpha;
 
         if (config.print_level >= PrintLevel::DEBUG) {
             ss << std::scientific << std::setprecision(2) << std::setw(12) << min_slack;
@@ -1370,10 +1373,10 @@ private:
         if (config.print_level >= PrintLevel::DEBUG) {
             MLOG_DEBUG("Entering Feasibility Restoration Phase.");
         }
-        double saved_mu = mu;
-        double saved_reg = reg;
-        mu = config.restoration_mu;
-        reg = config.restoration_reg;
+        double saved_mu = context_.solve.mu;
+        double saved_reg = context_.solve.reg;
+        context_.solve.mu = config.restoration_mu;
+        context_.solve.reg = config.restoration_reg;
 
         auto& traj = trajectory.active();
         bool success = false;
@@ -1425,7 +1428,8 @@ private:
                 }
             }
 
-            if (!linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config)) {
+            if (!linear_solver->solve(traj, N, context_.solve.mu, context_.solve.reg,
+                    config.inertia_strategy, config)) {
                 break;
             }
 
@@ -1531,8 +1535,8 @@ private:
             }
         }
 
-        mu = saved_mu;
-        reg = saved_reg;
+        context_.solve.mu = saved_mu;
+        context_.solve.reg = saved_reg;
 
         return success;
     }
@@ -1558,7 +1562,7 @@ private:
         // configured max iteration count so the hot-path push_back stays
         // pointer-bump only.
         alpha_log_.clear();
-        metrics_.reset_solve();
+        context_.metrics.reset_solve();
     }
 
     bool should_exit_after_step_status_(
@@ -1613,7 +1617,7 @@ private:
         }
 
         last_cost = current_cost;
-        last_mu = mu;
+        last_mu = context_.solve.mu;
         return false;
     }
 
@@ -1621,7 +1625,7 @@ private:
     {
         SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
         double last_cost = 1e30;
-        double last_mu = mu;
+        double last_mu = context_.solve.mu;
 
         // 2. Solve Loop: 数值迭代
         for (int iter = 0; iter < config.max_iters; ++iter) {
@@ -1643,13 +1647,13 @@ private:
 
     SolverStatus execute_solve_iteration_()
     {
-        current_iter++;
+        context_.solve.current_iter++;
         // Snapshot μ at the top of the step so we can notify the line search
         // (IPOPT §3.1: filter/merit history is not comparable across μ changes).
         // Both the non-Mehrotra update_barrier() path and the Mehrotra
         // mu = mu_target path mutate mu between here and the line-search call
         // below; the single comparison covers both.
-        const double mu_before_step = mu;
+        const double mu_before_step = context_.solve.mu;
 
         auto& traj = trajectory.active();
 
@@ -1666,7 +1670,8 @@ private:
 
         // Convergence check (Primal + Dual + Mu) using the freshly computed dual residual.
         // The final convergence verdict is always made in postsolve() with fresh data.
-        if (current_iter > 1 && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) {
+        if (context_.solve.current_iter > 1
+            && check_convergence(max_prim_inf, max_dual_inf, max_kkt_error)) {
             return SolverStatus::OPTIMAL;
         }
 
@@ -1698,10 +1703,7 @@ private:
             line_search->reset();
         }
 
-        current_iter = 0;
-        slack_reset_consecutive_count = 0;
-        reg = config.reg_init;
-        mu = config.mu_init;
+        context_.solve.reset_algorithmic(config.mu_init, config.reg_init);
     }
 
     bool should_initialize_primal_dual_() const
@@ -1731,8 +1733,8 @@ private:
             // 3) soft_s * (w - lam) = mu
             // Reduce to quadratic in lam: g*lam^2 - (g*w - 2*mu)*lam - mu*w = 0
             double a = g;
-            double b = -(g * w - 2 * mu);
-            double c = -mu * w;
+            double b = -(g * w - 2 * context_.solve.mu);
+            double c = -context_.solve.mu * w;
 
             double lam_val;
             if (std::abs(a) < 1e-9) {
@@ -1750,27 +1752,27 @@ private:
             lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
 
             kp.lam(i) = lam_val;
-            kp.s(i) = mu / lam_val;
-            kp.soft_s(i) = mu / (w - lam_val);
+            kp.s(i) = context_.solve.mu / lam_val;
+            kp.soft_s(i) = context_.solve.mu / (w - lam_val);
         } else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
             // Central Path:
             // 1) g + s - lam/w = 0
             // 2) s * lam = mu
             // Reduce to quadratic in lam: lam^2 - g*w*lam - mu*w = 0
             double b = -g * w;
-            double c = -mu * w;
+            double c = -context_.solve.mu * w;
             // lam = (-b + sqrt(b^2 - 4ac)) / 2a, here a=1
             // lam = (g*w + sqrt(g^2*w^2 + 4*mu*w)) / 2
             double delta = b * b - 4 * c; // b^2 + 4*mu*w > 0 always
             double lam_val = (-b + std::sqrt(delta)) / 2.0;
 
             kp.lam(i) = std::max(1e-8, lam_val);
-            kp.s(i) = mu / kp.lam(i);
+            kp.s(i) = context_.solve.mu / kp.lam(i);
             // soft_s not used in L2
         } else { // Hard Constraint
             double s_val = std::max(1e-6, -g);
             kp.s(i) = s_val;
-            kp.lam(i) = mu / s_val;
+            kp.lam(i) = context_.solve.mu / s_val;
         }
     }
 
@@ -1819,7 +1821,7 @@ private:
 
             // 3. KKT complementarity (including L1-soft secondary pair).
             for (int i = 0; i < NC; ++i) {
-                double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu);
+                double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - context_.solve.mu);
                 if (comp > max_kkt_error) {
                     max_kkt_error = comp;
                 }
@@ -1836,7 +1838,8 @@ private:
                 if (type == 1 && w > 1e-6) {
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - traj[k].lam(i));
-                    double comp_soft = std::abs(soft_s * soft_dual - mu);
+                    double comp_soft
+                        = std::abs(soft_s * soft_dual - context_.solve.mu);
                     if (comp_soft > max_kkt_error) {
                         max_kkt_error = comp_soft;
                     }
@@ -1855,8 +1858,9 @@ private:
         max_dual_inf = std::numeric_limits<double>::infinity();
         if (linear_solver) {
             trajectory.prepare_candidate_full();
-            return linear_solver->evaluate_dual_residual(trajectory.candidate(), N, mu, reg,
-                config.inertia_strategy, config, max_dual_inf);
+            return linear_solver->evaluate_dual_residual(trajectory.candidate(), N,
+                context_.solve.mu, context_.solve.reg, config.inertia_strategy, config,
+                max_dual_inf);
         }
         return false;
     }
@@ -1925,14 +1929,14 @@ private:
         for (int k = 0; k <= N; ++k) {
             auto& kp = traj[k];
             for (int i = 0; i < NC; ++i) {
-                double min_s = std::abs(kp.g_val(i)) + std::sqrt(mu);
+                double min_s = std::abs(kp.g_val(i)) + std::sqrt(context_.solve.mu);
                 if (kp.s(i) < min_s) {
                     kp.s(i) = min_s;
                     // Pull the dual onto the central path at the CURRENT barrier
                     // parameter mu. Using config.mu_init here would pump lam up
                     // to the initial barrier scale after mu has already decayed,
                     // breaking KKT complementarity (|s*lam - mu| ~ mu_init).
-                    kp.lam(i) = std::max(kp.lam(i), mu / kp.s(i));
+                    kp.lam(i) = std::max(kp.lam(i), context_.solve.mu / kp.s(i));
 
                     // For L1 soft constraints, also keep the implicit soft-dual feasible:
                     // (w - lam) > 0.
@@ -1954,7 +1958,8 @@ private:
                         }
                         // Keep soft slack on the central path so barrier terms remain
                         // well-defined.
-                        kp.soft_s(i) = std::max(config.min_barrier_slack, mu / (w - kp.lam(i)));
+                        kp.soft_s(i) = std::max(
+                            config.min_barrier_slack, context_.solve.mu / (w - kp.lam(i)));
                     }
                 }
             }
@@ -2042,7 +2047,7 @@ private:
     // each step's line search). Purely diagnostic — not serialized.
     std::vector<double> alpha_log_;
 
-    SolverMetrics metrics_;
+    SolverContext context_;
 
     TrajectoryType trajectory;
 
@@ -2053,12 +2058,5 @@ private:
 
     SolverConfig config;
     bool components_dirty = false;
-
-    double mu;
-    double reg;
-    int current_iter = 0;
-
-    // Continuous Slack Reset count, prevent infinite loop
-    int slack_reset_consecutive_count = 0;
 };
 }

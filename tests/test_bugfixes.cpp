@@ -14,13 +14,13 @@ using namespace minisolver;
 namespace minisolver::test {
 template <typename Model, int MAX_N> struct SolverInternalAccess {
     using Solver = MiniSolver<Model, MAX_N>;
-    static double& mu(Solver& s) { return s.mu; }
+    static double& mu(Solver& s) { return s.context_.solve.mu; }
     static void apply_slack_reset(Solver& s, typename Solver::TrajArray& traj)
     {
         s.apply_slack_reset_(traj);
     }
-    static double last_mu_aff(const Solver& s) { return s.metrics_.last_mu_aff; }
-    static double last_alpha_aff(const Solver& s) { return s.metrics_.last_alpha_aff; }
+    static double last_mu_aff(const Solver& s) { return s.context_.metrics.last_mu_aff; }
+    static double last_alpha_aff(const Solver& s) { return s.context_.metrics.last_alpha_aff; }
     static double soft_s(const Solver& s, int stage, int idx)
     {
         return s.trajectory[stage].soft_s(idx);
