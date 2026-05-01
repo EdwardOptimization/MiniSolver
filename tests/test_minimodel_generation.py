@@ -1,6 +1,8 @@
 import os
+import subprocess
 import sys
 import tempfile
+import textwrap
 
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -17,6 +19,16 @@ def require(text, needle):
 def reject(text, needle):
     if needle in text:
         raise AssertionError(f"unexpected generated snippet: {needle}")
+
+
+def expect_value_error(fn, needle):
+    try:
+        fn()
+    except ValueError as exc:
+        if needle not in str(exc):
+            raise AssertionError(f"expected error containing {needle!r}, got {exc!r}") from exc
+        return
+    raise AssertionError("expected ValueError")
 
 
 def generate_chain_model(integrator_type):
@@ -63,5 +75,119 @@ def test_implicit_riccati_pattern_keeps_inverse_fill_in():
         check_implicit_chain_pattern(integrator_type)
 
 
+def test_cpp_identifier_validation_rejects_keywords_and_duplicates():
+    def keyword_state():
+        model = OptimalControlModel("KeywordModel")
+        model.state("class")
+
+    def duplicate_names():
+        model = OptimalControlModel("DuplicateModel")
+        model.state("x")
+        model.control("x")
+
+    def generated_temp_collision():
+        model = OptimalControlModel("TempCollisionModel")
+        model.state("dt")
+
+    expect_value_error(keyword_state, "C++")
+    expect_value_error(duplicate_names, "duplicate")
+    expect_value_error(generated_temp_collision, "reserved")
+
+
+def test_quad_boundary_projection_codegen_uses_unique_temps():
+    model = OptimalControlModel("TwoProjModel")
+    x0, x1 = model.state("x0", "x1")
+    u0 = model.control("u0")
+    model.set_dynamics(x0, u0)
+    model.set_dynamics(x1, 0)
+    model.subject_to_quad(
+        [[1, 0], [0, 1]], [x0, x1], center=[0, 0], rhs=1.0,
+        type="outside", linearize_at_boundary=True)
+    model.subject_to_quad(
+        [[1, 0], [0, 1]], [x0, x1], center=[1, 1], rhs=1.0,
+        type="outside", linearize_at_boundary=True)
+    model.minimize(x0**2 + x1**2 + u0**2)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        header_path = os.path.join(tmpdir, "twoprojmodel.h")
+        with open(header_path, "r", encoding="utf-8") as f:
+            text = f.read()
+
+    require(text, "T d2_0 =")
+    require(text, "T rhs_0 =")
+    require(text, "T scale_0 =")
+    require(text, "T d2_1 =")
+    require(text, "T rhs_1 =")
+    require(text, "T scale_1 =")
+    reject(text, "T d2 =")
+
+
+def test_quad_constraint_domain_guards():
+    def negative_rhs():
+        model = OptimalControlModel("BadRhsModel")
+        x = model.state("x")
+        model.subject_to_quad([[1]], [x], rhs=-1.0, type="outside")
+
+    def non_psd_q():
+        model = OptimalControlModel("BadQModel")
+        x0, x1 = model.state("x0", "x1")
+        model.subject_to_quad([[1, 0], [0, -1]], [x0, x1], rhs=1.0, type="outside")
+
+    expect_value_error(negative_rhs, "rhs")
+    expect_value_error(non_psd_q, "PSD")
+
+
+def test_generated_terminal_stage_uses_x_only_projection():
+    model = OptimalControlModel("TerminalProjectionModel")
+    x = model.state("x")
+    u = model.control("u")
+    model.set_dynamics(x, u)
+    model.minimize((x + u) ** 2 + 3.0 * u**2)
+    model.subject_to(x + 2.0 * u - 4.0 <= 0)
+    model.subject_to(u - 1.0 <= 0)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        source = os.path.join(tmpdir, "terminal_projection_check.cpp")
+        exe = os.path.join(tmpdir, "terminal_projection_check")
+        with open(source, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(
+                """
+                #include "terminalprojectionmodel.h"
+                #include <cmath>
+                #include <cstdlib>
+
+                int main() {
+                    using Model = minisolver::TerminalProjectionModel;
+                    minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                    kp.set_zero();
+                    kp.x(0) = 3.0;
+                    kp.u(0) = 10.0;
+                    Model::compute_terminal_cost_exact(kp);
+                    Model::compute_terminal_constraints(kp);
+                    if (std::abs(kp.cost - 9.0) > 1e-12) return 1;
+                    if (std::abs(kp.q(0) - 6.0) > 1e-12) return 2;
+                    if (std::abs(kp.r(0)) > 1e-12) return 3;
+                    if (std::abs(kp.g_val(0) - (-1.0)) > 1e-12) return 4;
+                    if (std::abs(kp.D(0,0)) > 1e-12) return 5;
+                    if (std::abs(kp.g_val(1) - (-1.0)) > 1e-12) return 6;
+                    return 0;
+                }
+                """))
+        subprocess.run(
+            [
+                "g++", "-std=c++17", "-DUSE_CUSTOM_MATRIX",
+                f"-I{ROOT}/include", f"-I{tmpdir}", source, "-o", exe
+            ],
+            check=True,
+        )
+        subprocess.run([exe], check=True)
+
+
 if __name__ == "__main__":
     test_implicit_riccati_pattern_keeps_inverse_fill_in()
+    test_cpp_identifier_validation_rejects_keywords_and_duplicates()
+    test_quad_boundary_projection_codegen_uses_unique_temps()
+    test_quad_constraint_domain_guards()
+    test_generated_terminal_stage_uses_x_only_projection()

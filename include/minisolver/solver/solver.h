@@ -241,6 +241,9 @@ public:
         const Backend preserved_backend = config.backend;
         config = conf;
         config.backend = preserved_backend;
+        if (config.max_iters > 0 && static_cast<int>(alpha_log_.capacity()) < config.max_iters) {
+            alpha_log_.reserve(static_cast<size_t>(config.max_iters));
+        }
         if (line_search_changed) {
             components_dirty = true;
         }
@@ -785,9 +788,7 @@ private:
         for (int r_iter = 0; r_iter < config.max_restoration_iters; ++r_iter) {
             for (int k = 0; k <= N; ++k) {
                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                detail::dispatch_compute_dynamics<Model>(
-                    traj[k], config.integrator, current_dt, config.newton_config);
-                Model::compute_constraints(traj[k]);
+                detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
 
                 traj[k].Q.setIdentity();
                 traj[k].q.setZero();
@@ -885,7 +886,11 @@ private:
 
             for (int k = 0; k <= N; ++k) {
                 traj[k].x += alpha * traj[k].dx;
-                traj[k].u += alpha * traj[k].du;
+                if (k < N) {
+                    traj[k].u += alpha * traj[k].du;
+                } else {
+                    traj[k].u.setZero();
+                }
                 traj[k].s += alpha * traj[k].ds;
                 traj[k].lam += alpha * traj[k].dlam;
                 traj[k].soft_s += alpha * traj[k].dsoft_s;
@@ -950,9 +955,6 @@ public:
         // configured max iteration count so the hot-path push_back stays
         // pointer-bump only.
         alpha_log_.clear();
-        if (static_cast<int>(alpha_log_.capacity()) < config.max_iters) {
-            alpha_log_.reserve(static_cast<size_t>(config.max_iters));
-        }
         last_alpha_ = 1.0;
 
         SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
@@ -1051,7 +1053,7 @@ private:
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
-            detail::evaluate_model_stage<Model>(traj[k], config, current_dt);
+            detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
 
             for (int i = 0; i < NC; ++i) {
                 const double s = traj[k].s(i);
@@ -1568,10 +1570,7 @@ private:
             auto& traj = trajectory.active();
             for (int k = 0; k <= N; ++k) {
                 double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                // Presolve: evaluate initial guess. Use Model::compute() which
-                // combines dynamics+constraints+cost. Implicit dispatch is only
-                // needed in the hot iteration loop (step(), line search).
-                Model::compute(traj[k], config.integrator, current_dt);
+                detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
 
                 for (int i = 0; i < NC; ++i) {
                     double g = traj[k].g_val(i);
@@ -1661,7 +1660,7 @@ private:
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
 
-            detail::evaluate_model_stage<Model>(traj[k], config, current_dt);
+            detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
 
             // 2. Check NaNs (bit-level, works under -ffast-math)
             for (int i = 0; i < NC; ++i) {

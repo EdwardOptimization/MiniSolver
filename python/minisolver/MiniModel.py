@@ -2,6 +2,32 @@ import sympy as sp
 import os
 import re
 
+CPP_KEYWORDS = {
+    "alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand", "bitor", "bool",
+    "break", "case", "catch", "char", "char8_t", "char16_t", "char32_t", "class",
+    "compl", "concept", "const", "consteval", "constexpr", "constinit", "const_cast",
+    "continue", "co_await", "co_return", "co_yield", "decltype", "default", "delete",
+    "do", "double", "dynamic_cast", "else", "enum", "explicit", "export", "extern",
+    "false", "float", "for", "friend", "goto", "if", "inline", "int", "long",
+    "mutable", "namespace", "new", "noexcept", "not", "not_eq", "nullptr", "operator",
+    "or", "or_eq", "private", "protected", "public", "register", "reinterpret_cast",
+    "requires", "return", "short", "signed", "sizeof", "static", "static_assert",
+    "static_cast", "struct", "switch", "template", "this", "thread_local", "throw",
+    "true", "try", "typedef", "typeid", "typename", "union", "unsigned", "using",
+    "virtual", "void", "volatile", "wchar_t", "while", "xor", "xor_eq"
+}
+
+CPP_GENERATED_RESERVED_NAMES = {
+    "kp", "dt", "type", "x_in", "u_in", "p_in", "xdot", "jac",
+    "current_dt", "scale", "rhs", "d2", "diff", "quad_term", "robust_dist",
+    "robust_rhs", "x_next", "k1", "k2", "k3", "k4", "tmp", "res",
+}
+
+CPP_GENERATED_RESERVED_PREFIXES = (
+    "tmp_", "tmp_d", "tmp_c", "tmp_j", "tmp_jc", "lam_", "P_", "A_", "B_", "xp_",
+    "d2_", "rhs_", "scale_",
+)
+
 class OptimalControlModel:
     def __init__(self, name="Model"):
         self.name = name
@@ -31,9 +57,27 @@ class OptimalControlModel:
 
         self.use_sparse_kernels = True
 
+    def _all_variable_names(self):
+        return [s.name for s in self.states] + [u.name for u in self.controls] + [
+            p.name for p in self.parameters
+        ]
+
+    def _validate_cpp_identifier(self, kind, name):
+        if not isinstance(name, str) or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            raise ValueError(f"{kind} name {name!r} is not a valid C++ identifier")
+        if name in CPP_KEYWORDS:
+            raise ValueError(f"{kind} name {name!r} is a reserved C++ keyword")
+        if name in CPP_GENERATED_RESERVED_NAMES or any(
+            name.startswith(prefix) for prefix in CPP_GENERATED_RESERVED_PREFIXES
+        ):
+            raise ValueError(f"{kind} name {name!r} is reserved by MiniSolver codegen")
+        if name in self._all_variable_names():
+            raise ValueError(f"duplicate variable name {name!r}; choose unique state/control/parameter names")
+
     def state(self, *names):
         symbols = []
         for name in names:
+            self._validate_cpp_identifier("state", name)
             s = sp.symbols(name)
             self.states.append(s)
             symbols.append(s)
@@ -44,6 +88,7 @@ class OptimalControlModel:
     def control(self, *names):
         symbols = []
         for name in names:
+            self._validate_cpp_identifier("control", name)
             u = sp.symbols(name)
             self.controls.append(u)
             symbols.append(u)
@@ -54,6 +99,7 @@ class OptimalControlModel:
     def parameter(self, *names):
         symbols = []
         for name in names:
+            self._validate_cpp_identifier("parameter", name)
             p = sp.symbols(name)
             self.parameters.append(p)
             symbols.append(p)
@@ -68,6 +114,24 @@ class OptimalControlModel:
         if state not in self.states:
             raise ValueError(f"Unknown state: {state}")
         self.dynamics_rhs[state] = expr
+
+    def _is_numeric_expr(self, expr):
+        return len(sp.sympify(expr).free_symbols) == 0
+
+    def _validate_numeric_positive(self, label, expr):
+        if self._is_numeric_expr(expr) and float(sp.N(expr)) <= 0.0:
+            raise ValueError(f"{label} must be positive for outside quadratic constraints")
+
+    def _validate_numeric_psd(self, Q_mat):
+        entries = list(Q_mat)
+        if any(not self._is_numeric_expr(entry) for entry in entries):
+            return
+        if Q_mat != Q_mat.T:
+            raise ValueError("Q must be symmetric PSD for quadratic constraints")
+        evals = Q_mat.eigenvals()
+        for eig in evals:
+            if float(sp.N(eig)) < -1e-12:
+                raise ValueError("Q must be PSD for quadratic constraints")
 
     def minimize(self, *exprs):
         """
@@ -133,6 +197,9 @@ class OptimalControlModel:
         
         # Logic for Robust Formulation
         is_exclusion = (sense == '>=' or type == 'outside')
+        if is_exclusion:
+            self._validate_numeric_positive("rhs", rhs)
+            self._validate_numeric_psd(Q_mat)
         
         if is_exclusion:
             if linearize_at_boundary:
@@ -289,7 +356,7 @@ class OptimalControlModel:
 
     def _generate_special_constraint_preamble(self):
         code = "\n        // --- Special Constraints Pre-Calculation ---\n"
-        for info in self.special_constraints:
+        for local_idx, info in enumerate(self.special_constraints):
             if info['type'] == 'quad_boundary_proj':
                 # Calculate Projection
                 x_vec = info['x']
@@ -300,15 +367,125 @@ class OptimalControlModel:
                 
                 rhs_val = info['rhs'] # Usually a number or symbol
                 
-                # Note: Declaring variables in outer scope to be visible to CSE expressions
-                code += f"        T d2 = {sp.ccode(d2_expr)};\n"
-                code += f"        T rhs = {sp.ccode(rhs_val)};\n"
-                code += f"        T scale = sqrt(rhs / (d2 + 1e-9));\n"
+                d2_name = f"d2_{local_idx}"
+                rhs_name = f"rhs_{local_idx}"
+                scale_name = f"scale_{local_idx}"
+
+                # Note: Declaring variables in outer scope to be visible to CSE expressions.
+                # Names must be unique because multiple projected constraints share a scope.
+                code += f"        T {d2_name} = {sp.ccode(d2_expr)};\n"
+                code += f"        T {rhs_name} = {sp.ccode(rhs_val)};\n"
+                code += f"        T {scale_name} = sqrt({rhs_name} / ({d2_name} + 1e-9));\n"
                 
                 for i, xp_sym in enumerate(info['xp_syms']):
                     # xp_i = c_i + scale * (x_i - c_i)
-                    val_expr = c_vec[i] + sp.symbols("scale") * (x_vec[i] - c_vec[i])
-                    code += f"        T {xp_sym} = {sp.ccode(val_expr)};\n"
+                    offset_expr = x_vec[i] - c_vec[i]
+                    code += f"        T {xp_sym} = {sp.ccode(c_vec[i])} + {scale_name} * ({sp.ccode(offset_expr)});\n"
+        return code
+
+    def _terminal_substitutions(self):
+        return {u: 0 for u in self.controls}
+
+    def _generate_terminal_constraints_body(self, x_vec, u_vec):
+        nc = len(self.constraints)
+        nx = len(self.states)
+        nu = len(self.controls)
+        u_zero = self._terminal_substitutions()
+        g_terminal = sp.Matrix([sp.simplify(c.subs(u_zero)) for c in self.constraints]) if nc > 0 else sp.Matrix.zeros(0, 1)
+        C_terminal = g_terminal.jacobian(x_vec) if nc > 0 else sp.Matrix.zeros(0, nx)
+        D_terminal = g_terminal.jacobian(u_vec) if nc > 0 else sp.Matrix.zeros(0, nu)
+
+        con_exprs = [g_terminal, C_terminal, D_terminal]
+        for info in self.special_constraints:
+            con_exprs.append(info['x'])
+            con_exprs.append(info['Q'])
+
+        code = ""
+        code += self._generate_unpack_block(source_kp=True, expressions=con_exprs)
+        code += self._generate_special_constraint_preamble()
+        code += "\n"
+        assign_con = [("g_val", 0, nc, 1), ("C", 1, nc, nx), ("D", 2, nc, nu)]
+        code += self._generate_assign_block(assign_con, [g_terminal, C_terminal, D_terminal])
+        return code
+
+    def _generate_terminal_cost_section(self, x_vec, u_vec):
+        nx = len(self.states)
+        nu = len(self.controls)
+        nc = len(self.constraints)
+        xu_vec = sp.Matrix.vstack(x_vec, u_vec)
+        u_zero = self._terminal_substitutions()
+
+        objective_terminal = sp.simplify(self.objective.subs(u_zero))
+        constraints_terminal = [sp.simplify(c.subs(u_zero)) for c in self.constraints]
+
+        grad_cost = sp.Matrix([objective_terminal]).jacobian(xu_vec).T
+        q_grad = grad_cost[:nx, :]
+        r_grad = grad_cost[nx:, :]
+
+        hess_cost = sp.hessian(objective_terminal, xu_vec)
+        Q_hess_obj = hess_cost[:nx, :nx]
+        R_hess_obj = hess_cost[nx:, nx:]
+        H_hess_obj = hess_cost[nx:, :nx]
+
+        lam_sym = [sp.symbols(f"lam_{i}") for i in range(nc)]
+        hess_con_total = sp.zeros(nx + nu, nx + nu)
+        if nc > 0:
+            for i in range(nc):
+                hess_con_total += lam_sym[i] * sp.hessian(constraints_terminal[i], xu_vec)
+
+        Q_hess_con = hess_con_total[:nx, :nx]
+        R_hess_con = hess_con_total[nx:, nx:]
+        H_hess_con = hess_con_total[nx:, :nx]
+
+        exprs = [
+            q_grad, r_grad, Q_hess_obj, R_hess_obj, H_hess_obj,
+            Q_hess_con, R_hess_con, H_hess_con, objective_terminal
+        ]
+
+        code = "template<typename T, int Mode>\n"
+        code += "    static void compute_terminal_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code += self._generate_unpack_block(source_kp=True, expressions=exprs)
+
+        used_syms = set()
+        for expr in [Q_hess_con, R_hess_con, H_hess_con]:
+            if hasattr(expr, 'free_symbols'):
+                used_syms.update(expr.free_symbols)
+        for i in range(nc):
+            s_lam = sp.symbols(f"lam_{i}")
+            if s_lam in used_syms:
+                code += f"        T lam_{i} = kp.lam({i});\n"
+
+        code += "\n"
+        code += self._generate_assign_block(
+            [("q", 0, nx, 1), ("r", 1, nu, 1)],
+            [q_grad, r_grad],
+        )
+
+        target_names = ["Q", "R", "H"]
+        obj_mats = [Q_hess_obj, R_hess_obj, H_hess_obj]
+        con_mats = [Q_hess_con, R_hess_con, H_hess_con]
+        for name, mat_obj, mat_con in zip(target_names, obj_mats, con_mats):
+            code += f"\n        // terminal {name} (Mode 0=GN, 1=Exact)\n"
+            rows = mat_obj.shape[0]
+            cols = mat_obj.shape[1]
+            for r in range(rows):
+                for c in range(cols):
+                    val_obj = mat_obj[r, c]
+                    val_con = mat_con[r, c]
+                    code += f"        kp.{name}({r},{c}) = {sp.ccode(val_obj)};\n"
+                    if sp.sympify(val_con).is_zero is not True:
+                        code += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {sp.ccode(val_con)};\n"
+
+        code += f"\n        kp.cost = {sp.ccode(objective_terminal)};\n"
+        code += "    }\n\n"
+        code += "    template<typename T>\n"
+        code += "    static void compute_terminal_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code += "        compute_terminal_cost_impl<T, 0>(kp);\n"
+        code += "    }\n\n"
+        code += "    template<typename T>\n"
+        code += "    static void compute_terminal_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code += "        compute_terminal_cost_impl<T, 1>(kp);\n"
+        code += "    }\n"
         return code
 
     def _generate_sparse_matmul(self, mat_symbol, non_zeros, input_name, output_name, R, C, common_dim):
@@ -926,6 +1103,7 @@ class OptimalControlModel:
             code_compute_con += f"        T {name} = {sp.ccode(val)};\n"
         assign_con = [("g_val", 0, nc, 1), ("C", 1, nc, nx), ("D", 2, nc, nu)]
         code_compute_con += self._generate_assign_block(assign_con, reduced_con)
+        code_compute_terminal_con = self._generate_terminal_constraints_body(x_vec, u_vec)
 
         # Compute Cost Body
         # Template param: 0 = Exact (with Con Hessian), 1 = GN (without Con Hessian)
@@ -1046,6 +1224,7 @@ class OptimalControlModel:
         code_wrappers += "    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
         code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
         code_wrappers += "    }\n"
+        code_compute_terminal_cost = self._generate_terminal_cost_section(x_vec, u_vec)
         
         code_compute_cost = code_cost_impl + code_wrappers
         
@@ -1082,7 +1261,9 @@ class OptimalControlModel:
         content = content.replace("{{JACOBIAN_CONTINUOUS_BODY}}", code_jac_body)
         content = content.replace("{{COMPUTE_DYNAMICS_BODY}}", code_compute_dyn)
         content = content.replace("{{COMPUTE_CONSTRAINTS_BODY}}", code_compute_con)
+        content = content.replace("{{COMPUTE_TERMINAL_CONSTRAINTS_BODY}}", code_compute_terminal_con)
         content = content.replace("{{COMPUTE_COST_SECTION}}", code_compute_cost)
+        content = content.replace("{{COMPUTE_TERMINAL_COST_SECTION}}", code_compute_terminal_cost)
         
         if self.use_fused_riccati:
             content = content.replace("{{FUSED_RICCATI_STEP_BODY}}", code_fused_riccati)
@@ -1094,11 +1275,9 @@ class OptimalControlModel:
             content = re.sub(r"// \[\[SPARSE_KERNELS_START\]\].*?// \[\[SPARSE_KERNELS_END\]\]", "", content, flags=re.DOTALL)
 
         # 6.5 Terminal u_N guard: warn if cost or constraints depend on u.
-        # In NMPC, terminal stage (k=N) has no control variable — u_N is not
-        # a decision variable. The solver's API guard prevents setting u_N
-        # (it stays 0), so cost terms involving u at terminal are phantom
-        # contributions. Warn the user so they can restructure their model
-        # with separate stage/terminal objectives if needed.
+        # In NMPC, terminal stage (k=N) has no control decision. Generated
+        # terminal cost/constraints project all controls to 0, so coupled
+        # x/u expressions keep only their x-only projection at terminal.
         if nu > 0:
             u_used_in_cost = any(
                 not sp.sympify(r_grad[i]).is_zero for i in range(nu)
@@ -1114,11 +1293,10 @@ class OptimalControlModel:
                         break
             if u_used_in_cost:
                 print(f"WARNING: cost depends on u. Terminal stage (k=N) has no "
-                      f"control variable; u_N = 0 by design. Terminal cost will "
-                      f"evaluate with u_N = 0.")
+                      f"control decision; terminal cost will project controls to 0.")
             if u_used_in_con:
                 print(f"WARNING: constraints depend on u. Terminal stage (k=N) has "
-                      f"no control variable; u_N = 0 by design.")
+                      f"no control decision; terminal constraints will project controls to 0.")
 
         # 7. Write Output
         file_name = "car_model.h"

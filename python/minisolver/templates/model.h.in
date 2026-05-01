@@ -100,8 +100,17 @@ struct {{MODEL_NAME}} {
 {{COMPUTE_CONSTRAINTS_BODY}}
     }
 
+    // --- 2.5 Terminal Stage: x-only projection of cost/constraints ---
+    template<typename T>
+    static void compute_terminal_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+{{COMPUTE_TERMINAL_CONSTRAINTS_BODY}}
+    }
+
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
     {{COMPUTE_COST_SECTION}}
+
+    // --- 3.5 Terminal Cost (u projected to zero) ---
+    {{COMPUTE_TERMINAL_COST_SECTION}}
 
     // --- 4. Compute All (Convenience) ---
     template<typename T>
