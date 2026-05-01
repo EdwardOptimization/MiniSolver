@@ -49,6 +49,27 @@ public:
             traj, N, mu, reg, strategy, config, workspace, nullptr, &soc_rhs_traj);
     }
 
+    bool evaluate_dual_residual(TrajArray& scratch_traj, int N, double mu, double reg,
+        InertiaStrategy strategy, const SolverConfig& config, double& max_dual_inf) override
+    {
+        RiccatiWorkspace<Knot> scratch_workspace;
+        const bool ok = cpu_serial_solve<TrajArray, Model>(
+            scratch_traj, N, mu, reg, strategy, config, scratch_workspace);
+        if (!ok) {
+            max_dual_inf = std::numeric_limits<double>::infinity();
+            return false;
+        }
+
+        max_dual_inf = 0.0;
+        for (int k = 0; k <= N; ++k) {
+            const double r_norm = MatOps::norm_inf(scratch_traj[k].r_bar);
+            if (r_norm > max_dual_inf) {
+                max_dual_inf = r_norm;
+            }
+        }
+        return true;
+    }
+
     // Iterative Refinement Implementation
     // High-precision mode to recover from regularization errors and linearization artifacts.
     bool refine(TrajArray& traj, const TrajArray& original_system, int N, double /*mu*/,

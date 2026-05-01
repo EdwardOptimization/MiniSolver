@@ -734,6 +734,31 @@ private:
         return false;
     }
 
+    bool has_invalid_search_direction(const typename TrajectoryType::TrajArray& t) const
+    {
+        for (int k = 0; k <= N; ++k) {
+            const auto& kp = t[k];
+            for (int i = 0; i < NX; ++i) {
+                if (!MatOps::is_finite_scalar(kp.dx(i))) {
+                    return true;
+                }
+            }
+            for (int i = 0; i < NU; ++i) {
+                if (!MatOps::is_finite_scalar(kp.du(i))) {
+                    return true;
+                }
+            }
+            for (int i = 0; i < NC; ++i) {
+                if (!MatOps::is_finite_scalar(kp.ds(i))
+                    || !MatOps::is_finite_scalar(kp.dlam(i))
+                    || !MatOps::is_finite_scalar(kp.dsoft_s(i))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     bool has_valid_primal_dual_guess(const typename TrajectoryType::TrajArray& t) const
     {
         for (int k = 0; k <= N; ++k) {
@@ -1388,13 +1413,11 @@ private:
             return SolverStatus::NUMERICAL_ERROR;
         }
 
-        // Quick NaN check on search directions — catches Riccati producing NaN.
-        // Single-element check: if NaN appears, it propagates to all elements
-        // within 1-2 iterations, so checking dx[0]/du[0] is sufficient.
-        // This replaces the old full has_nans() scan that ran before Riccati.
-        if (MatOps::is_nan_scalar(traj[0].dx(0)) || MatOps::is_nan_scalar(traj[0].du(0))) {
+        // Direction check after Riccati: scan the whole valid horizon so a
+        // later-stage slack/dual/state NaN cannot hide behind a finite dx0/du0.
+        if (has_invalid_search_direction(traj)) {
             if (config.print_level >= PrintLevel::INFO) {
-                MLOG_ERROR("Numerical Error: NaN detected in search direction.");
+                MLOG_ERROR("Numerical Error: invalid search direction detected.");
             }
             return SolverStatus::NUMERICAL_ERROR;
         }
@@ -1701,21 +1724,14 @@ private:
         double max_viol = compute_max_violation(traj);
 
         // Dual infeasibility metric: require a fresh Riccati backward pass so Qu includes
-        // the dynamic multipliers (B^T * pi_{k+1}). Using raw cost+barrier gradients alone
-        // underestimates the true stationarity residual.
+        // the dynamic multipliers (B^T * pi_{k+1}). Use the inactive trajectory buffer as
+        // scratch so postsolve never overwrites the active solution directions/gains.
         double max_dual_inf = std::numeric_limits<double>::infinity();
         bool linear_ok = false;
         if (linear_solver) {
-            linear_ok = linear_solver->solve(traj, N, mu, reg, config.inertia_strategy, config);
-        }
-        if (linear_ok) {
-            max_dual_inf = 0.0;
-            for (int k = 0; k <= N; ++k) {
-                const double r_norm = MatOps::norm_inf(traj[k].r_bar);
-                if (r_norm > max_dual_inf) {
-                    max_dual_inf = r_norm;
-                }
-            }
+            trajectory.prepare_candidate_full();
+            linear_ok = linear_solver->evaluate_dual_residual(trajectory.candidate(), N, mu, reg,
+                config.inertia_strategy, config, max_dual_inf);
         }
         // [最终评级]
 

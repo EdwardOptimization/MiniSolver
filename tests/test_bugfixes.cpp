@@ -27,6 +27,11 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     }
     static bool has_nans(Solver& s, const typename Solver::TrajArray& t) { return s.has_nans(t); }
     static typename Solver::TrajArray& get_trajectory(Solver& s) { return s.trajectory.active(); }
+    static SolverStatus postsolve(Solver& s, SolverStatus loop_status)
+    {
+        return s.postsolve(loop_status);
+    }
+    static SolverStatus step(Solver& s) { return s.step(); }
     static void set_linear_solver(
         Solver& s, std::unique_ptr<RiccatiSolver<typename Solver::TrajArray, Model>> solver)
     {
@@ -1570,4 +1575,95 @@ TEST(BugfixTest, NanDynamicsResidualReturnsNumericalError)
 
     EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR)
         << "Solver must reject NaN dynamics residuals before they hide in defect checks";
+}
+
+namespace {
+template <typename TrajArray>
+class PostsolveMutatingRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
+public:
+    bool solve(TrajArray& traj, int /*N*/, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        traj[0].dx(0) = 123.0;
+        traj[0].du(0) = 456.0;
+        traj[0].K(0, 0) = 789.0;
+        traj[0].r_bar(0) = 0.0;
+        return true;
+    }
+};
+}
+
+TEST(BugfixTest, PostsolveDoesNotMutateActiveDirections)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = PostsolveMutatingRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].dx(0) = 1.0;
+    traj[0].du(0) = 2.0;
+    traj[0].K(0, 0) = 3.0;
+
+    Access::set_linear_solver(solver, std::make_unique<FakeSolver>());
+
+    (void)Access::postsolve(solver, SolverStatus::UNSOLVED);
+
+    EXPECT_DOUBLE_EQ(traj[0].dx(0), 1.0);
+    EXPECT_DOUBLE_EQ(traj[0].du(0), 2.0);
+    EXPECT_DOUBLE_EQ(traj[0].K(0, 0), 3.0);
+}
+
+namespace {
+template <typename TrajArray>
+class LateNaNDirectionRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
+public:
+    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx.setZero();
+            traj[k].du.setZero();
+            traj[k].ds.setZero();
+            traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
+            traj[k].r_bar.setZero();
+        }
+        traj[1].dx(0) = std::numeric_limits<double>::quiet_NaN();
+        return true;
+    }
+};
+}
+
+TEST(BugfixTest, StepRejectsNaNDirectionBeyondFirstKnot)
+{
+    constexpr int N = 2;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = LateNaNDirectionRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::NONE;
+    config.barrier_strategy = BarrierStrategy::MONOTONE;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+    auto& traj = Access::get_trajectory(solver);
+    for (int k = 0; k <= N; ++k) {
+        traj[k].s(0) = 1.0;
+        traj[k].lam(0) = 0.1;
+    }
+    Access::set_linear_solver(solver, std::make_unique<FakeSolver>());
+
+    const SolverStatus status = Access::step(solver);
+
+    EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR)
+        << "NaN search directions at later knots must be rejected immediately.";
 }
