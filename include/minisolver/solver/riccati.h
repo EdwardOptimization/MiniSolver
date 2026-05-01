@@ -57,6 +57,11 @@ namespace internal {
             return true;
         }
     }
+
+    inline double positive_barrier_gap(double value, double min_value)
+    {
+        return value < min_value ? min_value : value;
+    }
 }
 
 template <typename Knot, typename ModelType>
@@ -129,9 +134,11 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
             double soft_s_i = kp.soft_s(i);
             if (soft_s_i < config.min_barrier_slack)
                 soft_s_i = config.min_barrier_slack;
+            const double soft_dual_i
+                = internal::positive_barrier_gap(w - lam_i, config.min_barrier_slack);
 
             double term_hard = s_i / lam_i;
-            double term_soft = soft_s_i / (w - lam_i);
+            double term_soft = soft_s_i / soft_dual_i;
 
             sigma_val = 1.0 / (term_hard + term_soft);
         }
@@ -149,9 +156,11 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
             double soft_s_i = kp.soft_s(i);
             if (soft_s_i < config.min_barrier_slack)
                 soft_s_i = config.min_barrier_slack;
+            const double soft_dual_i
+                = internal::positive_barrier_gap(w - lam_i, config.min_barrier_slack);
 
             double r_eq = g_val_i + s_i - soft_s_i;
-            double r_z = soft_s_i * (w - lam_i) - mu;
+            double r_z = soft_s_i * soft_dual_i - mu;
             if (aff_kp) {
                 double dsoft_s_i = aff_kp->dsoft_s(i);
                 double dlam_aff_i = aff_kp->dlam(i);
@@ -160,7 +169,7 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
 
             // Corrected Signs:
             // grad_mod = lam + sigma * (r_eq - r_y/lam + r_z/(w-lam))
-            double term_correction = r_eq - r_y / lam_i + r_z / (w - lam_i);
+            double term_correction = r_eq - r_y / lam_i + r_z / soft_dual_i;
             grad_mod(i) = lam_i + sigma_val * term_correction;
         } else {
             // Standard / L2
@@ -240,26 +249,28 @@ void recover_dual_search_directions(Knot& kp, double mu, const minisolver::Solve
             double soft_s_i = kp.soft_s(i);
             if (soft_s_i < config.min_barrier_slack)
                 soft_s_i = config.min_barrier_slack;
+            const double soft_dual_i
+                = internal::positive_barrier_gap(w - lam_i, config.min_barrier_slack);
 
             double term_hard = s_i / lam_i;
-            double term_soft = soft_s_i / (w - lam_i);
+            double term_soft = soft_s_i / soft_dual_i;
             double sigma_val = 1.0 / (term_hard + term_soft);
 
             double r_eq = g_val_i + s_i - soft_s_i;
-            double r_z = soft_s_i * (w - lam_i) - mu;
+            double r_z = soft_s_i * soft_dual_i - mu;
             if (aff_kp) {
                 r_z += aff_kp->dsoft_s(i) * (-aff_kp->dlam(i));
             }
 
             // Corrected Signs for dlam recovery
             // dlam = sigma * (C dx + r_eq - r_y/lam + r_z/(w-lam))
-            double eff_r = r_eq - r_y / lam_i + r_z / (w - lam_i);
+            double eff_r = r_eq - r_y / lam_i + r_z / soft_dual_i;
 
             double dlam = sigma_val * (constraint_step(i) + eff_r);
             kp.dlam(i) = dlam;
 
             kp.ds(i) = (-r_y - s_i * dlam) / lam_i;
-            kp.dsoft_s(i) = -(r_z - soft_s_i * dlam) / (w - lam_i);
+            kp.dsoft_s(i) = -(r_z - soft_s_i * dlam) / soft_dual_i;
         } else if (type == 2 && w > 1e-6) { // L2 Soft
             double r_prim_L2 = g_val_i + s_i - lam_i / w;
             double term_rhs = -r_y + lam_i * (r_prim_L2 + constraint_step(i));
@@ -375,7 +386,10 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
         // [FUSED KERNEL OPTIMIZATION]
         if constexpr (internal::has_fused_riccati_step<ModelType>::value) {
             if (internal::is_fused_riccati_integrator_compatible<ModelType>(config.integrator)) {
-                // One-shot update of Qxx, Quu, Qux, qx, ru using fused kernel
+                // Fused-kernel contract: add the nominal A^T*Vxx*A, B^T*Vxx*B,
+                // B^T*Vxx*A, A^T*Vx and B^T*Vx terms. Defect-correction
+                // gradients are applied below because they depend on runtime
+                // multiple-shooting residuals, not just the generated model.
                 ModelType::compute_fused_riccati_step(Vxx, Vx, kp);
                 used_fused_kernel = true;
 

@@ -4,6 +4,7 @@
 #include "minisolver/solver/solver.h"
 #include <cmath>
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace minisolver;
 
@@ -31,6 +32,11 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     static typename Solver::TrajArray& get_trajectory(Solver& s)
     {
         return s.trajectory.active();
+    }
+    static void set_linear_solver(
+        Solver& s, std::unique_ptr<RiccatiSolver<typename Solver::TrajArray, Model>> solver)
+    {
+        s.linear_solver = std::move(solver);
     }
 };
 } // namespace minisolver::test
@@ -1329,13 +1335,75 @@ struct NanJacobianModel {
         compute_cost(kp);
     }
 };
+
+struct NanDynamicsResidualModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& /*x*/, const MSVec<T, NU>& /*u*/,
+        const MSVec<T, NP>& /*p*/, double /*dt*/, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = std::numeric_limits<T>::quiet_NaN();
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = std::numeric_limits<T>::quiet_NaN();
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T>
+    static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0) + kp.u(0) * kp.u(0);
+        kp.q(0) = 2.0 * kp.x(0);
+        kp.r(0) = 2.0 * kp.u(0);
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2.0;
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
+    }
+};
 } // namespace
 
 TEST(BugfixTest, HasNansDetectsJacobianNaN)
 {
     // RED test for gap #6: has_nans() must detect NaN in A/B matrices.
     // Before fix: has_nans only checks dx, du, ds, dlam, cost — misses A/B.
-    // After fix: has_nans also checks kp.A.allFinite() and kp.B.allFinite().
+    // After fix: has_nans also checks the dynamics Jacobians with MatOps::has_nan().
     constexpr int N = 5;
     using Solver = MiniSolver<NanJacobianModel, N>;
     using Access = minisolver::test::SolverInternalAccess<NanJacobianModel, N>;
@@ -1354,6 +1422,116 @@ TEST(BugfixTest, HasNansDetectsJacobianNaN)
     // has_nans MUST detect the NaN in A(0,0)
     EXPECT_TRUE(Access::has_nans(solver, traj))
         << "has_nans() failed to detect NaN in dynamics Jacobian A";
+}
+
+TEST(BugfixTest, HasNansDetectsDynamicsResidualNaN)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].f_resid(0) = std::numeric_limits<double>::quiet_NaN();
+
+    EXPECT_TRUE(Access::has_nans(solver, traj))
+        << "has_nans() must detect NaN in dynamics residual f_resid";
+}
+
+TEST(BugfixTest, HasNansDetectsL1SoftSlackDirectionNaN)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<L1TestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<L1TestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].dsoft_s(0) = std::numeric_limits<double>::quiet_NaN();
+
+    EXPECT_TRUE(Access::has_nans(solver, traj))
+        << "has_nans() must include L1 soft slack search direction dsoft_s";
+}
+
+TEST(BugfixTest, L1BarrierDerivativesClampSoftDualGapAtWeightBoundary)
+{
+    using Knot = KnotPoint<double, 1, 1, 1, 0>;
+    Knot kp;
+    kp.set_zero();
+
+    kp.Q.setIdentity();
+    kp.R.setIdentity();
+    kp.s(0) = 1.0;
+    kp.lam(0) = L1TestModel::constraint_weights[0]; // Exact boundary: w - lam == 0
+    kp.soft_s(0) = 1.0;
+    kp.C(0, 0) = 1.0;
+    kp.D(0, 0) = 1.0;
+
+    SolverConfig config;
+    config.min_barrier_slack = 1e-9;
+
+    RiccatiWorkspace<Knot> ws;
+    compute_barrier_derivatives<Knot, L1TestModel>(kp, 1e-4, config, ws);
+
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.Q_bar(0, 0)));
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.R_bar(0, 0)));
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.H_bar(0, 0)));
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.q_bar(0)));
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.r_bar(0)));
+
+    recover_dual_search_directions<Knot, L1TestModel>(kp, 1e-4, config);
+
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.dlam(0)));
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.ds(0)));
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.dsoft_s(0)));
+}
+
+namespace {
+template <typename TrajArray>
+class FailingCorrectorRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
+public:
+    int calls = 0;
+
+    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        ++calls;
+        return calls == 1; // affine predictor succeeds; corrector fails.
+    }
+};
+}
+
+TEST(BugfixTest, MehrotraDoesNotUpdateMuWhenCorrectorSolveFails)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = FailingCorrectorRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
+    config.inertia_max_retries = 1;
+    config.max_iters = 1;
+    config.mu_init = 1e-1;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_EQ(fake_solver_ptr->calls, 2);
+    EXPECT_DOUBLE_EQ(Access::mu(solver), config.mu_init)
+        << "Failed Mehrotra corrector solve must not advance the barrier parameter";
 }
 
 TEST(BugfixTest, NanJacobianReturnsNumericalError)
@@ -1375,4 +1553,22 @@ TEST(BugfixTest, NanJacobianReturnsNumericalError)
     // Must detect numerical error (either from NaN in A or downstream NaN in dx)
     EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR)
         << "Solver did not detect NaN in dynamics Jacobian";
+}
+
+TEST(BugfixTest, NanDynamicsResidualReturnsNumericalError)
+{
+    constexpr int N = 5;
+    using Solver = MiniSolver<NanDynamicsResidualModel, N>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 5;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+
+    auto status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR)
+        << "Solver must reject NaN dynamics residuals before they hide in defect checks";
 }

@@ -677,12 +677,13 @@ private:
         for (int k = 0; k <= N; ++k) {
             const auto& kp = t[k];
             if (MatOps::has_nan(kp.dx) || MatOps::has_nan(kp.du)
-                || MatOps::has_nan(kp.ds) || MatOps::has_nan(kp.dlam))
+                || MatOps::has_nan(kp.ds) || MatOps::has_nan(kp.dlam)
+                || MatOps::has_nan(kp.dsoft_s))
                 return true;
             if (!MatOps::is_finite_scalar(kp.cost))
                 return true;
-            // Dynamics Jacobians — NaN here propagates into Riccati
-            if (MatOps::has_nan(kp.A) || MatOps::has_nan(kp.B))
+            // Dynamics outputs — NaN here propagates into defect checks/Riccati.
+            if (MatOps::has_nan(kp.f_resid) || MatOps::has_nan(kp.A) || MatOps::has_nan(kp.B))
                 return true;
         }
         return false;
@@ -1262,7 +1263,8 @@ private:
                 }
             }
 
-            mu = mu_target;
+            if (solve_success)
+                mu = mu_target;
 
         } else {
             // Standard IPM
