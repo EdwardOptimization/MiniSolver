@@ -34,6 +34,52 @@ This file tracks **milestones** (not daily progress). The goal is to keep the pr
 - Use a small set of canonical NMPC scenarios and record both accuracy (reference solution) and runtime.
 - Define and enforce correctness gates: MiniSolver must match a high-precision reference before optimizing iteration/time.
 
+## Remaining Solver Hardening Plan (2026-05)
+
+This plan tracks the remaining solver-hardening work after the May 2026
+review pass. Each item should follow the project rule:
+
+1. Add or tighten a focused test/benchmark that exposes the behavior.
+2. Make the smallest code change that fixes the behavior.
+3. Compare before/after correctness and runtime when performance can be affected.
+
+### May 2026 Hardening Batch
+
+| Priority | Item | Status | Validation |
+| --- | --- | --- | --- |
+| P0 | Reject duplicate, invalid, keyword, and codegen-reserved MiniModel names instead of silently renaming them. | Implemented | `test_minimodel_generation` |
+| P0 | Treat terminal stage as an x-only stage: coupled x/u cost and constraints are evaluated with terminal controls projected to zero. | Implemented | `test_minimodel_generation`, line-search terminal-control regression |
+| P0 | Keep default solve path allocation-safe by disabling profiling and iteration logging by default. | Implemented | `test_memory` default-config allocation test |
+| P0 | Make special quadratic-constraint codegen safer: unique temporary names plus basic numeric domain checks for `rhs` and `Q`. | Implemented | `test_minimodel_generation` |
+| P0 | Require `dynamics_continuous()` for implicit integrator dispatch in custom models. | Implemented | `test_integrator` |
+| P0 | Replace proportional "Armijo" merit check with standard directional-derivative Armijo and keep a dedicated benchmark. | Implemented | `test_line_search`, `merit_armijo_bench` |
+| P0 | Expand zero-malloc coverage beyond the default config. | Implemented | Global `operator new` instrumentation over `MERIT`, `FILTER`, `NONE`, rollout on/off, SOC on/off, and long `max_iters` scenarios |
+| P1 | Make `postsolve()` evaluate dual residuals on scratch data instead of mutating the active trajectory. | Implemented | `PostsolveDoesNotMutateActiveDirections` |
+| P1 | Broaden solve-time finite checks beyond the first direction element. | Implemented | `StepRejectsNaNDirectionBeyondFirstKnot` |
+| P1 | Reconfirm L2 soft-constraint residual semantics end-to-end. | Implemented | L2 convergence, interface-vs-manual comparison, filter residual regression, `merit_armijo_bench` |
+| P2 | Document the actual Hessian approximation semantics. | Implemented | `OBJECTIVE_HESSIAN_ONLY` name added; `GAUSS_NEWTON` remains a compatibility alias |
+| P2 | Document iterative-refinement semantics. | Implemented | README/config comments clarify current behavior is defect-rollout correction, not full KKT iterative refinement |
+
+### Next Hardening Items
+
+| Priority | Item | Reason | Required evidence before landing |
+| --- | --- | --- | --- |
+| P2 | Design piecewise/ppoly support before implementing it. | Piecewise support is needed for fair race-cars and quadrotor benchmarks, but should not be patched into the solver hot path ad hoc. | Design note, generated-model tests, and nmpc-bench before/after data. |
+| P2 | Continue MiniMatrix hot-path optimization only after benchmark gates are in place. | Matrix optimizations can easily increase complexity without improving full solver time. | Microbenchmark vs Eigen plus full NMPC benchmark before/after data. |
+
+### Commit Discipline
+
+Use separate commits for separate behavioral units:
+
+- Codegen safety and terminal-stage semantics.
+- Zero-malloc defaults and allocation tests.
+- Implicit-integrator dispatch hard-fail behavior.
+- Line-search semantic fixes and Armijo benchmark evidence.
+- Documentation-only clarifications.
+
+Do not mix solver semantics, matrix-kernel tuning, and benchmark asset changes in
+the same commit unless a test proves they are inseparable.
+
 ## Medium-Term (Next 2-3 Months)
 
 - Matrix backend hardening:
