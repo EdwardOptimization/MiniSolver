@@ -2,7 +2,7 @@
 
 Date: 2026-05-01
 
-Status: Phase 1-5 lite implemented locally; further expansion requires new evidence
+Status: first refactor stage complete; further expansion requires new evidence
 
 Related:
 
@@ -192,6 +192,43 @@ Result: `pendulum_on_cart` succeeded `5/5`, median `0.040 ms`, p95
 This is intentionally not a full `StrategySpec -> StrategyKernel` framework.
 The useful boundary today is: public config changes are cheap, and internal
 component rebuilds happen once at the solve boundary.
+
+## First Stage Complete
+
+The first solver-architecture refactor stage is complete. The solver now has:
+
+- a readable canonical solve route;
+- explicit internal phase contracts for the main loop;
+- `SolverContext` ownership for core runtime state;
+- first useful internal kernels for barrier update, termination, and
+  initialization;
+- a lightweight build-state boundary for config changes and component rebuilds;
+- zero-malloc coverage for the `set_config()` then `solve()` path;
+- reference/default correctness coverage on a simple analytical problem.
+
+This is the right stopping point for architecture work. The next priority should
+be numerical correctness, benchmark coverage, and measured performance work.
+Do not expand the architecture just because the target design mentions future
+strategy objects.
+
+## Deferred Architecture Decisions
+
+These features are intentionally deferred. They should be introduced only after
+tests, benchmarks, or a second real implementation prove the current structure
+is blocking progress.
+
+| Item | Current decision | Trigger to revisit |
+| --- | --- | --- |
+| `RestorationKernel` | Do not extract now. Restoration is still coupled to slack reset, the linear solver, and feasibility restoration. | A focused bugfix or second restoration implementation needs a narrow recovery contract. |
+| `ModelEvaluationKernel` | Do not add another wrapper now. `model_evaluation.h` is the existing seam. | There are at least two real evaluation modes, e.g. baseline generated evaluation, optimized generated evaluation, and piecewise/ppoly evaluation. |
+| Full `SolverPlan` | Keep the lightweight `SolverBuildState` / `SolverPlanInfo`. | Compatibility checks or phase-kernel construction become scattered, expensive, or allocation-sensitive beyond the current build-state boundary. |
+| Function-pointer phase table | Do not introduce now. | Phase kernels multiply and `solve()` has measurable runtime branch/dispatch pressure. |
+| `StrategySpec` / OOP configuration layer | Do not introduce now. Keep public API as `SolverConfig + solve()`. | Multiple stable backends/globalization/restoration strategies need user-facing composition without exposing hot-path virtual calls. |
+| Multiple plans inside one solver | Do not introduce now. Use multiple solver/config instances for benchmark A/B tests. | Solver construction cost is benchmark-proven expensive, or an in-solve fallback such as Riccati-to-dense solve requires state-isolated plans. |
+
+The default rule is: prefer multiple `MiniSolver` instances over multi-plan
+switching until construction cost or fallback behavior is proven to be a real
+problem.
 
 ## Target Architecture
 
