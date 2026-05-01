@@ -504,7 +504,7 @@ namespace matrix {
     {
         double sum = 0.0;
         for (int i = 0; i < A::Rows * A::Cols; ++i)
-            sum += static_cast<double>(a.data[i] * b.data[i]);
+            sum += static_cast<double>(a.data[i]) * static_cast<double>(b.data[i]);
         return sum;
     }
 

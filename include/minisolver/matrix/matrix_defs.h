@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <type_traits>
 
 namespace minisolver {
 
@@ -113,7 +114,15 @@ struct MatOps {
     // Dot Product
     template <typename V1, typename V2> inline static double dot(const V1& a, const V2& b)
     {
-        return a.dot(b);
+        if constexpr (std::is_same_v<typename V1::Scalar, float>
+            || std::is_same_v<typename V2::Scalar, float>) {
+            double sum = 0.0;
+            for (Eigen::Index i = 0; i < a.size(); ++i)
+                sum += static_cast<double>(a.coeff(i)) * static_cast<double>(b.coeff(i));
+            return sum;
+        } else {
+            return static_cast<double>(a.dot(b));
+        }
     }
 
     // Element-wise Max with scalar
@@ -305,22 +314,22 @@ struct MatOps {
     {
         constexpr int N = Mat::Rows;
         // Copy A into LU workspace
-        double lu[N * N];
+        std::array<double, N * N> lu;
         for (int i = 0; i < N * N; ++i)
-            lu[i] = A.data[i];
+            lu[static_cast<size_t>(i)] = A.data[i];
 
         // Permutation
-        int perm[N];
+        std::array<int, N> perm;
         for (int i = 0; i < N; ++i)
-            perm[i] = i;
+            perm[static_cast<size_t>(i)] = i;
 
         // Forward elimination with partial pivoting
         for (int k = 0; k < N; ++k) {
             // Find pivot
             int max_row = k;
-            double max_val = std::abs(lu[k * N + k]);
+            double max_val = std::abs(lu[static_cast<size_t>(k * N + k)]);
             for (int i = k + 1; i < N; ++i) {
-                double v = std::abs(lu[i * N + k]);
+                double v = std::abs(lu[static_cast<size_t>(i * N + k)]);
                 if (v > max_val) {
                     max_val = v;
                     max_row = i;
@@ -331,34 +340,38 @@ struct MatOps {
 
             // Swap rows
             if (max_row != k) {
-                std::swap(perm[k], perm[max_row]);
+                std::swap(perm[static_cast<size_t>(k)], perm[static_cast<size_t>(max_row)]);
                 for (int j = 0; j < N; ++j)
-                    std::swap(lu[k * N + j], lu[max_row * N + j]);
+                    std::swap(lu[static_cast<size_t>(k * N + j)],
+                        lu[static_cast<size_t>(max_row * N + j)]);
             }
 
             // Eliminate
             for (int i = k + 1; i < N; ++i) {
-                double factor = lu[i * N + k] / lu[k * N + k];
+                double factor
+                    = lu[static_cast<size_t>(i * N + k)] / lu[static_cast<size_t>(k * N + k)];
                 for (int j = k + 1; j < N; ++j)
-                    lu[i * N + j] -= factor * lu[k * N + j];
-                lu[i * N + k] = factor;
+                    lu[static_cast<size_t>(i * N + j)]
+                        -= factor * lu[static_cast<size_t>(k * N + j)];
+                lu[static_cast<size_t>(i * N + k)] = factor;
             }
         }
 
         // Forward substitution (L)
-        double y[N];
+        std::array<double, N> y;
         for (int i = 0; i < N; ++i) {
-            y[i] = b(perm[i]);
+            y[static_cast<size_t>(i)] = b(perm[static_cast<size_t>(i)]);
             for (int j = 0; j < i; ++j)
-                y[i] -= lu[i * N + j] * y[j];
+                y[static_cast<size_t>(i)]
+                    -= lu[static_cast<size_t>(i * N + j)] * y[static_cast<size_t>(j)];
         }
 
         // Backward substitution (U)
         for (int i = N - 1; i >= 0; --i) {
-            x(i) = y[i];
+            x(i) = y[static_cast<size_t>(i)];
             for (int j = i + 1; j < N; ++j)
-                x(i) -= lu[i * N + j] * x(j);
-            x(i) /= lu[i * N + i];
+                x(i) -= lu[static_cast<size_t>(i * N + j)] * x(j);
+            x(i) /= lu[static_cast<size_t>(i * N + i)];
         }
         return true;
     }

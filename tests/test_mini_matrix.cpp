@@ -67,6 +67,19 @@ TEST(MiniMatrixTest, Cholesky_EdgeCases)
     MiniLLT<double, 2> llt_indef(A_indef);
     EXPECT_NE(llt_indef.info(), 0) << "Cholesky should fail for indefinite matrix";
 
+    MiniMatrix<double, 2, 1> bad_b;
+    bad_b(0) = 1.0;
+    bad_b(1) = -2.0;
+    auto bad_x = llt_indef.solve(bad_b);
+    EXPECT_DOUBLE_EQ(bad_x(0), 0.0);
+    EXPECT_DOUBLE_EQ(bad_x(1), 0.0);
+
+    MiniMatrix<double, 2, 2> bad_B;
+    bad_B.setIdentity();
+    auto bad_X = llt_indef.solve(bad_B);
+    for (double v : bad_X.data)
+        EXPECT_DOUBLE_EQ(v, 0.0);
+
     // 3. Positive Definite (Valid)
     // [ 2  1 ]
     // [ 1  2 ] -> Det = 3
@@ -158,6 +171,19 @@ TEST(MiniMatrixTest, LDLT_EdgeCasesAndSolves)
     A_indef(1, 1) = 1.0;
     MiniLDLT<double, 2> ldlt_indef(A_indef);
     EXPECT_NE(ldlt_indef.info(), 0);
+
+    MiniMatrix<double, 2, 1> bad_b;
+    bad_b(0) = 1.0;
+    bad_b(1) = -2.0;
+    auto bad_x = ldlt_indef.solve(bad_b);
+    EXPECT_DOUBLE_EQ(bad_x(0), 0.0);
+    EXPECT_DOUBLE_EQ(bad_x(1), 0.0);
+
+    MiniMatrix<double, 2, 2> bad_B;
+    bad_B.setIdentity();
+    auto bad_X = ldlt_indef.solve(bad_B);
+    for (double v : bad_X.data)
+        EXPECT_DOUBLE_EQ(v, 0.0);
 
     MiniMatrix<double, 2, 2> A;
     A(0, 0) = 2.0;
@@ -320,6 +346,19 @@ TEST(MiniMatrixTest, Kernel_AddAtMulV)
     EXPECT_NEAR(y(1), 281.0, 1e-12);
 }
 
+TEST(MiniMatrixTest, DotPromotesFloatOperandsBeforeMultiply)
+{
+    MiniMatrix<float, 1, 1> a;
+    MiniMatrix<float, 1, 1> b;
+    a(0) = 1e20f;
+    b(0) = 1e20f;
+
+    const double result = a.dot(b);
+
+    EXPECT_TRUE(MatOps::is_finite_scalar(result));
+    EXPECT_GT(result, 1e39);
+}
+
 TEST(MiniMatrixTest, Kernel_SymmetrizeAndFiniteChecks)
 {
     MiniMatrix<double, 3, 3> A;
@@ -389,3 +428,11 @@ TEST(MiniMatrixTest, EigenLikeBlocksForIntegratorCompatibility)
     EXPECT_NEAR(head(0), 0.5, 1e-12);
     EXPECT_NEAR(head(1), 0.5, 1e-12);
 }
+
+#ifndef NDEBUG
+TEST(MiniMatrixDeathTest, BlockOutOfBoundsAsserts)
+{
+    MiniMatrix<double, 2, 2> M;
+    EXPECT_DEATH({ (void)M.template block<2, 2>(1, 1); }, "");
+}
+#endif

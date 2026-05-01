@@ -65,3 +65,21 @@ TEST(MatrixTest, CholeskySolveFail)
     EXPECT_FALSE(success);
 }
 #endif
+
+TEST(MatrixTest, MatOpsDotPromotesFloatOperandsBeforeMultiply)
+{
+    MSVec<float, 1> a;
+    MSVec<float, 1> b;
+#ifdef USE_EIGEN
+    a << 1e20f;
+    b << 1e20f;
+#else
+    a(0) = 1e20f;
+    b(0) = 1e20f;
+#endif
+
+    const double result = MatOps::dot(a, b);
+
+    EXPECT_TRUE(MatOps::is_finite_scalar(result));
+    EXPECT_GT(result, 1e39);
+}

@@ -27,6 +27,8 @@ public:
         , row0_(row0)
         , col0_(col0)
     {
+        assert(row0_ >= 0 && col0_ >= 0);
+        assert(row0_ + R <= ParentR && col0_ + C <= ParentC);
     }
 
     const T& operator()(int r, int c) const { return parent_(row0_ + r, col0_ + c); }
@@ -83,6 +85,8 @@ public:
         , row0_(row0)
         , col0_(col0)
     {
+        assert(row0_ >= 0 && col0_ >= 0);
+        assert(row0_ + R <= ParentR && col0_ + C <= ParentC);
     }
 
     T& operator()(int r, int c) { return parent_(row0_ + r, col0_ + c); }
@@ -462,29 +466,19 @@ public:
 
     MiniMatrix<T, N, 1> solve(const MiniMatrix<T, N, 1>& b)
     {
-        // Forward sub Ly = b
-        MiniMatrix<T, N, 1> y;
-        for (int i = 0; i < N; ++i) {
-            T sum = 0;
-            for (int k = 0; k < i; ++k)
-                sum += L(i, k) * y(k);
-            y(i) = (b(i) - sum) * inv_diag[i];
-        }
-
-        // Backward sub L^T x = y
-        MiniMatrix<T, N, 1> x;
-        for (int i = N - 1; i >= 0; --i) {
-            T sum = 0;
-            for (int k = i + 1; k < N; ++k)
-                sum += L(k, i) * x(k); // L(k,i) is L^T(i,k)
-            x(i) = (y(i) - sum) * inv_diag[i];
-        }
+        MiniMatrix<T, N, 1> x = b;
+        solve_in_place(x);
         return x;
     }
 
     // In-place solve
     void solve_in_place(MiniMatrix<T, N, 1>& b)
     {
+        if (!success) {
+            b.setZero();
+            return;
+        }
+
         // Forward sub Ly = b (overwrite b with y)
         for (int i = 0; i < N; ++i) {
             T sum = 0;
@@ -513,6 +507,11 @@ public:
     // In-place Matrix RHS
     template <int C> void solve_in_place(MiniMatrix<T, N, C>& B)
     {
+        if (!success) {
+            B.setZero();
+            return;
+        }
+
         // Forward substitution over all RHS columns: L * Y = B.
         for (int i = 0; i < N; ++i) {
             for (int c = 0; c < C; ++c) {
@@ -634,6 +633,11 @@ public:
 
     void solve_in_place(MiniMatrix<T, N, 1>& b)
     {
+        if (!success) {
+            b.setZero();
+            return;
+        }
+
         // L * y = b.
         for (int i = 0; i < N; ++i) {
             T sum = b(i);
@@ -664,6 +668,11 @@ public:
 
     template <int C> void solve_in_place(MiniMatrix<T, N, C>& B)
     {
+        if (!success) {
+            B.setZero();
+            return;
+        }
+
         // L * Y = B. Process all RHS columns together to keep the Riccati K solve fast.
         for (int i = 0; i < N; ++i) {
             for (int c = 0; c < C; ++c) {
