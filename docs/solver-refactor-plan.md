@@ -181,6 +181,63 @@ implementation. Other possible implementations include:
 current extraction. Introduce it only when a second restoration implementation
 or a focused correctness/debuggability issue needs a narrow recovery contract.
 
+## SOC Route
+
+Second-order correction (SOC) is a globalization feature, not model semantics.
+The solver core should remain geometry-agnostic: it should not know whether a
+constraint row represents a circle, ellipse, obstacle, friction cone, or generic
+nonlinear inequality.
+
+The core contract is instead:
+
+```text
+active linearization: A/B/C/D and cost curvature from the accepted iterate
+trial/candidate residual: true nonlinear residuals after the main step
+SOC correction: solve with active structure and trial residuals, then test by true residuals
+```
+
+The current generic SOC implementation follows that contract for filter line
+search in multiple-shooting mode:
+
+- `solve_soc()` reuses the active Riccati structure.
+- The SOC RHS uses the trial candidate's nonlinear residuals.
+- The primal-dual baseline for SOC (`s/lam/soft_s`) is seeded from the trial
+  candidate, because the correction is applied to the candidate.
+- SOC correction has its own fraction-to-boundary damping before it is applied.
+- The Filter implementation calls a private `try_soc_correction()` helper, keeping
+  SOC construction, damping, application, and re-acceptance in one internal seam.
+- `enable_line_search_rollout=true` skips this SOC path for now, because rollout
+  mode needs a distinct control-space SOC definition.
+
+Future MiniModel/codegen work should introduce a usage-aware constraint packet
+rather than putting geometry logic into the core. The three uses must remain
+separate:
+
+| Packet | Used by | Must contain |
+| --- | --- | --- |
+| true constraint evaluation | filter, merit, convergence, final report | true nonlinear residuals and true derivatives |
+| QP/IPM linearization | main Riccati/IPM direction | residual/Jacobian chosen for the main QP |
+| SOC correction | SOC RHS and optional correction Jacobian | trial residuals or projected-boundary residuals |
+
+For circle/ellipse/projected-boundary constraints, MiniModel can generate an
+SOC override packet. The first geometry-aware version should only override the
+SOC RHS/intercept while keeping the active `C/D` rows fixed, so Riccati structure
+reuse remains possible. A later version may update projected/trial tangents if
+benchmarks justify the extra factorization cost.
+
+Current codegen status:
+
+- The solver core detects an optional `Model::compute_soc_constraints(active,
+  trial)` hook.
+- Generated models provide that hook. By default it recomputes trial
+  constraints; for `quad_boundary_proj`, it overrides only `trial.g_val(row)`
+  using the active projected-boundary normal and the trial point.
+- The hook does not change solver core geometry semantics. The core still only
+  sees numerical residuals and active Riccati structure.
+- Full true/QP/SOC constraint packet separation is intentionally deferred until
+  the normal constraint path is split. For now, filter/merit/convergence still
+  use the existing `compute_constraints()` path.
+
 ## Current State After Solver Build-State Pass
 
 Completed after the kernel pass:
@@ -317,6 +374,7 @@ Current and intended seams:
 | Barrier update | `update_barrier_for_step_()` / `update_barrier()` | eventually internal `BarrierUpdateKernel` |
 | Direction solve | `compute_search_direction_()` plus Mehrotra helper | split regularization, linear solve, refinement |
 | Globalization | `globalize_step_()` and `LineSearchStrategy` | keep line-search variants behind one seam |
+| SOC | filter-only multiple-shooting correction via `try_soc_correction()` and optional model SOC hook | split full true/QP/SOC constraint packets before adding more geometry-aware behavior |
 | Restoration | `attempt_tiny_step_recovery_()` / `feasibility_restoration()` | isolate as recovery/restoration phase |
 | Termination | convergence checks plus loop exit checks | make termination criteria explicit and testable |
 | Diagnostics | timer, alpha log, metrics | avoid allocation in hot paths |
@@ -642,5 +700,7 @@ Do not mix:
    oracle or stable reference metric.
 4. Consider `RestorationKernel` only after a focused test shows the current
    restoration coupling blocks a correctness or debuggability fix.
-5. Re-run nmpc-bench after any further phase-boundary change to ensure no
+5. Keep SOC geometry-aware logic in MiniModel/codegen. The next SOC step is full
+   true/QP/SOC packet separation, not circle or ellipse branches in solver core.
+6. Re-run nmpc-bench after any further phase-boundary change to ensure no
    runtime regression from structural refactors.

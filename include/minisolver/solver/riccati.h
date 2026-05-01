@@ -83,8 +83,8 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
     MSVec<double, Knot::NC> sigma;
     MSVec<double, Knot::NC> grad_mod;
 
-    // SOC Residual Override
-    // If soc_kp is provided, it contains the candidate residuals g(x_cand).
+    // SOC Residual Override.
+    // If soc_kp is provided, it contains trial/candidate nonlinear residuals.
     // Standard IPM linearizes around x_k: g(x_k) + J dx = -residual.
     // Usually residual = 0 (feasibility).
     // In perturbed KKT (barrier), we target g + s = 0.
@@ -96,7 +96,8 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
     // J dx_soc = - g(x_k + dx).
     // So we want the linear system J dx_soc = -r_soc.
     // This means we should replace `g_val` in r_prim with `soc_kp->g_val`.
-    // Note: s is from base point x_k? Yes, we linearize at x_k.
+    // The caller must seed kp.s/lam/soft_s with the point where the correction will be applied
+    // (normally the trial candidate), while keeping A/B/C/D from the active linearization.
 
     for (int i = 0; i < Knot::NC; ++i) {
         double s_i = kp.s(i);
@@ -212,7 +213,9 @@ template <typename Knot, typename ModelType>
 void recover_dual_search_directions(Knot& kp, double mu, const minisolver::SolverConfig& config,
     const Knot* soc_kp = nullptr, const Knot* aff_kp = nullptr)
 {
-    // Use soc_kp->g_val if available
+    // Use soc_kp->g_val if available. The caller is responsible for seeding kp.s/lam/soft_s
+    // with the correction application point so recovered ds/dlam/dsoft_s are consistent with
+    // candidate += d_soc.
 
     MSVec<double, Knot::NC> constraint_step = kp.C * kp.dx + kp.D * kp.du;
 

@@ -106,6 +106,14 @@ struct {{MODEL_NAME}} {
 {{COMPUTE_TERMINAL_CONSTRAINTS_BODY}}
     }
 
+    // --- 2.6 SOC correction constraints ---
+    template<typename T>
+    static void compute_soc_constraints(
+        const KnotPoint<T,NX,NU,NC,NP>& active_kp,
+        KnotPoint<T,NX,NU,NC,NP>& trial_kp) {
+{{COMPUTE_SOC_CONSTRAINTS_BODY}}
+    }
+
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
     {{COMPUTE_COST_SECTION}}
 

@@ -234,6 +234,65 @@ struct L2ResidualFilterModel {
     }
 };
 
+struct SocHardResidualModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& /*u*/,
+        const MSVec<T, NP>& /*p*/, double /*dt*/, IntegratorType /*type*/)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double /*dt*/)
+    {
+        kp.f_resid(0) = kp.x(0);
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = 0.0;
+        kp.C(0, 0) = 0.0;
+        kp.D(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = 0.0;
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setZero();
+        kp.R.setIdentity();
+        kp.H.setZero();
+    }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+struct SocOverrideResidualModel : public SocHardResidualModel {
+    template <typename T>
+    static void compute_soc_constraints(
+        const KnotPoint<T, NX, NU, NC, NP>& /*active_kp*/, KnotPoint<T, NX, NU, NC, NP>& trial_kp)
+    {
+        trial_kp.g_val(0) = 7.0;
+    }
+};
+
 class RolloutStubLinearSolver
     : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2>::TrajArray> {
 public:
@@ -254,6 +313,42 @@ public:
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
+        return true;
+    }
+};
+
+class SocCaptureLinearSolver
+    : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1>::TrajArray> {
+public:
+    using TrajArray = Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1>::TrajArray;
+
+    bool called = false;
+    double correction_ds = 0.0;
+    double observed_soc_base_s = 0.0;
+    double observed_trial_s = 0.0;
+    double observed_soc_rhs_g = 0.0;
+
+    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        return true;
+    }
+
+    bool solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N, double /*mu*/,
+        double /*reg*/, InertiaStrategy /*strategy*/, const SolverConfig& /*config*/) override
+    {
+        called = true;
+        observed_soc_base_s = traj[0].s(0);
+        observed_trial_s = soc_rhs_traj[0].s(0);
+        observed_soc_rhs_g = soc_rhs_traj[0].g_val(0);
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx.setZero();
+            traj[k].du.setZero();
+            traj[k].ds(0) = correction_ds;
+            traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
+        }
         return true;
     }
 };
@@ -316,6 +411,155 @@ TEST(LineSearchTest, FilterRejectsPureL2KktResidualIncrease)
     EXPECT_DOUBLE_EQ(alpha, 0.0)
         << "Filter theta must include the L2 residual g+s-lam/w, otherwise a pure "
            "L2 KKT residual increase is accepted.";
+}
+
+TEST(LineSearchTest, FilterSocUsesCandidateSlackAsCorrectionBase)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = true;
+    config.soc_trigger_alpha = 0.1;
+    config.line_search_tau = 0.9;
+
+    using Model = SocHardResidualModel;
+    FilterLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    linear_solver.correction_ds = 0.0;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    active[0].ds(0) = 0.2; // trial slack becomes 1.2, making the filter reject.
+    active[0].dlam(0) = 0.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    (void)ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+
+    ASSERT_TRUE(linear_solver.called);
+    EXPECT_DOUBLE_EQ(linear_solver.observed_trial_s, 1.2);
+    EXPECT_DOUBLE_EQ(linear_solver.observed_soc_base_s, linear_solver.observed_trial_s)
+        << "SOC correction is applied to candidate, so the correction baseline must use "
+           "candidate slack/dual variables, not active ones.";
+}
+
+TEST(LineSearchTest, FilterSocDampsCorrectionToStayInterior)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = true;
+    config.soc_trigger_alpha = 0.1;
+    config.line_search_tau = 0.5;
+
+    using Model = SocHardResidualModel;
+    FilterLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    linear_solver.correction_ds = -2.4; // Full SOC would move trial slack 1.2 to -1.2.
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    active[0].ds(0) = 0.2; // trial slack = 1.2, filter rejects before SOC.
+    active[0].dlam(0) = 0.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+
+    ASSERT_TRUE(linear_solver.called);
+    EXPECT_GT(alpha, 0.0)
+        << "SOC should be damped to an interior candidate instead of applying an invalid full "
+           "correction.";
+    EXPECT_GT(trajectory.active()[0].s(0), 0.0);
+    EXPECT_NEAR(trajectory.active()[0].s(0), 0.6, 1e-12);
+}
+
+TEST(LineSearchTest, FilterSocUsesModelSocConstraintOverride)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = true;
+    config.soc_trigger_alpha = 0.1;
+    config.line_search_tau = 0.9;
+
+    using Model = SocOverrideResidualModel;
+    FilterLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    active[0].ds(0) = 0.2;
+    active[0].dlam(0) = 0.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    (void)ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+
+    ASSERT_TRUE(linear_solver.called);
+    EXPECT_DOUBLE_EQ(linear_solver.observed_soc_rhs_g, 7.0)
+        << "SOC should let the model override correction residuals without changing normal true "
+           "constraint evaluation.";
+}
+
+TEST(LineSearchTest, FilterSocSkippedInRolloutMode)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = true;
+    config.enable_line_search_rollout = true;
+    config.soc_trigger_alpha = 0.1;
+    config.line_search_tau = 0.9;
+
+    using Model = SocHardResidualModel;
+    FilterLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    active[0].ds(0) = 0.2;
+    active[0].dlam(0) = 0.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    (void)ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+
+    EXPECT_FALSE(linear_solver.called)
+        << "Current SOC implementation is multiple-shooting only; rollout mode needs a separate "
+           "control-space SOC definition.";
 }
 
 TEST(LineSearchTest, MeritRolloutProducesConsistentStates)

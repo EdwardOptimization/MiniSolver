@@ -494,14 +494,69 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         return true;
     }
 
-    // Helper removed, using linear_solver.solve_soc directly
-    /*
-    void solve_soc(TrajArray& soc_traj, const TrajArray& active_traj, const TrajArray& trial_traj,
-                   int N, double mu, double reg, InertiaStrategy inertia,
-                   LinearSolver<TrajArray>& solver, const SolverConfig& config) {
-        ...
+    bool try_soc_correction(const TrajArray& active, TrajArray& candidate,
+        LinearSolver<TrajArray>& linear_solver, const std::array<double, MAX_N>& dt_traj, int N,
+        double mu, double reg, double theta_0, double phi_0, const SolverConfig& config)
+    {
+        if (config.enable_line_search_rollout) {
+            return false;
+        }
+
+        if (config.print_level >= PrintLevel::DEBUG) {
+            MLOG_DEBUG("Step rejected. Attempting SOC.");
+        }
+
+        // Avoid heap allocation in the solve loop.
+        TrajArray soc_data = active; // Copy system matrices from active trajectory.
+
+        // SOC correction is applied to the trial candidate, so the primal-dual variables used in
+        // the correction equations must also be the candidate's. Keep A/B/C/D/Q/R/H from the
+        // active linearization for Riccati reuse.
+        for (int k = 0; k <= N; ++k) {
+            soc_data[k].s = candidate[k].s;
+            soc_data[k].lam = candidate[k].lam;
+            soc_data[k].soft_s = candidate[k].soft_s;
+        }
+        for (int k = 0; k <= N; ++k) {
+            detail::evaluate_soc_constraints<Model>(active[k], candidate[k]);
+        }
+
+        // solve_soc uses the candidate as nonlinear residual source and writes the correction step
+        // into soc_data.
+        const bool soc_success = linear_solver.solve_soc(
+            soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
+        if (!soc_success) {
+            return false;
+        }
+
+        const double beta_soc
+            = fraction_to_boundary_rule<TrajArray, Model>(soc_data, N, config.line_search_tau);
+        if (beta_soc <= 1e-8) {
+            return false;
+        }
+
+        for (int k = 0; k <= N; ++k) {
+            candidate[k].x += beta_soc * soc_data[k].dx;
+            if (k < N) {
+                candidate[k].u += beta_soc * soc_data[k].du;
+            } else {
+                candidate[k].u.setZero();
+            }
+            candidate[k].s += beta_soc * soc_data[k].ds;
+            candidate[k].lam += beta_soc * soc_data[k].dlam;
+            candidate[k].soft_s += beta_soc * soc_data[k].dsoft_s;
+
+            const double current_dt = (k < N) ? dt_traj[k] : 0.0;
+            detail::evaluate_model_stage<Model>(candidate[k], config, current_dt, k == N);
+        }
+
+        const auto m_soc = compute_metrics(candidate, N, mu, config);
+        const bool accepted = is_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config);
+        if (accepted && config.print_level >= PrintLevel::DEBUG) {
+            MLOG_DEBUG("SOC Accepted.");
+        }
+        return accepted;
     }
-    */
 
 public:
     FilterLineSearch() = default;
@@ -588,69 +643,13 @@ public:
             }
 
             // SOC Logic
+            // Current SOC is defined for multiple-shooting candidate updates. In rollout mode,
+            // state corrections are not applied directly, so skip SOC until a control-space SOC
+            // variant is implemented.
             if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0
-                && alpha > config.soc_trigger_alpha) {
-                if (config.print_level >= PrintLevel::DEBUG) {
-                    MLOG_DEBUG("Step rejected. Attempting SOC.");
-                }
-
-                // Avoid heap allocation in the solve loop.
-                TrajArray soc_data = active; // Copy system matrices from active trajectory
-
-                // [NEW] Use solve_soc
-                // Note: solve_soc takes 'soc_rhs_traj'. We want to pass the current trial point
-                // 'candidate' as RHS source. soc_data will store the correction step. The
-                // linear_solver needs to solve J * dx_soc = -g(candidate)
-
-                bool soc_success = linear_solver.solve_soc(
-                    soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
-
-                if (soc_success) {
-                    for (int k = 0; k <= N; ++k) {
-                        // Apply correction: x_new = x_candidate + dx_soc
-                        // But wait, we need to re-evaluate merit for this new point in next
-                        // iteration? Actually, standard SOC applies correction and tries to accept
-                        // immediately. Or we update 'candidate' and let the loop continue with same
-                        // alpha? If we update candidate, we are effectively testing alpha=1.0 step
-                        // + soc.
-
-                        // Apply SOC correction to candidate
-                        if (!config.enable_line_search_rollout) {
-                            candidate[k].x += soc_data[k].dx;
-                        }
-                        if (k < N) {
-                            candidate[k].u += soc_data[k].du;
-                        } else {
-                            candidate[k].u.setZero();
-                        }
-                        candidate[k].s += soc_data[k].ds;
-                        candidate[k].lam += soc_data[k].dlam;
-                        candidate[k].soft_s += soc_data[k].dsoft_s;
-
-                        double current_dt = (k < N) ? dt_traj[k] : 0.0;
-                        if (config.enable_line_search_rollout) {
-                            // Keep x0 fixed and re-propagate after applying SOC correction.
-                            if (k == 0) {
-                                candidate[0].x = active[0].x;
-                            }
-                        }
-
-                        detail::evaluate_model_stage<Model>(
-                            candidate[k], config, current_dt, k == N);
-                        if (config.enable_line_search_rollout && k < N) {
-                            candidate[k + 1].x = candidate[k].f_resid;
-                        }
-                    }
-
-                    auto m_soc = compute_metrics(candidate, N, mu, config);
-                    if (is_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config)) {
-                        if (config.print_level >= PrintLevel::DEBUG) {
-                            MLOG_DEBUG("SOC Accepted.");
-                        }
-                        accepted = true;
-                    }
-                }
-
+                && alpha > config.soc_trigger_alpha && !config.enable_line_search_rollout) {
+                accepted = try_soc_correction(
+                    active, candidate, linear_solver, dt_traj, N, mu, reg, theta_0, phi_0, config);
                 soc_attempted = true;
                 if (accepted) {
                     break;

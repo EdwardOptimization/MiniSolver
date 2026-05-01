@@ -34,6 +34,22 @@ namespace detail {
         std::void_t<decltype(Model::template compute_terminal_constraints<double>(
             std::declval<Knot&>()))>> : std::true_type { };
 
+    template <typename Model, typename Knot, typename = void>
+    struct has_compute_soc_constraints : std::false_type { };
+
+    template <typename Model, typename Knot>
+    struct has_compute_soc_constraints<Model, Knot,
+        std::void_t<decltype(Model::template compute_soc_constraints<double>(
+            std::declval<const Knot&>(), std::declval<Knot&>()))>> : std::true_type { };
+
+    template <typename Model, typename Knot>
+    void evaluate_soc_constraints(const Knot& active_kp, Knot& trial_kp)
+    {
+        if constexpr (has_compute_soc_constraints<Model, Knot>::value) {
+            Model::template compute_soc_constraints<double>(active_kp, trial_kp);
+        }
+    }
+
     template <typename Model, typename Knot>
     void evaluate_model_stage(
         Knot& kp, const SolverConfig& config, double dt, bool is_terminal = false)

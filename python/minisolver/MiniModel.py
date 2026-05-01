@@ -408,6 +408,91 @@ class OptimalControlModel:
         code += self._generate_assign_block(assign_con, [g_terminal, C_terminal, D_terminal])
         return code
 
+    def _generate_soc_constraints_body(self):
+        code = "        compute_constraints(trial_kp);\n"
+        projected = [
+            info for info in self.special_constraints
+            if info['type'] == 'quad_boundary_proj'
+        ]
+        if not projected:
+            code += "        (void)active_kp;\n"
+            return code
+
+        active_map = {}
+        trial_map = {}
+        active_used = set()
+        trial_used = set()
+
+        def collect_symbols(expr, out):
+            if isinstance(expr, sp.MatrixBase):
+                for item in expr:
+                    collect_symbols(item, out)
+            elif hasattr(expr, 'free_symbols'):
+                out.update(expr.free_symbols)
+
+        for info in projected:
+            for expr in (info['x'], info['Q'], info['c'], sp.sympify(info['rhs'])):
+                collect_symbols(expr, active_used)
+            collect_symbols(info['x'], trial_used)
+
+        for sym in list(self.states) + list(self.controls) + list(self.parameters):
+            active_sym = sp.symbols(f"soc_active_{sym.name}")
+            trial_sym = sp.symbols(f"soc_trial_{sym.name}")
+            active_map[sym] = active_sym
+            trial_map[sym] = trial_sym
+
+        for i, sym in enumerate(self.states):
+            if sym in active_used:
+                code += f"        T {active_map[sym]} = active_kp.x({i});\n"
+        for i, sym in enumerate(self.controls):
+            if sym in active_used:
+                code += f"        T {active_map[sym]} = active_kp.u({i});\n"
+        for i, sym in enumerate(self.parameters):
+            if sym in active_used:
+                code += f"        T {active_map[sym]} = active_kp.p({i});\n"
+
+        for i, sym in enumerate(self.states):
+            if sym in trial_used:
+                code += f"        T {trial_map[sym]} = trial_kp.x({i});\n"
+        for i, sym in enumerate(self.controls):
+            if sym in trial_used:
+                code += f"        T {trial_map[sym]} = trial_kp.u({i});\n"
+        for i, sym in enumerate(self.parameters):
+            if sym in trial_used:
+                code += f"        T {trial_map[sym]} = trial_kp.p({i});\n"
+
+        for local_idx, info in enumerate(projected):
+            x_active = info['x'].xreplace(active_map)
+            x_trial = info['x'].xreplace(trial_map)
+            c_active = info['c'].xreplace(active_map)
+            q_active = info['Q'].xreplace(active_map)
+            rhs_active = sp.sympify(info['rhs']).xreplace(active_map)
+
+            diff_active = x_active - c_active
+            d2_expr = (diff_active.T * q_active * diff_active)[0]
+            rhs_name = f"soc_rhs_{local_idx}"
+            d2_name = f"soc_d2_{local_idx}"
+            scale_name = f"soc_scale_{local_idx}"
+
+            code += f"        T {d2_name} = {sp.ccode(d2_expr)};\n"
+            code += f"        T {rhs_name} = {sp.ccode(rhs_active)};\n"
+            code += f"        T {scale_name} = sqrt({rhs_name} / ({d2_name} + 1e-9));\n"
+
+            xp_syms = [sp.symbols(f"soc_xp_{local_idx}_{i}") for i in range(info['x'].rows)]
+            xp_vec = sp.Matrix(xp_syms)
+            for i, xp_sym in enumerate(xp_syms):
+                offset_expr = x_active[i] - c_active[i]
+                code += (
+                    f"        T {xp_sym} = {sp.ccode(c_active[i])} + {scale_name} "
+                    f"* ({sp.ccode(offset_expr)});\n"
+                )
+
+            grad_at_boundary = 2 * q_active * (xp_vec - c_active)
+            soc_residual = -(grad_at_boundary.T * (x_trial - xp_vec))[0]
+            code += f"        trial_kp.g_val({info['index']}) = {sp.ccode(soc_residual)};\n"
+
+        return code
+
     def _generate_terminal_cost_section(self, x_vec, u_vec):
         nx = len(self.states)
         nu = len(self.controls)
@@ -1104,6 +1189,7 @@ class OptimalControlModel:
         assign_con = [("g_val", 0, nc, 1), ("C", 1, nc, nx), ("D", 2, nc, nu)]
         code_compute_con += self._generate_assign_block(assign_con, reduced_con)
         code_compute_terminal_con = self._generate_terminal_constraints_body(x_vec, u_vec)
+        code_compute_soc_con = self._generate_soc_constraints_body()
 
         # Compute Cost Body
         # Template param: 0 = Exact (with Con Hessian), 1 = GN (without Con Hessian)
@@ -1262,6 +1348,7 @@ class OptimalControlModel:
         content = content.replace("{{COMPUTE_DYNAMICS_BODY}}", code_compute_dyn)
         content = content.replace("{{COMPUTE_CONSTRAINTS_BODY}}", code_compute_con)
         content = content.replace("{{COMPUTE_TERMINAL_CONSTRAINTS_BODY}}", code_compute_terminal_con)
+        content = content.replace("{{COMPUTE_SOC_CONSTRAINTS_BODY}}", code_compute_soc_con)
         content = content.replace("{{COMPUTE_COST_SECTION}}", code_compute_cost)
         content = content.replace("{{COMPUTE_TERMINAL_COST_SECTION}}", code_compute_terminal_cost)
         
