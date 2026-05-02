@@ -1,4 +1,5 @@
 #pragma once
+#include "minisolver/algorithms/linear_solve_result.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include <limits>
@@ -11,8 +12,9 @@ public:
 
     // Solves the KKT system for the search direction (dx, du, ds, dlam)
     // affine_traj: If provided, adds Mehrotra corrector term (ds_aff * dlam_aff) to the RHS
-    virtual bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy,
-        const SolverConfig& config, const TrajArray* affine_traj = nullptr)
+    virtual LinearSolveResult solve(TrajArray& traj, int N, double mu, double reg,
+        InertiaStrategy strategy, const SolverConfig& config,
+        const TrajArray* affine_traj = nullptr)
         = 0;
 
     // Evaluate the dual stationarity residual on caller-provided scratch data.
@@ -22,8 +24,8 @@ public:
     virtual bool evaluate_dual_residual(TrajArray& scratch_traj, int N, double mu, double reg,
         InertiaStrategy strategy, const SolverConfig& config, double& max_dual_inf)
     {
-        const bool ok = solve(scratch_traj, N, mu, reg, strategy, config);
-        if (!ok) {
+        const LinearSolveResult result = solve(scratch_traj, N, mu, reg, strategy, config);
+        if (!result.ok) {
             max_dual_inf = std::numeric_limits<double>::infinity();
             return false;
         }
@@ -39,8 +41,9 @@ public:
     }
 
     // Overload for SOC (Second Order Correction)
-    virtual bool solve_soc(TrajArray& /*traj*/, const TrajArray& /*soc_rhs_traj*/, int /*N*/,
-        double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/, const SolverConfig& /*config*/)
+    virtual LinearSolveResult solve_soc(TrajArray& /*traj*/, const TrajArray& /*soc_rhs_traj*/,
+        int /*N*/, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+        const SolverConfig& /*config*/)
     {
         return false;
     }

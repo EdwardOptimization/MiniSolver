@@ -536,9 +536,9 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
 
         // solve_soc uses the candidate as nonlinear residual source and writes the correction step
         // into soc_data.
-        const bool soc_success = linear_solver.solve_soc(
+        const LinearSolveResult soc_result = linear_solver.solve_soc(
             soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
-        if (!soc_success) {
+        if (!soc_result.ok) {
             return false;
         }
 

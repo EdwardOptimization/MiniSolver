@@ -216,8 +216,9 @@ public:
     using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 5>::TrajArray;
     int solve_count = 0;
 
-    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
-        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
     {
         solve_count++;
         // Standard solve: produce a step that gets rejected (e.g. too aggressive)
@@ -232,8 +233,9 @@ public:
         return true;
     }
 
-    bool solve_soc(TrajArray& traj, const TrajArray& /*soc_rhs_traj*/, int N, double /*mu*/,
-        double /*reg*/, InertiaStrategy /*strategy*/, const SolverConfig& /*config*/) override
+    LinearSolveResult solve_soc(TrajArray& traj, const TrajArray& /*soc_rhs_traj*/, int N,
+        double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+        const SolverConfig& /*config*/) override
     {
         solve_count++;
         // SOC solve: produce a correction step

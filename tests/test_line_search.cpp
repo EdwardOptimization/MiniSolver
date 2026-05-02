@@ -22,8 +22,9 @@ class MockLinearSolver
 public:
     using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 10>::TrajArray;
 
-    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
-        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
     {
         for (int k = 0; k <= N; ++k) {
             traj[k].dx = -0.1 * traj[k].x;
@@ -352,7 +353,7 @@ class RolloutStubLinearSolver
     : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2>::TrajArray> {
 public:
     using TrajArray = Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2>::TrajArray;
-    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+    LinearSolveResult solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
@@ -364,7 +365,7 @@ class L2ResidualStubLinearSolver
     : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1>::TrajArray> {
 public:
     using TrajArray = Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1>::TrajArray;
-    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+    LinearSolveResult solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
@@ -383,15 +384,16 @@ public:
     double observed_trial_s = 0.0;
     double observed_soc_rhs_g = 0.0;
 
-    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+    LinearSolveResult solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
         return true;
     }
 
-    bool solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N, double /*mu*/,
-        double /*reg*/, InertiaStrategy /*strategy*/, const SolverConfig& /*config*/) override
+    LinearSolveResult solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N,
+        double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+        const SolverConfig& /*config*/) override
     {
         called = true;
         observed_soc_base_s = traj[0].s(0);
@@ -786,7 +788,7 @@ class NoLineSearchStubLinearSolver
     : public LinearSolver<typename Trajectory<KnotPoint<double, 1, 1, 0, 0>, MAX_N>::TrajArray> {
 public:
     using TrajArray = typename Trajectory<KnotPoint<double, 1, 1, 0, 0>, MAX_N>::TrajArray;
-    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+    LinearSolveResult solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {

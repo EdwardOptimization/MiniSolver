@@ -793,9 +793,10 @@ private:
     {
         bool success = false;
         for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
-            success = linear_solver->solve(traj, N, target_mu, context_.solve.reg,
-                config.inertia_strategy, config, affine_traj);
-            record_linear_solver_diagnostics_();
+            const LinearSolveResult linear_result = linear_solver->solve(traj, N, target_mu,
+                context_.solve.reg, config.inertia_strategy, config, affine_traj);
+            record_linear_solver_diagnostics_(linear_result);
+            success = linear_result.ok;
             if (success) {
                 break;
             }
@@ -804,9 +805,9 @@ private:
         return success;
     }
 
-    void record_linear_solver_diagnostics_()
+    void record_linear_solver_diagnostics_(const LinearSolveResult& result)
     {
-        if (linear_solver && linear_solver->last_solve_degraded()) {
+        if (result.degraded_step) {
             context_.info.degraded_step = true;
         }
     }
@@ -995,9 +996,10 @@ private:
 
             apply_slack_reset_(traj_after_ls);
             // Try one solve to see if a valid direction can be obtained
-            recovered = linear_solver->solve(traj_after_ls, N, context_.solve.mu,
-                context_.solve.reg, config.inertia_strategy, config);
-            record_linear_solver_diagnostics_();
+            const LinearSolveResult linear_result = linear_solver->solve(traj_after_ls, N,
+                context_.solve.mu, context_.solve.reg, config.inertia_strategy, config);
+            record_linear_solver_diagnostics_(linear_result);
+            recovered = linear_result.ok;
 
             if (recovered) {
                 // Mark: If this Reset failed to get us out of trouble, disallow it next time
@@ -1462,12 +1464,12 @@ private:
                 kp.r.noalias() += rho * kp.D.transpose() * kp.g_val;
             }
 
-            if (!linear_solver->solve(traj, N, context_.solve.mu, context_.solve.reg,
-                    config.inertia_strategy, config)) {
-                record_linear_solver_diagnostics_();
+            const LinearSolveResult linear_result = linear_solver->solve(
+                traj, N, context_.solve.mu, context_.solve.reg, config.inertia_strategy, config);
+            record_linear_solver_diagnostics_(linear_result);
+            if (!linear_result.ok) {
                 break;
             }
-            record_linear_solver_diagnostics_();
 
             double alpha = 1.0;
             for (int k = 0; k <= N; ++k) {

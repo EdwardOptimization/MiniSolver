@@ -546,8 +546,9 @@ class BarrierHookMockSolver
 public:
     using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 10>::TrajArray;
 
-    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
-        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
     {
         for (int k = 0; k <= N; ++k) {
             traj[k].dx = -0.1 * traj[k].x;
@@ -1761,8 +1762,9 @@ namespace {
 template <typename TrajArray>
 class NoImprovementRestorationSolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
-    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
-        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
     {
         for (int k = 0; k <= N; ++k) {
             traj[k].dx.setZero();
@@ -1782,7 +1784,7 @@ public:
     double captured_R00 = 0.0;
     double captured_r0 = 0.0;
 
-    bool solve(TrajArray& traj, int /*N*/, double /*mu*/, double /*reg*/,
+    LinearSolveResult solve(TrajArray& traj, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
@@ -1806,7 +1808,7 @@ class FailingCorrectorRiccatiSolver : public RiccatiSolver<TrajArray, BugTestMod
 public:
     int calls = 0;
 
-    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+    LinearSolveResult solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
@@ -1820,8 +1822,9 @@ class TinyStepThenFailRecoverySolver : public RiccatiSolver<TrajArray, BugTestMo
 public:
     int calls = 0;
 
-    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
-        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
     {
         ++calls;
         if (calls > 1) {
@@ -2005,7 +2008,7 @@ namespace {
 template <typename TrajArray>
 class PostsolveMutatingRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
-    bool solve(TrajArray& traj, int /*N*/, double /*mu*/, double /*reg*/,
+    LinearSolveResult solve(TrajArray& traj, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
@@ -2047,8 +2050,9 @@ namespace {
 template <typename TrajArray>
 class LateNaNDirectionRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
-    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
-        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
     {
         for (int k = 0; k <= N; ++k) {
             traj[k].dx.setZero();

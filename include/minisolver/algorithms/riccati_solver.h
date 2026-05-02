@@ -19,9 +19,7 @@ public:
     // Persistent workspace to avoid re-allocation
     RiccatiWorkspace<Knot> workspace;
 
-    bool last_solve_degraded() const { return last_solve_degraded_; }
-
-    bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy,
+    LinearSolveResult solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy,
         const SolverConfig& config, const TrajArray* affine_traj = nullptr) override
     {
 
@@ -33,35 +31,29 @@ public:
 #else
             MLOG_ERROR("CUDA not enabled; GPU backend is unsupported.");
 #endif
-            return false;
+            return { false };
         }
 
         // Call the static/template function with Model type info
-        bool degraded = false;
-        const bool ok = cpu_serial_solve<TrajArray, Model>(
-            traj, N, mu, reg, strategy, config, workspace, affine_traj, nullptr, &degraded);
-        last_solve_degraded_ = degraded;
-        return ok;
+        return cpu_serial_solve<TrajArray, Model>(
+            traj, N, mu, reg, strategy, config, workspace, affine_traj);
     }
 
     // SOC Implementation
-    bool solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N, double mu, double reg,
-        InertiaStrategy strategy, const SolverConfig& config) override
+    LinearSolveResult solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N, double mu,
+        double reg, InertiaStrategy strategy, const SolverConfig& config) override
     {
-        bool degraded = false;
-        const bool ok = cpu_serial_solve<TrajArray, Model>(
-            traj, N, mu, reg, strategy, config, workspace, nullptr, &soc_rhs_traj, &degraded);
-        last_solve_degraded_ = degraded;
-        return ok;
+        return cpu_serial_solve<TrajArray, Model>(
+            traj, N, mu, reg, strategy, config, workspace, nullptr, &soc_rhs_traj);
     }
 
     bool evaluate_dual_residual(TrajArray& scratch_traj, int N, double mu, double reg,
         InertiaStrategy strategy, const SolverConfig& config, double& max_dual_inf) override
     {
         RiccatiWorkspace<Knot> scratch_workspace;
-        const bool ok = cpu_serial_solve<TrajArray, Model>(
+        const LinearSolveResult result = cpu_serial_solve<TrajArray, Model>(
             scratch_traj, N, mu, reg, strategy, config, scratch_workspace);
-        if (!ok) {
+        if (!result.ok) {
             max_dual_inf = std::numeric_limits<double>::infinity();
             return false;
         }
@@ -151,9 +143,6 @@ public:
 
         return true;
     }
-
-private:
-    bool last_solve_degraded_ = false;
 };
 
 }

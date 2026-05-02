@@ -56,10 +56,12 @@ TEST(RiccatiTest, NonSPDQuuFreezesControlDimsInsteadOfFailing)
     // Keep default singular_threshold (1e-4). The indefinite block should be rejected regardless.
 
     RiccatiSolver<TrajArray, CarModel> solver;
-    bool success = solver.solve(traj, N, 0.01, 1e-9, InertiaStrategy::REGULARIZATION, config);
-    EXPECT_TRUE(success);
-    EXPECT_TRUE(solver.last_solve_degraded())
+    LinearSolveResult result
+        = solver.solve(traj, N, 0.01, 1e-9, InertiaStrategy::REGULARIZATION, config);
+    EXPECT_TRUE(result.ok);
+    EXPECT_TRUE(result.degraded_step)
         << "Small-NU fallback freezes a control dimension and must be externally visible";
+    EXPECT_EQ(result.degraded_riccati_freeze_count, N);
 
     // The second control dimension must be frozen (no update) due to non-SPD Quu.
     EXPECT_NEAR(traj[1].d(1), 0.0, 1e-12);

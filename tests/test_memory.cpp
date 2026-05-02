@@ -157,15 +157,16 @@ struct SocTriggerModel {
 
 template <typename TrajArray> class SocNoAllocLinearSolver final : public LinearSolver<TrajArray> {
 public:
-    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+    LinearSolveResult solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/) override
     {
         return true;
     }
 
-    bool solve_soc(TrajArray& traj, const TrajArray& /*soc_rhs_traj*/, int N, double /*mu*/,
-        double /*reg*/, InertiaStrategy /*strategy*/, const SolverConfig& /*config*/) override
+    LinearSolveResult solve_soc(TrajArray& traj, const TrajArray& /*soc_rhs_traj*/, int N,
+        double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+        const SolverConfig& /*config*/) override
     {
         for (int k = 0; k <= N; ++k) {
             traj[k].dx.setZero();

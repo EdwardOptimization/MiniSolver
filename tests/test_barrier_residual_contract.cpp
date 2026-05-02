@@ -10,7 +10,7 @@ public:
     {
     }
 
-    bool solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+    LinearSolveResult solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {

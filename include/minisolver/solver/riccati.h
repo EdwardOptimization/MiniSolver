@@ -3,6 +3,7 @@
 #ifdef USE_EIGEN
 #include <Eigen/Dense>
 #endif
+#include "minisolver/algorithms/linear_solve_result.h"
 #include "minisolver/core/model_traits.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
@@ -367,15 +368,13 @@ bool fast_inverse(const MatrixType& A, MatrixType& A_inv, double epsilon = 1e-9)
 }
 
 template <typename TrajVector, typename ModelType>
-bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
+LinearSolveResult cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
     minisolver::InertiaStrategy strategy, const minisolver::SolverConfig& config,
     RiccatiWorkspace<typename TrajVector::value_type>& ws, const TrajVector* affine_traj = nullptr,
-    const TrajVector* soc_traj = nullptr, bool* degraded_step = nullptr)
+    const TrajVector* soc_traj = nullptr)
 {
     using Knot = typename TrajVector::value_type;
-    if (degraded_step) {
-        *degraded_step = false;
-    }
+    LinearSolveResult result { true };
 
     for (int k = 0; k <= N; ++k) {
         const Knot* aff_kp = (affine_traj) ? &((*affine_traj)[k]) : nullptr;
@@ -582,10 +581,11 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                 }
 
                 if (!inv_ok) {
-                    return false;
+                    return { false };
                 }
-                if (used_freeze_fallback && degraded_step) {
-                    *degraded_step = true;
+                if (used_freeze_fallback) {
+                    result.degraded_step = true;
+                    result.degraded_riccati_freeze_count++;
                 }
             }
 
@@ -610,7 +610,7 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
 
                     ws.spd_solver.compute(kp.R_bar);
                     if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
-                        return false; // Give up
+                        return { false }; // Give up
                     }
                 }
 
@@ -631,13 +631,13 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                         // Re-factorize the corrected matrix (Retry Factorization)
                         ws.spd_solver.compute(kp.R_bar);
                         if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
-                            return false;
+                            return { false };
                         }
                     } else {
                         // The matrix is not positive definite, but the diagonal elements are all
                         // greater than the threshold, indicating a structural problem that cannot
                         // be simply fixed
-                        return false;
+                        return { false };
                     }
                 }
 
@@ -659,7 +659,7 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                         }
                         ws.spd_solver.compute(kp.R_bar);
                         if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
-                            return false;
+                            return { false };
                         }
                     }
                 }
@@ -719,6 +719,6 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
     const Knot* aff_kp_N = (affine_traj) ? &((*affine_traj)[N]) : nullptr;
     recover_dual_search_directions<Knot, ModelType>(traj[N], mu, config, soc_kp_N, aff_kp_N);
 
-    return true;
+    return result;
 }
 }
