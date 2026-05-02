@@ -10,6 +10,8 @@ evidence logs, and design decisions separate so each file has a clear role.
   what belongs in benchmark/nightly coverage.
 - [Solver Refactor Plan](architecture/solver-refactor-plan.md): canonical solve
   route, phase boundaries, and refactor rules.
+- [Agent Harness](architecture/agent-harness.md): project-specific agent rules
+  extracted from Codex session interventions.
 - [Solver Capability Adoption Plan](architecture/solver-capability-adoption-plan.md):
   which mature-solver ideas MiniSolver should absorb, and which are explicitly
   out of scope.
