@@ -1,101 +1,289 @@
-# Agent Harness
+# Multi-Agent Development Harness
 
-MiniSolver is developed with multiple agents, but the project should not rely on
-the human maintainer repeatedly correcting the same classes of mistakes. This
-document records the intervention patterns found in the Codex session history
-and the harness rules agents should apply before acting.
+MiniSolver is developed with multiple coding and review agents. A single large
+instruction skill is not enough for long-running solver work: agents tend to
+obey only part of the rule set, self-review is often too lenient, and small
+patches can pass tests while leaving poor phase contracts behind.
 
-Source reviewed:
+This document defines the project harness: five core roles that cover planning,
+implementation, evidence, architecture review, and final integration. Specialist
+roles are started only when the change needs domain-specific scrutiny.
+
+The design follows the same principle as the Anthropic long-running app harness:
+split generation and evaluation, make completion criteria explicit before
+coding, use artifacts for handoff, and keep the harness as small as the task
+allows.
+
+## Source Signals
+
+Session history reviewed:
 
 - Codex rollout:
   `/home/quyaonan/.codex/sessions/2026/04/09/rollout-2026-04-09T22-22-25-019d729f-71e2-72f2-b128-a35b2742dddd.jsonl`
-- The main MiniSolver session contained 696 user messages.
-- Approximate intervention pattern counts from user messages:
-  - process / sequencing control: 227
-  - default semantics and solver contract guidance: 192
-  - evidence / benchmark / test demands: 122
-  - design-boundary corrections: 85
-  - explicit negative corrections: 55
+- Main MiniSolver session: 696 user messages.
 
-The counts are not a scientific metric. They are useful because they show that
-the main failure mode is not isolated implementation skill; it is missing
-project-specific pre-flight checks.
+Approximate intervention counts:
 
-## Repeated Intervention Patterns
+- process / sequencing control: 227
+- default semantics and solver contract guidance: 192
+- evidence / benchmark / test demands: 122
+- design-boundary corrections: 85
+- explicit negative corrections: 55
 
-| Pattern | Typical maintainer correction | Preventive rule |
-| --- | --- | --- |
-| Overdesign | Avoid adapters, public plugin layers, bulk iterate import/export, or oversized APIs. | Start with existing setters, `SolverConfig`, and internal helpers. Add public API only with a concrete current use case. |
-| Boundary drift | Keep benchmark comparison outside MiniSolver; keep model semantics out of solver core. | MiniSolver core is generic NMPC/IPM/Riccati. MiniModel/codegen owns model-specific semantics. nmpc-bench owns cross-solver comparison. |
-| Evidence gaps | Do not patch directly from review prose; add red tests or benchmarks first. | Use `claim -> evidence -> fix -> same validation -> commit`. |
-| Default semantics | Defaults should be correctness-first; realtime shortcuts must be explicit. | New behavior goes behind `SolverConfig` and is resolved at the build boundary. |
-| Zero-malloc ambiguity | Stack POD locals are not heap allocation; solve-time dynamic allocation is the issue. | Run `test_memory` for hot-path allocation claims. |
-| Overdefense | Branches for impossible internal states hide invariant problems. | Validate at boundaries, fix state transitions, and avoid hot-path checks for invalid states that should be impossible. |
-| Commit churn | History became noisy when mechanical extraction and behavior fixes mixed. | Split commits by behavior and preserve test evidence. |
+The counts are not a scientific metric. They show that repeated failures are
+mostly process and architecture-boundary failures, not isolated coding failures.
 
-## Required Agent Pre-Flight
+## Core Roles
 
-Before changing MiniSolver, an agent should answer these questions:
+### 1. Planner / Contract Agent
 
-1. Which layer owns the problem: solver core, MiniModel/codegen, examples/tools,
-   tests, docs, or nmpc-bench?
-2. Is this a confirmed bug, a design decision, a performance question, a docs
-   mismatch, or an unconfirmed review claim?
-3. What is the narrowest red test, benchmark, compile check, or allocation test?
-4. Does the change preserve `SolverConfig` as the user-facing strategy surface?
-5. Does the change preserve solve-time zero-malloc?
-6. Does the commit mix unrelated behavior, formatting, docs, or benchmark assets?
+Purpose: turn a request into a small, testable contract before implementation.
 
-If any answer is unclear, stop and write a short design note or test plan before
-editing solver behavior.
+Responsibilities:
 
-## Harness Rules
+- Classify the task: bug, design debt, performance issue, hardening, docs, CI,
+  benchmark, or unconfirmed review claim.
+- Decide which layer owns the change: solver core, MiniModel/codegen, tests,
+  docs, examples/tools, or MiniSolver-Bench.
+- Define the acceptance evidence: red test, benchmark, allocation test,
+  generated-code compile test, docs inspection, or CI check.
+- Define explicit non-goals to prevent scope drift.
+- Decide which specialists, if any, should be started.
 
-### Public API
+Output artifact:
 
-- Users should configure solver behavior through `SolverConfig` and existing
-  setter/getter methods.
-- Do not add a public OOP plugin framework for strategy selection.
-- Internal kernels or build-state objects are allowed when they reduce coupling,
-  but they should be selected from config and frozen before hot solve loops.
+```text
+Task contract
+- Problem:
+- Owner layer:
+- Evidence before fix:
+- Allowed files / modules:
+- Non-goals:
+- Required validation:
+- Specialist review needed:
+```
 
-### Solver Core
+### 2. Builder Agent
 
-- Core should know residuals, derivatives, slacks, duals, Riccati/KKT solves,
-  line search, restoration, and termination contracts.
-- Core should not know circle, ellipse, obstacle, race track, dataset, or other
-  application semantics.
-- If a feature needs model semantics, represent it through generated numerical
-  packets rather than solver-core type checks.
+Purpose: implement the contracted change without expanding scope.
 
-### Evidence
+Responsibilities:
 
-- Review findings with a standard mathematical route should get red tests first.
-- Design-sensitive findings should get a short design document first.
-- Performance claims need before/after numbers and correctness metrics.
-- Zero-malloc claims need allocation instrumentation.
-- Benchmark fairness requires same model semantics and same runtime class.
+- Add or tighten the agreed red test / benchmark first when applicable.
+- Implement the smallest clean fix that satisfies the contract.
+- Preserve MiniSolver rules: `SolverConfig` remains the user strategy surface,
+  solve-time zero-malloc is protected, model semantics stay in MiniModel/codegen,
+  cross-solver benchmark comparison stays in MiniSolver-Bench.
+- Avoid public APIs unless the contract explicitly justifies them.
+- Keep commits behavior-scoped.
 
-### Defaults
+Builder is allowed to propose a contract revision if the implementation reveals
+that the planned fix would create a worse architecture.
 
-- Defaults should favor correctness, reproducibility, and debug clarity.
-- RTI, acceptable NMPC termination, warm-start reuse, and aggressive
-  performance modes should be explicit config choices until benchmark evidence
-  supports making them presets.
+Output artifact:
 
-### Commits
+```text
+Builder handoff
+- Changed files:
+- Red evidence before:
+- Fix summary:
+- Validation run:
+- Known risks / deferred items:
+```
 
-- Commit tests with the behavior they protect.
-- Keep docs-only changes separate unless they describe the same behavior.
-- Re-run targeted tests after pre-commit formatting modifies files.
+### 3. Evidence / QA Agent
+
+Purpose: verify that the evidence chain is real and complete.
+
+Responsibilities:
+
+- Confirm the red test or benchmark failed before the fix when possible.
+- Confirm the same evidence passes after the fix.
+- Run neighboring tests and the required validation matrix.
+- For zero-malloc claims, require allocation instrumentation such as
+  `test_memory`.
+- For performance claims, compare before/after runtime together with success
+  rate, residuals, iterations, and accuracy.
+- Reject claims based only on plausible review prose.
+
+Evidence / QA does not judge architecture elegance. It answers: did the patch
+prove the intended behavior?
+
+Output artifact:
+
+```text
+Evidence report
+- Before evidence:
+- After evidence:
+- Commands:
+- Pass/fail:
+- Missing evidence:
+```
+
+### 4. Architecture Reviewer Agent
+
+Purpose: catch design smells that tests do not catch.
+
+Responsibilities:
+
+- Detect shotgun surgery: the same semantic threaded through many unrelated
+  files.
+- Detect side channels: `last_*()` getters, mutable member flags, bare
+  out-parameters, or temporal coupling such as "call solve, then query side
+  state".
+- Detect overdesign: new public plugin layers, adapters, DTOs, or framework
+  seams without current call sites.
+- Detect overdefense: hot-path checks for states that should be impossible under
+  valid invariants.
+- Check ownership boundaries: solver core vs MiniModel/codegen vs benchmark
+  repo.
+- Prefer explicit internal phase result objects when they remove temporal
+  coupling, for example `LinearSolveResult`, `GlobalizationResult`, and
+  `TerminationSnapshot`.
+
+Architecture Reviewer does not block a patch just because it is larger than the
+minimal diff. It blocks patches that leave historical workarounds or unclear
+contracts in core solver code.
+
+Output artifact:
+
+```text
+Architecture review
+- Accepted:
+- Blocking smell:
+- Suggested cleaner contract:
+- Deferred architecture debt:
+```
+
+### 5. Maintainer / Integrator Agent
+
+Purpose: make the final decision and keep repository history coherent.
+
+Responsibilities:
+
+- Reconcile Builder, Evidence / QA, and Architecture Reviewer outputs.
+- Decide whether to accept, request revision, split commits, squash, or defer.
+- Ensure docs, review ledgers, and testing matrix are updated when behavior or
+  process changes.
+- Inspect pre-commit formatting changes before committing.
 - Run full CTest before push for solver-core changes.
+- Keep the final user-facing summary short and evidence-based.
 
-## Local Skill
+Output artifact:
 
-The local agent skill implementing this harness is:
+```text
+Integration decision
+- Accepted / revision required / deferred:
+- Commit plan:
+- Final validation:
+- Push readiness:
+```
+
+## Specialist Roles
+
+Specialists are optional. Start them only when their domain materially affects
+the decision.
+
+| Specialist | Use When | Focus |
+| --- | --- | --- |
+| Numerics Reviewer | IPM, SQP, Riccati, line search, barrier update, SOC, termination, restoration | Mathematical contract, convergence semantics, mature-solver precedent |
+| Performance Reviewer | profiling, MiniMatrix, Riccati kernels, codegen speed, benchmark anomalies | before/after runtime, hotspots, cache/stack/heap behavior, fair measurement |
+| Codegen Reviewer | MiniModel, generated C++, symbolic derivatives, constraint packets | generated-code correctness, compile safety, identifier safety, model/core boundary |
+| Embedded Reviewer | zero-malloc, exceptions, logging, stack pressure, `-ffast-math`, RT behavior | hard-real-time constraints, fixed-size storage, embedded build profile |
+| Docs / Release Reviewer | README, ADRs, review ledgers, roadmap, GitHub metadata | user-facing accuracy, stale claims, release notes, documentation organization |
+
+Specialist output should be short:
+
+```text
+Specialist finding
+- Issue:
+- Evidence:
+- Recommendation:
+- Must fix now / can defer:
+```
+
+## When To Use Which Harness Size
+
+Use the smallest harness that covers the risk.
+
+| Task Type | Required Roles |
+| --- | --- |
+| Docs-only typo / ledger status update | Maintainer only |
+| Small confirmed bug with narrow test | Planner, Builder, Evidence / QA, Maintainer |
+| Solver-core semantic change | Planner, Builder, Evidence / QA, Architecture Reviewer, Maintainer |
+| Numerical algorithm change | Core 5 + Numerics Reviewer |
+| Performance optimization | Core 5 + Performance Reviewer |
+| MiniModel/codegen change | Core 5 + Codegen Reviewer |
+| Zero-malloc / embedded claim | Core 5 + Embedded Reviewer |
+| README / release positioning | Planner, Docs / Release Reviewer, Maintainer |
+
+## Standard Flow
+
+1. Planner writes a task contract.
+2. Architecture Reviewer reviews the contract for scope and ownership risk if
+   the task touches solver-core architecture.
+3. Builder implements only the accepted contract.
+4. Evidence / QA verifies before/after evidence and required tests.
+5. Architecture Reviewer reviews the patch for smells.
+6. Maintainer integrates, commits, updates docs/ledgers, and decides push
+   readiness.
+
+Do not skip Evidence / QA for solver behavior. Do not skip Architecture Reviewer
+for cross-module changes, even when all tests pass.
+
+## MiniSolver-Specific Gates
+
+### Evidence Gate
+
+For any bug, review finding, numerical change, or high-risk refactor:
+
+1. classify the claim;
+2. reproduce with red test, benchmark, compile check, or allocation test;
+3. make the smallest clean fix;
+4. re-run the same evidence;
+5. run neighboring tests;
+6. commit behavior and evidence together.
+
+### Architecture Gate
+
+Stop before implementation if a fix:
+
+- spreads the same semantic through three or more modules;
+- needs a `last_*()` getter, mutable member side-channel, or bare out-param for
+  long-lived diagnostics;
+- adds a public strategy/plugin/framework object;
+- exposes internal trajectory, knot, or workspace data;
+- moves model-specific geometry or dataset semantics into solver core;
+- adds hot-path checks for states that should be guaranteed by invariants.
+
+In these cases, write the narrowest internal contract first.
+
+### Boundary Gate
+
+- Users configure solver behavior through `SolverConfig` and existing setters.
+- Strategy selection is resolved at construction, `set_config`, or solve
+  pre-build boundaries, not repeatedly inside hot loops.
+- MiniSolver core owns generic NMPC/IPM/Riccati concepts.
+- MiniModel/codegen owns symbolic model semantics and generated numerical
+  packets.
+- MiniSolver-Bench owns cross-solver comparisons and full benchmark datasets.
+
+### Validation Matrix
+
+- Core solver behavior: targeted test, `test_memory`, full `ctest`.
+- Line search / SOC / restoration: targeted regression, `test_memory`, full
+  `ctest`.
+- Termination/status/info: targeted status/residual tests, `test_memory`, full
+  `ctest`.
+- MiniModel/codegen: generated-code tests and compile target.
+- Matrix kernels: microbenchmark before/after plus correctness tests.
+- Docs-only: `git diff --check` and stale-claim inspection.
+
+## Current Local Skills
+
+The current local MiniSolver skill remains useful as a router and checklist:
 
 `/home/quyaonan/.agents/skills/minisolver-engineering-harness/SKILL.md`
 
-It should be loaded automatically whenever an agent works in MiniSolver or
-nmpc-bench on solver design, debugging, benchmarks, codegen, tests, CI, or
-repository hygiene.
+It should not become a monolithic rule book. Its long-term role is to trigger
+this multi-agent harness and point each role to the relevant checklist.
