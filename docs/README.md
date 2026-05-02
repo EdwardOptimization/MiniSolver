@@ -15,6 +15,8 @@ evidence logs, and design decisions separate so each file has a clear role.
   out of scope.
 - [Solver Status Semantics](architecture/solver-status-semantics.md): terminal
   status layering and postsolve precedence.
+- [Termination Design](architecture/termination-design.md): planned residual
+  semantics for `OPTIMAL`, `FEASIBLE`, barrier `mu`, and future `SolverInfo`.
 
 ## Directories
 

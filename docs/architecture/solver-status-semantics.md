@@ -25,6 +25,11 @@ reduced-accuracy solved, infeasible, max-iteration/time, and numerical-error sta
 
 ## MiniSolver Policy
 
+Detailed termination residual semantics are tracked in
+[`termination-design.md`](termination-design.md). In short: `SolverStatus`
+should stay compact, while residual channels and loop-exit reasons should be
+made explicit before changing convergence behavior.
+
 MiniSolver keeps the public API compact and config-driven. It does not expose a public plugin status
 framework. Statuses should be added only when the solver can route them from existing evidence.
 `solve()` continues to return one primary `SolverStatus`; a future `SolverInfo` / `SolverReport`

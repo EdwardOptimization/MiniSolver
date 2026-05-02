@@ -1,0 +1,111 @@
+# Review Issue Ledger: 2026-05-02 Deep Review (14-Dimension)
+
+This ledger tracks the 41 new findings from [review_2026-05-02-deep.md](review_2026-05-02-deep.md) in the project's standard ledger format. It complements the static-review ledger ([review-fix-plan-2026-05-02.md](review-fix-plan-2026-05-02.md)) without overlap.
+
+Each item must follow the project rule:
+
+1. Confirm the claim on the current checkout.
+2. Add a focused red test, reproducer, benchmark, or static check.
+3. Capture the failing baseline.
+4. Apply the smallest behavior change.
+5. Re-run the same evidence path and nearby regressions.
+
+## Status Legend
+
+| Status | Meaning |
+| --- | --- |
+| `confirmed` | The current code still exhibits the issue or design mismatch. |
+| `partly-confirmed` | The core concern exists, but later guards/tests reduce impact. |
+| `deferred-design` | Real design debt, but needs a separate design pass before code. |
+| `intentional` | Current behavior is deliberate and covered, but may need documentation. |
+| `correction` | Initial concern was incorrect on closer inspection. |
+| `fixed` | Fixed in a later commit with focused tests or documentation. |
+
+## Resolution Summary
+
+This review introduces 41 new findings without applying any fix (per plan). All items below are at status `confirmed`, `partly-confirmed`, `deferred-design`, or `intentional`. The companion main review document explains methodology and severity rationale.
+
+Validation recorded before opening this ledger:
+
+- `.build`: full `ctest` passed, 25/25 (Eigen, Release).
+- No code changes proposed in this pass.
+
+## P0: Fix First
+
+| Finding | Status | Evidence Path | Resolution / Next Action |
+| --- | --- | --- | --- |
+| **N-CONV-1** SolverStatus lacks MAX_ITER / UNBOUNDED / LINEAR_SOLVE_FAILED / RESTORATION_FAILED / INVALID_INPUT layering, conflating "iter budget exhausted" with "infeasible". | fixed | [`types.h`](../../include/minisolver/core/types.h), [`solver.h`](../../include/minisolver/solver/solver.h), [`test_status.cpp`](../../tests/test_status.cpp), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). | Fixed in `19856d0 fix: preserve solver termination status`. `UNBOUNDED` remains intentionally absent because MiniSolver has no certificate/detector. |
+| **N-EMBED-1** README markets STM32 / no external libraries, but 11 headers `#include <iostream>`, 4 `throw std::invalid_argument` sites, `std::unordered_map` in solver, no ARM cross-compile job, no `-fno-rtti -fno-exceptions` option, no binary size measurement. | confirmed | `grep '#include <iostream>' include/minisolver/**/*.h` yields 11 hits; `grep 'throw std::' include/` yields 4 hits in [`implicit_integrator.h`](../../include/minisolver/integrator/implicit_integrator.h):76, 150, 418, 434; [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml):39 matrix is `ubuntu-latest` only. | Add `MINISOLVER_EMBEDDED_PROFILE` CMake option that switches logger to callback hook, replaces `throw` with `assert` + status return, replaces `unordered_map` with `static constexpr` linear search; add ARM Cortex-M cross-compile CI job building `examples/01_car_tutorial`; document binary size budget. |
+| **N-MOD-2** Problem-level scaling completely absent. | confirmed | `grep -i 'scaling\|equilibrat\|ruiz' include/minisolver/solver/solver.h` yields 0 matches. Already P0 in [`solver-capability-adoption-plan.md`](../architecture/solver-capability-adoption-plan.md). | Implement per-state / per-control / per-parameter / per-constraint-row scaling per the capability adoption plan P0 #1; add a deliberately badly-scaled NMPC test case and measure success rate / iterations / line-search backtracks before/after. |
+| **N-THEORY-4** Riccati / KKT solve has no inertia detection — SPD failure only triggers regularization escalation, never verifies positive/negative eigenvalue counts match (n_vars, n_eq+slacks, 0). May converge to saddle points. | confirmed | [`riccati.h:461-665`](../../include/minisolver/solver/riccati.h) implements REGULARIZATION / IGNORE_SINGULAR / SATURATION strategies, none reading inertia from a factorization with diagonal pivoting. No corresponding logic in [`linear_solver.h`](../../include/minisolver/algorithms/linear_solver.h). | Add LDLT-based KKT factorization path (Eigen `LDLT` already exposes inertia via `vectorD()`); on inertia mismatch, escalate regularization (multiply by 10) and refactorize until inertia is correct or `inertia_max_retries` exhausted; surface failure as `LINEAR_SOLVE_FAILED` (paired with N-CONV-1). Build a degenerate-Hessian regression case before changing behavior. |
+| **N-THEORY-5** Restoration silently skips quadratic feasibility penalty under `BarrierStrategy::MEHROTRA`, leaving Mehrotra users without a working safety net. Strong candidate root cause for ADR 0002's race_cars 9.4% INFEASIBLE rate. | fixed | [`solver.h`](../../include/minisolver/solver/solver.h), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). | Fixed in `51d2590 fix: apply restoration penalty under Mehrotra` with a focused regression. Race-cars benchmark impact still belongs to the benchmark validation queue. |
+
+## P1: Hardening And Semantics
+
+| Finding | Status | Evidence Path | Resolution / Next Action |
+| --- | --- | --- | --- |
+| **N-NUM-1** Mehrotra `update_mu` divides `avg / current_mu` without zero guard; companion `mehrotra_target_mu` was patched in 5/2 but `update_mu` wasn't. | correction | [`barrier_update.h`](../../include/minisolver/algorithms/barrier_update.h), [`solver-refactor-plan.md`](../architecture/solver-refactor-plan.md). | Do not add hot-path guards for `current_mu <= 0`. A nonpositive barrier parameter is outside solver invariants and should be validated at config/build/initialization boundaries. The obsolete zero-mu test was removed in `58dafcd`. |
+| **N-NUM-2** `recover_dual_search_directions` divides by `lam_i` without flooring (`s_i` is floored to `min_barrier_slack` but `lam_i` is not). | fixed | [`riccati.h`](../../include/minisolver/solver/riccati.h), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). | Fixed in `58dafcd fix: harden solver diagnostics and dual recovery` with `BugfixTest.L1DualRecoveryFloorsNonpositiveLambda`. |
+| **N-CONV-2** `tol_grad` is declared, set, serialized, but `TerminationKernel` never reads it. Dead config field. | deferred-design | [`solver_options.h:151`](../../include/minisolver/core/solver_options.h) declares `tol_grad = 1e-4`; [`termination.h`](../../include/minisolver/algorithms/termination.h) does not reference it; 6 test files set values that have no effect. | Do not wire or delete in isolation. Resolve with the termination design pass after deciding whether MiniSolver exposes stationarity separately from dual infeasibility. |
+| **N-CONV-3** `OPTIMAL` requires `mu <= mu_final`, breaking standard IPM "KKT residual ≤ tol" semantics. Users with low-precision tolerances cannot reach OPTIMAL. | deferred-design | [`termination.h:14-21`](../../include/minisolver/algorithms/termination.h), [`termination-design.md`](../architecture/termination-design.md). | Termination needs a full residual/status design. Do not patch by only removing `mu <= mu_final`; first add true complementarity metrics and tests as specified in `termination-design.md`. |
+| **N-OBS-1** `SolverContext` exposes ~8 of ~20 capability-adoption-plan diagnostic fields. Cannot query degraded-fallback flag, SOC counts, restoration counts, scaling status, linear-solver factorization status, etc. | deferred-design | [`solver_context.h`](../../include/minisolver/core/solver_context.h) inventory; capability adoption plan P0 #3. | Already prioritized; this review just elevates urgency. Implement incrementally: start with degraded_riccati_freeze_count, soc_attempted/accepted/rejected, restoration_attempted/accepted/rejected, regularization_escalation_count. |
+| **N-OBS-2** Logger uses `std::cout` / `std::endl` / hardcoded ANSI escape codes; no embedded-safe path; not redirectable. | confirmed | [`logger.h`](../../include/minisolver/core/logger.h):19-61. | Define `void minisolver_log(int level, const char* msg)` weak symbol or function pointer; default implementation writes to cout/cerr; embedded profile (N-EMBED-1) overrides to user callback; remove ANSI escapes when output is not a TTY. |
+| **N-API-1** Seven user-facing setter APIs are silent-return or `cerr+return` on bad input. | confirmed | [`solver.h`](../../include/minisolver/solver/solver.h) lines 246-250, 257-265, 268-277, 279-287, 289-297, 299-307, 549-554, 199-204, 118-120. | Convert to `bool` or `std::optional<int>` return types; deprecate void overloads; replace cerr with MLOG_WARN. Paired with N-OBS-2 (logger callback). |
+| **N-EMBED-2** `std::cerr` direct calls in 7 sites bypass logger and are compiled in regardless of MLOG level. | fixed | [`solver.h`](../../include/minisolver/solver/solver.h), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). | Solver API direct `std::cerr` sites were routed through `MLOG_*` in `58dafcd`. Serializer I/O remains a separate deferred module. |
+| **N-TEST-1** Generated 2nd-order Hessians (Q, R, H) are not FD-verified. Sign / factor-of-two errors in symbolic Hessian generation could go undetected. | confirmed | [`tests/test_solver_quality.cpp:309-431`](../../tests/test_solver_quality.cpp) covers A/B/C/D/q/r but stops at first-order. | Extend the same TEST function to add Q via centered difference of `cost(x+e_j*eps) - 2*cost(x) + cost(x-e_j*eps)`, similarly R / H. Tolerance ~1e-3 (second-order FD has worse accuracy). |
+| **N-TEST-2** `test_autodiff.cpp` filename misleads — 88 lines testing fixed numerical values, no autodiff cross-check. | confirmed | [`tests/test_autodiff.cpp`](../../tests/test_autodiff.cpp) full content. | Either rename to `test_car_model_basic.cpp` or expand to cover Q/R/H FD verification (paired with N-TEST-1) plus L1/L2 soft constraint derivative cross-checks. |
+| **N-TEST-3** Zero property-based tests, zero fuzzing across 158 tests. | confirmed | `grep -i 'rapidcheck\|libfuzzer\|hypothesis\|fuzz'` returns 0 matches. | Add RapidCheck dependency; implement 5-10 properties: "feasible QP solution satisfies KKT", "filter monotonicity", "Mehrotra mu_aff ∈ [0, current_mu]", "terminal du is zero post-Riccati". Cheap one-time setup. |
+| **N-TEST-4** No golden cross-check vs IPOPT/CasADi/acados in this repo, despite CasADi being already in `requirements.txt` for reference data. | confirmed | [`requirements.txt:12`](../../requirements.txt) lists `casadi >= 3.6.0`; `tests/reference/generate_asset_regression_reference_data.py` uses CasADi for asset regression but not for IPM-vs-CasADi cross-check. | Add 2-3 in-tree comparison tests (linear MPC double integrator, kinematic bicycle obstacle, chain-mass) comparing primal solution and KKT residual to CasADi+IPOPT reference. Tolerance 1e-4 on primal, 1e-3 on dual. |
+| **N-MOD-1** MiniModel DSL has no unit/dimension checking. NMPC formulations mixing m / rad / N are accepted silently; bad scaling explains many edge-case failures. | partly-confirmed | `grep -i 'unit\|dimension\|m\b\|rad\b\|kg\b' python/minisolver/MiniModel.py` returns 0 real matches. | Lightweight: document in README that the solver assumes O(1) scaled inputs and recommend per-state scaling factors. Heavyweight: add optional `model.set_units(state, 'm')` annotation, used for documentation + scaling hints. Pair with N-MOD-2. |
+| **N-DEG-1** Riccati small-NU freeze produces silent zero-control direction; user receives "OPTIMAL" status with frozen `du[i] = 0`. | confirmed | [`riccati.h:471-577`](../../include/minisolver/solver/riccati.h) — already 5/2 P2 confirmed/intentional, this review confirms diagnostics still missing. | Add `int degraded_riccati_freeze_count` to `SolverContext.metrics` (paired with N-OBS-1). Increment in the freeze branch; expose via `get_metrics()`. |
+| **N-THEORY-1** Filter line search missing three Wächter-Biegler 2006 §2.3 mechanisms; ADR 0002 only documents one (switching condition). Also missing: `θ_max` filter sentinel (Eqn 21), f-type acceptance must NOT augment filter. | confirmed | [`line_search.h:577-586`](../../include/minisolver/algorithms/line_search.h) `reset()` clears entries with no sentinel; lines 681-687 augment filter on every accepted step. ADR 0002 covers Eqn 19-20 only. | Update ADR 0002 to acknowledge all three gaps. Implementation order: (a) `θ_max` sentinel (small change to `reset()`), (b) f-type filter-skip (paired with switching condition implementation), (c) switching condition itself (~30-50 LoC per ADR 0002 estimate). |
+| **N-THEORY-2** Filter ring buffer overwrites oldest entries after 1024 accepted steps, breaking "monotone over all history" certificate property. | confirmed | [`line_search.h:377, 681-687`](../../include/minisolver/algorithms/line_search.h). Test `LineSearchTest.FilterHistoryWrapsAtFixedCapacity` documents but does not assert certificate preservation. | Switch to Pareto-frontier list with element pruning (entries dominated by another are removed). Bound size by problem geometry, not raw iteration count. Add a regression that constructs a sequence triggering >1024 accepted steps and verifies acceptance correctness. |
+| **N-THEORY-3** Mehrotra `α_aff` is a single primal+dual fraction-to-boundary, not split into `α_aff_p` / `α_aff_d`. Produces conservative `μ_aff` and slower barrier reduction. | confirmed | [`solver.h:1005`](../../include/minisolver/solver/solver.h) `compute_fraction_to_boundary_(affine_traj)` returns scalar. Standard Mehrotra requires separate primal and dual fractions. | Refactor `compute_fraction_to_boundary_` to return `std::pair<double, double>{α_p, α_d}` with `α_p` constraining `s + α·ds ≥ τ·s` and `α_d` constraining `λ + α·dλ ≥ τ·λ`. Use both in `compute_affine_barrier_mu_`. Pair with backlog item #12. |
+
+## P2: Cleanup And Hardening
+
+| Finding | Status | Evidence Path | Resolution / Next Action |
+| --- | --- | --- | --- |
+| **N-NUM-3** Magic-number cluster in `InitializationKernel` (`1e-9`, `1e-8`, `1e-6` thresholds without documented relationship to `min_barrier_slack`). | confirmed | [`initialization.h:33-75`](../../include/minisolver/algorithms/initialization.h). | Consolidate to a single `init_*_floor` config or document the dimensionless-O(1) assumption. Pair with N-MOD-2 (scaling) work. |
+| **N-NUM-4** Restoration `improvement_tol = 1e-12 * max(1.0, before)` asymmetric across problem scales. | confirmed | [`solver.h:1443`](../../include/minisolver/solver/solver.h). | Replace with `std::max(absolute_floor, relative_factor * before)` where both factors are config-tunable. |
+| **N-CONV-4** `status_to_string(OPTIMAL)` returns `"SOLVED"`, inconsistent with enum name. | fixed | [`types.h`](../../include/minisolver/core/types.h), [`test_status.cpp`](../../tests/test_status.cpp). | Fixed in `19856d0 fix: preserve solver termination status`. |
+| **N-CONV-5** ADR 0002 race_cars / quadrotor_nav root cause not advanced by static review. | partly-confirmed | ADR 0002 documents the gap and reopen triggers; this review identifies N-THEORY-5 as an additional candidate. | Add N-THEORY-5 (Mehrotra restoration skip) as a candidate root cause to ADR 0002's reopen analysis. Validate by running race_cars before/after the N-THEORY-5 fix. |
+| **N-RT-1** `set_initial_state(string&)` and similar use `std::cerr`, violating logger consistency and embedded RT. | fixed | [`solver.h`](../../include/minisolver/solver/solver.h), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). | Solver API direct `std::cerr` sites were routed through `MLOG_*` in `58dafcd`. |
+| **N-RT-2** `print_iteration_log` uses `std::stringstream` + `std::endl`, breaking zero-malloc when `print_level >= ITER`. | partly-confirmed | [`solver.h:1110-1173`](../../include/minisolver/solver/solver.h). Default `PrintLevel::NONE` short-circuits, so default solve unaffected. | Document explicitly that "zero-malloc applies only when `print_level <= NONE` and `enable_profiling = false`"; add a stricter zero-malloc test that fails when ITER is enabled, demonstrating the boundary. |
+| **N-OBS-3** Iteration log lacks Mehrotra `α_aff / μ_aff` columns even though they're computed and stored. | fixed | [`solver.h`](../../include/minisolver/solver/solver.h), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). | Fixed in `58dafcd fix: harden solver diagnostics and dual recovery` with a focused log-header regression. |
+| **N-API-2** `SolverConfig` 50+ fields without preset profiles. | deferred-design | [`solver_options.h:113-228`](../../include/minisolver/core/solver_options.h). Already P1 in capability adoption plan. | Implement Reference / Default / Speed / Robust profiles per capability adoption plan; profiles populate `SolverConfig`, user can still override individual fields. |
+| **N-API-3** No explicit `set_warm_start_*` API; users must mutate `trajectory[k].*` directly. | confirmed | No grep hit for `set_warm_start` in include. | Add `set_warm_start_dual(stage, idx, value)` and `set_warm_start_slack(stage, idx, value)` overloads that go through validated paths. Lower priority than fixing N-API-1. |
+| **N-MOD-3** Constructor silently clamps `initial_N` instead of throwing on out-of-range. | confirmed | [`solver.h:118-120`](../../include/minisolver/solver/solver.h). | Throw `std::invalid_argument` (or in embedded mode, hard-assert) instead of `cerr + clamp`. Paired with N-API-1. |
+| **N-AD-2** Generated `jacobian_continuous` writes all zero entries explicitly. Optimizer may eliminate, but not guaranteed for non-stack matrices. | confirmed | [`bicycleextmodel.h`](../../examples/02_advanced_bicycle/generated/bicycleextmodel.h) lines 96-120. | Codegen change in [`MiniModel.py`](../../python/minisolver/MiniModel.py): emit `jac.Jx.setZero(); jac.Jx(...) = ...; ...` only for nonzero entries. Marginal performance gain; low priority. |
+| **N-PREC-1** Solver hard-codes `double`; no float / mixed-precision support. | deferred-design | `MSVec<double, ...>` fixed across codebase. | Future: template `Scalar` parameter; would require coordinated changes in matrix backend, codegen, tests. Document as known limitation. |
+| **N-PREC-2** Tolerance fields' physical meaning not documented. | confirmed | [`solver_options.h:150-159`](../../include/minisolver/core/solver_options.h) defaults without comments explaining units. | Add comments stating "in user's chosen units" and pointing to the scaling section once N-MOD-2 is implemented. |
+| **N-DEP-1** CasADi (LGPL-3) in `requirements.txt` for test reference; license boundary should be explicit. | confirmed | [`requirements.txt:12`](../../requirements.txt). | Add `LICENSE-3RD-PARTY.md` documenting: product binary depends on Eigen3 (MPL2) or none (CustomMatrix). Test/reference dependencies include CasADi (LGPL-3, used only for test data generation, not linked into product). |
+| **N-DEP-2** `requirements.txt` pins only minor floors. Non-deterministic builds. | confirmed | [`requirements.txt`](../../requirements.txt) all `>=`. | Generate `requirements-lock.txt` with pinned versions, used by CI; keep `requirements.txt` flexible for development. |
+| **N-TEST-5** ASan/UBSan in CI Debug builds but not in `build.sh`. | confirmed | [`.github/workflows/ci.yml:83`](../../.github/workflows/ci.yml) enables sanitizers in CI; [`build.sh`](../../build.sh) does not. | Add `ASAN=1 ./build.sh` mode that propagates `-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"`. |
+| **N-TEST-6** `test_memory.cpp` does not exercise generated bicycle (NX=6, NU=2, NC=10 with hard+soft constraints) under zero-malloc check. | confirmed | [`tests/test_memory.cpp`](../../tests/test_memory.cpp) uses CarModel + toy models only. | Add a test using `BicycleExtModel` (or the `kinematic_bicycle_regression_model` test asset) inside the zero-malloc instrumentation. Likely catches one or more constraint-path allocations. |
+| **N-THEORY-6** Merit `dphi_` uses finite-difference instead of analytic directional derivative. | confirmed | [`line_search.h:317-326`](../../include/minisolver/algorithms/line_search.h). | Implement `compute_grad_phi_times_d(active, N, mu, config)` using existing `q, r, q_bar, r_bar, C, D` plus barrier gradient terms. Same machinery is needed for ADR 0002's f-type switching condition; bundle. |
+| **N-AD-1** Initial concern about FD verification absence — corrected on closer inspection. | correction | `test_solver_quality.cpp:309-431` covers 1st-order. Only 2nd-order Hessians remain uncovered (recorded as N-TEST-1). | No action — this row is here for traceability. |
+
+## Open Follow-Up Order
+
+This ledger's recommended sequence (also in main review, repeated here for ease of execution):
+
+1. **Termination design pass**: resolve **N-CONV-2** and **N-CONV-3** using
+   [`termination-design.md`](../architecture/termination-design.md), not an isolated condition
+   tweak.
+2. **N-TEST-4** (CasADi cross-check, leverages existing dependency).
+3. **N-TEST-1** (Hessian FD).
+4. **N-TEST-3** (property-based with RapidCheck setup).
+5. **N-OBS-2** + **N-OBS-1** (logger callback + diagnostics expansion).
+6. **N-API-1** (silent setter cleanup, paired with new logger).
+7. **N-EMBED-1** (embedded profile + ARM CI).
+8. **N-MOD-2** (problem scaling).
+9. Bundle theory: **N-THEORY-1 + N-THEORY-2 + N-THEORY-3 + N-THEORY-6**
+   (filter + Mehrotra + analytic merit dphi).
+10. **N-THEORY-4** (inertia detection — defer until benchmark evidence demands).
+
+Already resolved after this ledger was opened: **N-THEORY-5**, **N-CONV-1**,
+**N-NUM-2**, **N-CONV-4**, **N-RT-1**, **N-EMBED-2**, **N-OBS-3**. **N-NUM-1**
+was reclassified as an invalid-invariant / over-defensive-code correction.
+
+Items not on this critical path are deferred-design candidates: **N-PREC-1**, **N-API-2**, **N-MOD-1**.

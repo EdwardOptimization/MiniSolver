@@ -450,7 +450,7 @@ Current and intended seams:
 | Globalization | `globalize_step_()` and `LineSearchStrategy` | keep line-search variants behind one seam |
 | SOC | filter-only multiple-shooting correction via `try_soc_correction()` and optional model SOC hook | introduce full packet objects only after another real variation point needs them |
 | Restoration | `attempt_tiny_step_recovery_()` / `feasibility_restoration()` | isolate as recovery/restoration phase |
-| Termination | convergence checks plus loop exit checks | make termination criteria explicit and testable |
+| Termination | convergence checks plus loop exit checks | follow [`termination-design.md`](termination-design.md): separate solution quality, loop-exit reason, and internal barrier state before changing convergence behavior |
 | Diagnostics | timer, alpha log, metrics | avoid allocation in hot paths |
 
 ### Layer 4: SolverContext
