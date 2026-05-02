@@ -467,6 +467,6 @@ TEST(MiniMatrixTest, EigenLikeBlocksForIntegratorCompatibility)
 TEST(MiniMatrixDeathTest, BlockOutOfBoundsAsserts)
 {
     MiniMatrix<double, 2, 2> M;
-    EXPECT_DEATH({ (void)M.template block<2, 2>(1, 1); }, "");
+    EXPECT_DEATH((void)(M.template block<2, 2>(1, 1)), "");
 }
 #endif

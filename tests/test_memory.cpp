@@ -299,8 +299,7 @@ TEST(MemoryTest, ZeroMalloc_SolveAfterSetConfigDoesNotAllocate)
     solver.solve();
     g_memory_check_active = false;
 
-    EXPECT_EQ(g_allocation_count, 0)
-        << "set_config() must not defer heap allocation into solve()";
+    EXPECT_EQ(g_allocation_count, 0) << "set_config() must not defer heap allocation into solve()";
 }
 
 TEST(MemoryTest, ZeroMalloc_FilterSOC_Path)

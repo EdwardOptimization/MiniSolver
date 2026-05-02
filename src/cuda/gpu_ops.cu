@@ -62,8 +62,9 @@ template <int NX> void gpu_dispatch_solve(std::vector<GpuLinearOp<NX>>& h_ops, B
             cudaDeviceSynchronize();
             std::swap(in_ptr, out_ptr);
         }
-        if (in_ptr != thrust::raw_pointer_cast(d_ops.data()))
+        if (in_ptr != thrust::raw_pointer_cast(d_ops.data())) {
             d_ops = d_temp;
+        }
     }
 
     thrust::copy(d_ops.begin(), d_ops.end(), h_ops.begin());
