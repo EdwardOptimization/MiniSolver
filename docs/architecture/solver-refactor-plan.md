@@ -484,6 +484,48 @@ But this should wait until at least two or three seams have multiple real
 implementations. Today, a full `StrategySpec -> StrategyKernel` framework is
 still premature.
 
+### What OOP/Kernels Do And Do Not Solve
+
+OOP strategy specs and runtime kernels can reduce **code-structure coupling**:
+the canonical loop should call phase boundaries instead of accumulating scattered
+feature branches.
+
+```text
+direction_phase.compute(ctx)
+globalization_phase.search(ctx)
+restoration_phase.try_recover(ctx)
+```
+
+They do not remove **algorithmic coupling**. Features such as Mehrotra,
+SOC, restoration, and future full KKT iterative refinement still share
+mathematical state: residual definitions, barrier snapshots, RHS construction,
+soft-constraint variables, and fraction-to-boundary requirements.
+
+The design rule is:
+
+```text
+OOP/spec/kernel boundaries manage code structure.
+SolverContext and typed packets manage mathematical semantics.
+```
+
+For example, a future full KKT refinement implementation should not inspect
+scattered solver flags directly. It should receive an explicit direction packet,
+such as:
+
+```cpp
+struct DirectionSolvePacket {
+    DirectionKind kind;        // Primary, MehrotraCorrector, SocCorrection, Restoration
+    double residual_mu;
+    double target_mu;
+    bool has_soc_rhs;
+    bool has_affine_step;
+};
+```
+
+Then a `DirectionRefinementKernel` can explicitly accept, skip, or reject a
+packet kind. This keeps `solver.h` from becoming an if/else dispatch tree while
+still making the unavoidable algorithmic dependencies visible and testable.
+
 ## Reference Path vs Default Path
 
 MiniSolver needs both:
@@ -504,6 +546,46 @@ Initial candidate split:
 
 This split should initially be expressed as helper config presets or tests, not
 as a new public solver class.
+
+## Deferred: Full KKT Iterative Refinement
+
+MiniSolver currently implements only `DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT`.
+That mode corrects the linearized dynamics direction by rolling `dx/du` forward
+through the existing Riccati feedback gains. It intentionally does not rebuild
+constraint, slack, or dual directions.
+
+Full KKT iterative refinement is a different future strategy. It would compute
+the residual of the full linearized primal-dual KKT system and solve a correction
+for all direction blocks:
+
+```text
+dx, du, ds, dlam, dsoft_s
+```
+
+Potential benefits:
+
+- keep state, control, slack, and dual directions consistent after refinement;
+- improve robustness on strongly constrained NMPC problems where active path
+  constraints or soft constraints dominate;
+- reduce linear-solve error from ill-conditioned or strongly regularized KKT
+  systems;
+- provide a true "iterative refinement" mode for high-accuracy solves.
+
+Costs and risks:
+
+- requires a complete KKT residual evaluator, not only a dynamics-defect check;
+- should reuse Riccati/factorization work where possible, otherwise it is close
+  to another full linear solve;
+- needs fraction-to-boundary damping because corrected slack/dual directions can
+  violate the IPM interior;
+- couples to Mehrotra, SOC, soft constraints, and line-search semantics, so it
+  needs targeted red tests and benchmark evidence before implementation.
+
+Do not implement this until a constrained benchmark or regression shows that
+`DYNAMICS_DEFECT_ROLLOUT` is insufficient because stale constraint/dual directions
+limit convergence or accuracy. When needed, add it as a new enum value, e.g.
+`DirectionRefinementMode::FULL_KKT_ITERATIVE_REFINEMENT`, rather than replacing
+the current rollout correction.
 
 ## Linear Solver Direction
 

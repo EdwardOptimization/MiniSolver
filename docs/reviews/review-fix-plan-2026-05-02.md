@@ -77,6 +77,7 @@ Validation recorded before landing:
 | SOC uses `TrajArray soc_data = active` in the solve path. | fixed | Code inspection confirms `FilterLineSearch` now owns `soc_scratch_`; zero-malloc SOC coverage still passes. | SOC scratch is preallocated in the line-search object and only the active horizon is copied into that workspace. |
 | `solve()` always resets `mu/reg`, reducing MPC warm-start reuse. | confirmed | MPC-style warm-start benchmark comparing reset vs reuse. | Add an explicit config once a benchmark shows benefit and safe failure reset policy. |
 | Defect rollout refinement only updates `dx/du`, not constraint directions. | confirmed/intentional | Existing docs say it is not full KKT refinement; the public config is now an explicit `DirectionRefinementMode`. | Naming is resolved. A constrained-direction consistency test is still needed before changing algorithm behavior. |
+| Full KKT iterative refinement is not implemented. | deferred-design | No current regression proves that full KKT residual correction is needed. | Keep it as a future `DirectionRefinementMode` value after a constrained benchmark shows stale slack/dual directions limiting convergence or accuracy. |
 | Small-`NU` Riccati fallback freezes control dimensions without external degraded flag. | intentional | Existing tests cover the fallback. | Add diagnostics if benchmark/debug use needs to distinguish exact vs degraded directions. |
 | Terminal stage still evaluates dynamics with `dt=0`. | fixed | Covered in P1. | No follow-up needed unless a future terminal model requires nonzero terminal dynamics data. |
 
@@ -84,4 +85,5 @@ Validation recorded before landing:
 
 1. Warm-start `mu/reg` reuse benchmark before adding config.
 2. Defect rollout refinement constrained-direction consistency test.
-3. Optional diagnostics for degraded Riccati fallback directions.
+3. Full KKT iterative refinement design only after evidence from constrained benchmarks.
+4. Optional diagnostics for degraded Riccati fallback directions.
