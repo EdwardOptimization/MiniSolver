@@ -136,6 +136,54 @@ struct FeasibleBudgetModel {
     }
 };
 
+struct DegradedRiccatiModel {
+    static const int NX = 1;
+    static const int NU = 2;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u0", "u1" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + u(0) * dt;
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+        kp.B(0, 1) = 0.0;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0);
+        kp.Q(0, 0) = 2.0;
+        kp.q(0) = 2.0 * kp.x(0);
+        kp.R(0, 0) = 1.0;
+        kp.R(1, 1) = -1000.0;
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
 TEST(StatusTest, StatusToStringUsesEnumNameForOptimal)
 {
     EXPECT_STREQ(status_to_string(SolverStatus::OPTIMAL), "OPTIMAL");
@@ -212,4 +260,24 @@ TEST(StatusTest, RtiFixedIterationProfileStopsAfterOneIteration)
     EXPECT_TRUE(info.dual_inf >= 0.0);
     EXPECT_DOUBLE_EQ(
         info.alpha, solver.get_alpha_log().empty() ? 1.0 : solver.get_alpha_log().back());
+}
+
+TEST(StatusTest, SolverInfoReportsDegradedRiccatiStep)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 1;
+    config.line_search_type = LineSearchType::NONE;
+    config.inertia_strategy = InertiaStrategy::REGULARIZATION;
+    config.reg_init = 1e-9;
+    config.reg_min = 1e-9;
+    config.singular_threshold = 1e-4;
+
+    MiniSolver<DegradedRiccatiModel, 10> solver(1, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+    solver.set_initial_state("x", 1.0);
+    (void)solver.solve();
+
+    EXPECT_TRUE(solver.get_info().degraded_step)
+        << "Small-NU Riccati freeze fallback should be visible in SolverInfo";
 }

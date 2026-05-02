@@ -19,6 +19,8 @@ public:
     // Persistent workspace to avoid re-allocation
     RiccatiWorkspace<Knot> workspace;
 
+    bool last_solve_degraded() const { return last_solve_degraded_; }
+
     bool solve(TrajArray& traj, int N, double mu, double reg, InertiaStrategy strategy,
         const SolverConfig& config, const TrajArray* affine_traj = nullptr) override
     {
@@ -35,16 +37,22 @@ public:
         }
 
         // Call the static/template function with Model type info
-        return cpu_serial_solve<TrajArray, Model>(
-            traj, N, mu, reg, strategy, config, workspace, affine_traj);
+        bool degraded = false;
+        const bool ok = cpu_serial_solve<TrajArray, Model>(
+            traj, N, mu, reg, strategy, config, workspace, affine_traj, nullptr, &degraded);
+        last_solve_degraded_ = degraded;
+        return ok;
     }
 
     // SOC Implementation
     bool solve_soc(TrajArray& traj, const TrajArray& soc_rhs_traj, int N, double mu, double reg,
         InertiaStrategy strategy, const SolverConfig& config) override
     {
-        return cpu_serial_solve<TrajArray, Model>(
-            traj, N, mu, reg, strategy, config, workspace, nullptr, &soc_rhs_traj);
+        bool degraded = false;
+        const bool ok = cpu_serial_solve<TrajArray, Model>(
+            traj, N, mu, reg, strategy, config, workspace, nullptr, &soc_rhs_traj, &degraded);
+        last_solve_degraded_ = degraded;
+        return ok;
     }
 
     bool evaluate_dual_residual(TrajArray& scratch_traj, int N, double mu, double reg,
@@ -143,6 +151,9 @@ public:
 
         return true;
     }
+
+private:
+    bool last_solve_degraded_ = false;
 };
 
 }

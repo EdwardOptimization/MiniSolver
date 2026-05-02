@@ -370,9 +370,12 @@ template <typename TrajVector, typename ModelType>
 bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
     minisolver::InertiaStrategy strategy, const minisolver::SolverConfig& config,
     RiccatiWorkspace<typename TrajVector::value_type>& ws, const TrajVector* affine_traj = nullptr,
-    const TrajVector* soc_traj = nullptr)
-{ // [NEW] Added arg
+    const TrajVector* soc_traj = nullptr, bool* degraded_step = nullptr)
+{
     using Knot = typename TrajVector::value_type;
+    if (degraded_step) {
+        *degraded_step = false;
+    }
 
     for (int k = 0; k <= N; ++k) {
         const Knot* aff_kp = (affine_traj) ? &((*affine_traj)[k]) : nullptr;
@@ -478,6 +481,7 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
             // that avoids stalling on extreme regularization for tiny control dimensions.
             bool inv_ok = fast_inverse(kp.R_bar, ws.Quu_inv, config.singular_threshold);
             if (!inv_ok) {
+                bool used_freeze_fallback = false;
                 MatOps::setZero(ws.Quu_inv);
 
                 if constexpr (Knot::NU == 1) {
@@ -502,6 +506,7 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                     if (keep >= 0) {
                         ws.Quu_inv(keep, keep) = 1.0 / ((keep == 0) ? a00 : a11);
                         inv_ok = true;
+                        used_freeze_fallback = true;
                     }
                 } else if constexpr (Knot::NU == 3) {
                     auto is_spd_2x2 = [&](int i, int j) -> bool {
@@ -556,6 +561,7 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                         ws.Quu_inv(j, i) = -aji * inv_det;
                         ws.Quu_inv(j, j) = aii * inv_det;
                         inv_ok = true;
+                        used_freeze_fallback = true;
                     } else {
                         // Otherwise, fall back to the strongest SPD 1x1 principal block.
                         int keep = -1;
@@ -570,12 +576,16 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                         if (keep >= 0) {
                             ws.Quu_inv(keep, keep) = 1.0 / kp.R_bar(keep, keep);
                             inv_ok = true;
+                            used_freeze_fallback = true;
                         }
                     }
                 }
 
                 if (!inv_ok) {
                     return false;
+                }
+                if (used_freeze_fallback && degraded_step) {
+                    *degraded_step = true;
                 }
             }
 
