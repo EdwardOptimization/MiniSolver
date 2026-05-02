@@ -35,6 +35,8 @@ SolverConfig MakeNonDefaultConfig()
     SolverConfig config;
     config.backend = Backend::GPU_PCR;
     config.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    config.warm_start_barrier = WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP;
+    config.warm_start_regularization = WarmStartRegularizationMode::DECAY_PREVIOUS_REG;
     config.integrator = IntegratorType::EULER_IMPLICIT;
     config.default_dt = 0.123;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
@@ -107,6 +109,8 @@ void ExpectConfigEq(const SolverConfig& a, const SolverConfig& b)
 {
     EXPECT_EQ(a.backend, b.backend);
     EXPECT_EQ(a.initialization, b.initialization);
+    EXPECT_EQ(a.warm_start_barrier, b.warm_start_barrier);
+    EXPECT_EQ(a.warm_start_regularization, b.warm_start_regularization);
     EXPECT_EQ(a.integrator, b.integrator);
     EXPECT_DOUBLE_EQ(a.default_dt, b.default_dt);
     EXPECT_EQ(a.barrier_strategy, b.barrier_strategy);

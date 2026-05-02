@@ -1630,15 +1630,22 @@ private:
     // ============================================================
     // [Phase 1] Presolve: Preparation
     // ============================================================
-    void reset_solve_runtime_state_()
+    void reset_solve_runtime_state_(bool can_reuse_primal_dual)
     {
+        const double previous_mu = context_.solve.mu;
+        const double previous_reg = context_.solve.reg;
+
         // [Enable/Disable Profiling]
         timer.enabled = config.enable_profiling;
         if (line_search) {
             line_search->reset();
         }
 
-        context_.solve.reset_algorithmic(config.mu_init, config.reg_init);
+        const double next_mu = detail::WarmStartKernel::select_barrier_mu<Model>(
+            config, trajectory.active(), N, previous_mu, can_reuse_primal_dual);
+        const double next_reg
+            = detail::WarmStartKernel::select_regularization(config, previous_reg);
+        context_.reset_algorithmic(next_mu, next_reg);
     }
 
     bool should_initialize_primal_dual_() const
@@ -1663,9 +1670,11 @@ private:
 
     void presolve()
     {
-        reset_solve_runtime_state_();
+        const bool initialize_primal_dual = should_initialize_primal_dual_();
 
-        if (should_initialize_primal_dual_()) {
+        reset_solve_runtime_state_(!initialize_primal_dual);
+
+        if (initialize_primal_dual) {
             initialize_primal_dual_from_model_();
         }
 

@@ -17,6 +17,7 @@ namespace minisolver::test {
 template <typename Model, int MAX_N> struct SolverInternalAccess {
     using Solver = MiniSolver<Model, MAX_N>;
     static double& mu(Solver& s) { return s.context_.solve.mu; }
+    static double& reg(Solver& s) { return s.context_.solve.reg; }
     static void apply_slack_reset(Solver& s, typename Solver::TrajArray& traj)
     {
         s.apply_slack_reset_(traj);

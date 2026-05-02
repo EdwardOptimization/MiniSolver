@@ -78,9 +78,34 @@ enum class InitializationMode {
     REUSE_PRIMAL_DUAL
 };
 
+enum class WarmStartBarrierMode {
+    // Conservative default: every solve starts from config.mu_init.
+    RESET_TO_MU_INIT,
+
+    // Reuse the previous solve's barrier parameter if the primal-dual iterate is valid.
+    REUSE_PREVIOUS_MU,
+
+    // Set mu from the stored complementarity gap s*lam (and L1 soft_s*(w-lam)).
+    FROM_COMPLEMENTARITY_GAP
+};
+
+enum class WarmStartRegularizationMode {
+    // Conservative default: every solve starts from config.reg_init.
+    RESET_TO_REG_INIT,
+
+    // Reuse the previous solve's regularization value, clamped to [reg_min, reg_max].
+    REUSE_PREVIOUS_REG,
+
+    // Carry regularization but decay it once, matching successful-solve reg cooldown.
+    DECAY_PREVIOUS_REG
+};
+
 struct SolverConfig {
     Backend backend = Backend::CPU_SERIAL;
     InitializationMode initialization = InitializationMode::COLD_START;
+    WarmStartBarrierMode warm_start_barrier = WarmStartBarrierMode::RESET_TO_MU_INIT;
+    WarmStartRegularizationMode warm_start_regularization
+        = WarmStartRegularizationMode::RESET_TO_REG_INIT;
 
     // --- Integration ---
     // RK4 is a good balance for general nonlinear problems
