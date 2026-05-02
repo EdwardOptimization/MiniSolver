@@ -45,6 +45,10 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         return s.should_stop_after_line_search_(traj, alpha, max_dual_inf);
     }
+    static void print_iteration_log(Solver& s, double alpha, bool header)
+    {
+        s.print_iteration_log(alpha, header);
+    }
     static SolverStatus postsolve(Solver& s, SolverStatus loop_status)
     {
         return s.postsolve(loop_status);
@@ -1081,18 +1085,18 @@ TEST(ImprovementDemo, IntegratorMismatch_WarningEmitted)
     conf.print_level = PrintLevel::NONE;
     conf.integrator = IntegratorType::EULER_EXPLICIT;
 
-    // Capture stderr — the warning goes to std::cerr from the constructor.
+    // Capture the logger's default warning stream.
     std::ostringstream captured;
-    auto* old_buf = std::cerr.rdbuf(captured.rdbuf());
+    auto* old_buf = std::cout.rdbuf(captured.rdbuf());
     MiniSolver<IntegratorTaggedModel, 10> solver(3, Backend::CPU_SERIAL, conf);
-    std::cerr.rdbuf(old_buf);
+    std::cout.rdbuf(old_buf);
     std::string output = captured.str();
 
     bool warned = !output.empty();
 
     std::cerr << "[Demo 3] integrator mismatch warning: "
               << (warned ? "EMITTED" : "MISSING (silent)") << "\n"
-              << "  stderr: \"" << output << "\"\n";
+              << "  logger output: \"" << output << "\"\n";
 
     EXPECT_TRUE(warned) << "No warning emitted for integrator mismatch";
 }
@@ -1569,6 +1573,54 @@ TEST(BugfixTest, L1BarrierDerivativesClampSoftDualGapAtWeightBoundary)
     EXPECT_TRUE(MatOps::is_finite_scalar(kp.dlam(0)));
     EXPECT_TRUE(MatOps::is_finite_scalar(kp.ds(0)));
     EXPECT_TRUE(MatOps::is_finite_scalar(kp.dsoft_s(0)));
+}
+
+TEST(BugfixTest, L1DualRecoveryFloorsNonpositiveLambda)
+{
+    using Knot = KnotPoint<double, 1, 1, 1, 0>;
+    Knot kp;
+    kp.set_zero();
+
+    kp.s(0) = 1.0;
+    kp.lam(0) = 0.0;
+    kp.soft_s(0) = 1.0;
+    kp.g_val(0) = -0.9;
+    kp.C(0, 0) = 1.0;
+    kp.D(0, 0) = 1.0;
+    kp.dx(0) = 0.1;
+    kp.du(0) = 0.1;
+
+    SolverConfig config;
+    config.min_barrier_slack = 1e-8;
+
+    recover_dual_search_directions<Knot, L1TestModel>(kp, 1e-4, config);
+
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.dlam(0)));
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.ds(0)));
+    EXPECT_TRUE(MatOps::is_finite_scalar(kp.dsoft_s(0)));
+    EXPECT_LT(std::abs(kp.ds(0)), 1e8)
+        << "L1 dual recovery must floor lambda before using it as a divisor.";
+}
+
+TEST(BugfixTest, MehrotraIterationLogIncludesAffineDiagnostics)
+{
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::ITER;
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
+
+    Solver solver(1, Backend::CPU_SERIAL, config);
+
+    std::ostringstream captured;
+    auto* old_buf = std::cout.rdbuf(captured.rdbuf());
+    Access::print_iteration_log(solver, 0.0, true);
+    std::cout.rdbuf(old_buf);
+
+    const std::string output = captured.str();
+    EXPECT_NE(output.find("AlphaAff"), std::string::npos);
+    EXPECT_NE(output.find("MuAff"), std::string::npos);
 }
 
 TEST(BugfixTest, L1RestorationRebuildKeepsDualInsideBoxWhenSlackIsTiny)

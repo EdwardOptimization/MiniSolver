@@ -235,6 +235,9 @@ void recover_dual_search_directions(Knot& kp, double mu, const minisolver::Solve
         }
 
         double lam_i = kp.lam(i);
+        if (lam_i < config.min_barrier_slack) {
+            lam_i = config.min_barrier_slack;
+        }
         double r_y = s_i * lam_i - mu;
         if (aff_kp) {
             r_y += aff_kp->ds(i) * aff_kp->dlam(i);

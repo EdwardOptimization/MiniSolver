@@ -116,7 +116,7 @@ public:
     {
 
         if (initial_N < 0 || initial_N > MAX_N) {
-            std::cerr << "Error: N (" << initial_N << ") outside [0, " << MAX_N << "]. Clamping.\n";
+            MLOG_ERROR("N (" << initial_N << ") outside [0, " << MAX_N << "]. Clamping.");
         }
 
         // Constructor has an explicit backend argument; keep it as the source of truth.
@@ -199,7 +199,7 @@ public:
     void resize_horizon(int new_n)
     {
         if (new_n < 0 || new_n > MAX_N) {
-            std::cerr << "Error: new_n outside valid range [0, MAX_N]\n";
+            MLOG_ERROR("new_n outside valid range [0, MAX_N]");
             return;
         }
         int old_n = N;
@@ -260,7 +260,7 @@ public:
         if (idx != -1) {
             trajectory[0].x(idx) = value;
         } else {
-            std::cerr << "Warning: Unknown state " << name << "\n";
+            MLOG_WARN("Unknown state " << name);
         }
     }
 
@@ -282,7 +282,7 @@ public:
         if (idx != -1) {
             set_parameter(stage, idx, value);
         } else {
-            std::cerr << "Warning: Unknown param " << name << "\n";
+            MLOG_WARN("Unknown param " << name);
         }
     }
 
@@ -302,7 +302,7 @@ public:
         if (idx != -1) {
             set_global_parameter(idx, value);
         } else {
-            std::cerr << "Warning: Unknown param " << name << "\n";
+            MLOG_WARN("Unknown param " << name);
         }
     }
 
@@ -549,7 +549,7 @@ public:
     void set_dt(const std::vector<double>& dts)
     {
         if (dts.size() > MAX_N) {
-            std::cerr << "Warning: DT vector too large.\n";
+            MLOG_WARN("DT vector too large.");
         }
         int count = std::min((int)dts.size(), N);
         for (int i = 0; i < count; ++i) {
@@ -1143,6 +1143,9 @@ private:
                << "Log(Mu)" << std::setw(10) << "Log(Reg)" << std::setw(10) << "PrimInf"
                << std::setw(10) << "DualInf" << std::setw(10) << "Alpha";
 
+            if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
+                ss << std::setw(10) << "AlphaAff" << std::setw(12) << "MuAff";
+            }
             if (config.print_level >= PrintLevel::DEBUG) {
                 ss << std::setw(12) << "MinSlack";
             }
@@ -1185,6 +1188,11 @@ private:
            << std::setprecision(2) << std::setw(10) << max_prim_inf << std::setw(10) << max_dual_inf
            << std::fixed << std::setprecision(3) << std::setw(10) << alpha;
 
+        if (config.barrier_strategy == BarrierStrategy::MEHROTRA) {
+            ss << std::fixed << std::setprecision(3) << std::setw(10)
+               << context_.metrics.last_alpha_aff << std::scientific << std::setprecision(2)
+               << std::setw(12) << context_.metrics.last_mu_aff;
+        }
         if (config.print_level >= PrintLevel::DEBUG) {
             ss << std::scientific << std::setprecision(2) << std::setw(12) << min_slack;
         }
@@ -1965,10 +1973,10 @@ private:
     {
         if constexpr (detail::has_generated_integrator_v<Model>) {
             if (!info.fused_riccati_integrator_compatible) {
-                std::cerr << "MiniSolver: Model was generated for "
-                          << static_cast<int>(Model::generated_integrator)
-                          << " but config.integrator is " << static_cast<int>(config.integrator)
-                          << ". Fused Riccati kernel will be skipped.\n";
+                MLOG_WARN("Model was generated for "
+                    << static_cast<int>(Model::generated_integrator) << " but config.integrator is "
+                    << static_cast<int>(config.integrator)
+                    << ". Fused Riccati kernel will be skipped.");
             }
         }
     }

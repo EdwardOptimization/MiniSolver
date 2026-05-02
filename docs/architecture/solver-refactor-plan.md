@@ -41,6 +41,11 @@ path is practical.
   test or benchmark proves the need.
 - Do not mix solver architecture refactors with matrix-kernel tuning, ppoly
   design, or benchmark asset changes.
+- Do not scatter defensive checks for states that are outside solver invariants.
+  Validate configuration and model contracts at the build boundary; keep
+  algorithm kernels written for their trust domain. For example, `mu <= 0` is
+  an invalid barrier configuration/state, not a normal branch inside the
+  barrier update formula.
 
 ## Canonical Solve Route
 

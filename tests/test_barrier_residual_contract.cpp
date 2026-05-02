@@ -106,22 +106,6 @@ TEST(BarrierResidualContractTest, PostsolveResidualsRecordBarrierMuSnapshot)
     EXPECT_NEAR(residuals.max_barrier_complementarity_residual, std::abs(0.25 * 0.5 - 2e-2), 1e-14);
 }
 
-TEST(BarrierResidualContractTest, MehrotraTargetMuHandlesZeroCurrentMu)
-{
-    SolverConfig config;
-    config.mu_final = 1e-6;
-
-    const double target_from_zero_affine
-        = detail::BarrierUpdateKernel::mehrotra_target_mu(config, 0.0, 0.0, 1.0);
-    const double target_from_positive_affine
-        = detail::BarrierUpdateKernel::mehrotra_target_mu(config, 0.0, 0.1, 1.0);
-
-    EXPECT_TRUE(std::isfinite(target_from_zero_affine));
-    EXPECT_TRUE(std::isfinite(target_from_positive_affine));
-    EXPECT_DOUBLE_EQ(target_from_zero_affine, config.mu_final);
-    EXPECT_DOUBLE_EQ(target_from_positive_affine, config.mu_final);
-}
-
 TEST(BarrierResidualContractTest, PostsolveRechecksDualResidualAfterLoopOptimal)
 {
     constexpr int N = 1;
