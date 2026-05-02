@@ -102,6 +102,7 @@ private:
         write_enum(out, cfg.initialization);
         write_enum(out, cfg.warm_start_barrier);
         write_enum(out, cfg.warm_start_regularization);
+        write_enum(out, cfg.termination_profile);
 
         write_enum(out, cfg.integrator);
         write_pod(out, cfg.default_dt);
@@ -177,7 +178,8 @@ private:
     {
         if (!read_enum(in, cfg.backend) || !read_enum(in, cfg.initialization)
             || !read_enum(in, cfg.warm_start_barrier)
-            || !read_enum(in, cfg.warm_start_regularization) || !read_enum(in, cfg.integrator)
+            || !read_enum(in, cfg.warm_start_regularization)
+            || !read_enum(in, cfg.termination_profile) || !read_enum(in, cfg.integrator)
             || !read_pod(in, cfg.default_dt) || !read_enum(in, cfg.barrier_strategy)
             || !read_pod(in, cfg.mu_init) || !read_pod(in, cfg.mu_final)
             || !read_pod(in, cfg.mu_linear_decrease_factor)

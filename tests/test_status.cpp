@@ -180,3 +180,20 @@ TEST(StatusTest, ConflictingConstraintsWithoutCertificateReturnMaxIter)
     // actionable termination reason instead of claiming mathematical infeasibility.
     EXPECT_EQ(status, SolverStatus::MAX_ITER);
 }
+
+TEST(StatusTest, RtiFixedIterationProfileStopsAfterOneIteration)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 10;
+    config.termination_profile = TerminationProfile::RTI_FIXED_ITERATION;
+
+    MiniSolver<FeasibleBudgetModel, 10> solver(1, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+    solver.set_initial_state("x", 0.0);
+
+    (void)solver.solve();
+
+    EXPECT_EQ(solver.get_iteration_count(), 1)
+        << "RTI_FIXED_ITERATION should be selected through SolverConfig without enable_rti.";
+}

@@ -88,7 +88,9 @@ TEST(FeaturesTest, CostStagnationTermination)
 
     SolverStatus status = solver.solve();
 
-    EXPECT_EQ(status, SolverStatus::OPTIMAL);
+    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE)
+        << "Cost stagnation should stop early; strict OPTIMAL now requires true "
+           "complementarity, while this flat-cost case is only primal acceptable.";
     EXPECT_LT(solver.get_iteration_count(), config.max_iters);
 }
 

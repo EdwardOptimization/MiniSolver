@@ -7,17 +7,48 @@
 
 namespace minisolver::detail {
 
-struct TerminationKernel {
-    static bool check_convergence(const SolverConfig& config, double mu, double max_primal_inf,
-        double max_dual, double max_barrier_complementarity_residual)
-    {
-        const bool mu_converged = (mu <= config.mu_final);
-        const bool primal_ok = (max_primal_inf <= config.tol_con);
-        const bool dual_ok = (max_dual <= config.tol_dual);
-        const bool kkt_ok
-            = (max_barrier_complementarity_residual <= std::max(config.tol_mu, 10.0 * mu));
+struct TerminationSnapshot {
+    bool linear_ok = true;
+    double primal_inf = 0.0;
+    double dual_inf = 0.0;
+    double complementarity_inf = 0.0;
+    double barrier_centrality_inf = 0.0;
+    double mu = 0.0;
+};
 
-        return mu_converged && primal_ok && dual_ok && kkt_ok;
+struct TerminationKernel {
+    static bool uses_fixed_iteration_profile(const SolverConfig& config)
+    {
+        return config.enable_rti
+            || config.termination_profile == TerminationProfile::RTI_FIXED_ITERATION;
+    }
+
+    static bool check_convergence(const SolverConfig& config, const TerminationSnapshot& snapshot)
+    {
+        if (!snapshot.linear_ok) {
+            return false;
+        }
+
+        const bool primal_ok = (snapshot.primal_inf <= config.tol_con);
+        const bool dual_ok = (snapshot.dual_inf <= config.tol_dual);
+        const bool complementarity_ok = (snapshot.complementarity_inf <= config.tol_mu);
+
+        return primal_ok && dual_ok && complementarity_ok;
+    }
+
+    static SolverStatus classify_solution_quality(
+        const SolverConfig& config, const TerminationSnapshot& snapshot)
+    {
+        if (check_convergence(config, snapshot)) {
+            return SolverStatus::OPTIMAL;
+        }
+
+        const double feasible_bound = config.tol_con * config.feasible_tol_scale;
+        if (snapshot.primal_inf <= feasible_bound) {
+            return SolverStatus::FEASIBLE;
+        }
+
+        return SolverStatus::UNSOLVED;
     }
 
     static bool should_stop_for_cost_stagnation(const SolverConfig& config, double last_prim_inf,

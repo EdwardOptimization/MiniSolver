@@ -578,15 +578,26 @@ public:
 private:
     bool check_convergence(const StepResidualSummary& residuals, double max_dual)
     {
-        return detail::TerminationKernel::check_convergence(config, residuals.barrier_mu,
-            residuals.max_primal_inf, max_dual, residuals.max_barrier_complementarity_residual);
+        detail::TerminationSnapshot snapshot;
+        snapshot.linear_ok = true;
+        snapshot.primal_inf = residuals.max_primal_inf;
+        snapshot.dual_inf = max_dual;
+        snapshot.complementarity_inf = residuals.max_complementarity_gap;
+        snapshot.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
+        snapshot.mu = residuals.barrier_mu;
+        return detail::TerminationKernel::check_convergence(config, snapshot);
     }
 
     bool check_convergence(const PostsolveResiduals& residuals)
     {
-        return detail::TerminationKernel::check_convergence(config, residuals.barrier_mu,
-            residuals.max_primal_inf, residuals.max_dual_inf,
-            residuals.max_barrier_complementarity_residual);
+        detail::TerminationSnapshot snapshot;
+        snapshot.linear_ok = residuals.linear_ok;
+        snapshot.primal_inf = residuals.max_primal_inf;
+        snapshot.dual_inf = residuals.max_dual_inf;
+        snapshot.complementarity_inf = residuals.max_complementarity_gap;
+        snapshot.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
+        snapshot.mu = residuals.barrier_mu;
+        return detail::TerminationKernel::check_convergence(config, snapshot);
     }
 
     double compute_objective_cost_(const TrajArray& traj) const
@@ -621,12 +632,16 @@ private:
             for (int i = 0; i < NC; ++i) {
                 const double s = traj[k].s(i);
                 const double lam = traj[k].lam(i);
+                const double gap = s * lam;
                 double comp = std::abs(s * lam - mu_eval);
                 if (comp > summary.max_barrier_complementarity_residual) {
                     summary.max_barrier_complementarity_residual = comp;
                 }
+                if (std::abs(gap) > summary.max_complementarity_gap) {
+                    summary.max_complementarity_gap = std::abs(gap);
+                }
 
-                total_gap += s * lam;
+                total_gap += gap;
                 total_gap_dim += 1;
 
                 // L1 soft constraint has an additional complementarity pair:
@@ -642,12 +657,16 @@ private:
                 if (type == 1 && w > 1e-6) {
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - lam);
+                    const double soft_gap = soft_s * soft_dual;
                     double comp_soft = std::abs(soft_s * soft_dual - mu_eval);
                     if (comp_soft > summary.max_barrier_complementarity_residual) {
                         summary.max_barrier_complementarity_residual = comp_soft;
                     }
+                    if (std::abs(soft_gap) > summary.max_complementarity_gap) {
+                        summary.max_complementarity_gap = std::abs(soft_gap);
+                    }
 
-                    total_gap += soft_s * soft_dual;
+                    total_gap += soft_gap;
                     total_gap_dim += 1;
                 }
             }
@@ -1527,7 +1546,7 @@ private:
 
         // SQP-RTI mode exits after one step; postsolve assigns the final status.
         // Preserve the existing priority: RTI exits before inspecting step_stat.
-        if (config.enable_rti) {
+        if (detail::TerminationKernel::uses_fixed_iteration_profile(config)) {
             decision.should_exit = true;
             return decision;
         }
@@ -1742,8 +1761,12 @@ private:
             // 3. Barrier complementarity (including L1-soft secondary pair).
             for (int i = 0; i < NC; ++i) {
                 double comp = std::abs(traj[k].s(i) * traj[k].lam(i) - mu_eval);
+                const double gap = traj[k].s(i) * traj[k].lam(i);
                 if (comp > residuals.max_barrier_complementarity_residual) {
                     residuals.max_barrier_complementarity_residual = comp;
+                }
+                if (std::abs(gap) > residuals.max_complementarity_gap) {
+                    residuals.max_complementarity_gap = std::abs(gap);
                 }
 
                 double w = 0.0;
@@ -1758,9 +1781,13 @@ private:
                 if (type == 1 && w > 1e-6) {
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - traj[k].lam(i));
+                    const double soft_gap = soft_s * soft_dual;
                     double comp_soft = std::abs(soft_s * soft_dual - mu_eval);
                     if (comp_soft > residuals.max_barrier_complementarity_residual) {
                         residuals.max_barrier_complementarity_residual = comp_soft;
+                    }
+                    if (std::abs(soft_gap) > residuals.max_complementarity_gap) {
+                        residuals.max_complementarity_gap = std::abs(soft_gap);
                     }
                 }
             }
@@ -1787,16 +1814,22 @@ private:
 
     SolverStatus classify_postsolve_solution_quality_(const PostsolveResiduals& residuals)
     {
-        // Level 1: OPTIMAL.
-        // Even if the loop exited due to stagnation, return OPTIMAL when the fresh postsolve
-        // residuals satisfy the full convergence criteria.
-        if (residuals.linear_ok && check_convergence(residuals)) {
+        detail::TerminationSnapshot snapshot;
+        snapshot.linear_ok = residuals.linear_ok;
+        snapshot.primal_inf = residuals.max_primal_inf;
+        snapshot.dual_inf = residuals.max_dual_inf;
+        snapshot.complementarity_inf = residuals.max_complementarity_gap;
+        snapshot.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
+        snapshot.mu = residuals.barrier_mu;
+
+        const SolverStatus quality_status
+            = detail::TerminationKernel::classify_solution_quality(config, snapshot);
+        if (quality_status == SolverStatus::OPTIMAL) {
             return SolverStatus::OPTIMAL;
         }
-        // Level 2: FEASIBLE (Acceptable)
-        double feasible_bound = config.tol_con * config.feasible_tol_scale;
-        if (residuals.max_primal_inf <= feasible_bound) {
+        if (quality_status == SolverStatus::FEASIBLE) {
             if (config.print_level >= PrintLevel::INFO) {
+                const double feasible_bound = config.tol_con * config.feasible_tol_scale;
                 MLOG_INFO("Result: FEASIBLE (Viol: " << residuals.max_primal_inf
                                                      << " <= " << feasible_bound << ")");
             }

@@ -110,12 +110,27 @@ enum class DirectionRefinementMode {
     DYNAMICS_DEFECT_ROLLOUT
 };
 
+enum class TerminationProfile {
+    // Strict solve quality: OPTIMAL requires primal, dual, and true complementarity residuals.
+    // FEASIBLE remains a postsolve fallback for primal-acceptable NMPC iterates.
+    STRICT_KKT,
+
+    // Same strict OPTIMAL check, but documents that FEASIBLE fallback is an expected
+    // control-oriented outcome when primal feasibility is acceptable.
+    ACCEPTABLE_NMPC,
+
+    // Exit after one SQP/IPM iteration and let postsolve classify the resulting iterate.
+    // This is the config-driven replacement for the legacy enable_rti shortcut.
+    RTI_FIXED_ITERATION
+};
+
 struct SolverConfig {
     Backend backend = Backend::CPU_SERIAL;
     InitializationMode initialization = InitializationMode::COLD_START;
     WarmStartBarrierMode warm_start_barrier = WarmStartBarrierMode::RESET_TO_MU_INIT;
     WarmStartRegularizationMode warm_start_regularization
         = WarmStartRegularizationMode::RESET_TO_REG_INIT;
+    TerminationProfile termination_profile = TerminationProfile::STRICT_KKT;
 
     // --- Integration ---
     // RK4 is a good balance for general nonlinear problems

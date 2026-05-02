@@ -1,8 +1,9 @@
 # Termination Design
 
-MiniSolver termination should be treated as a solver contract, not a small
-condition tweak. The current implementation is intentionally left unchanged
-until the metrics and tests below are in place.
+MiniSolver termination is a solver contract, not a small condition tweak. The
+first implementation pass is complete: strict `OPTIMAL` now uses true
+complementarity instead of the internal barrier target, and fixed-iteration RTI
+behavior can be selected through `SolverConfig`.
 
 ## Design Question
 
@@ -66,16 +67,14 @@ Internal residuals:
 - postsolve refresh recomputes primal and dual residuals before classifying
   final quality.
 
-Known semantic gap:
+Resolved first-pass semantic gap:
 
-- `TerminationKernel::check_convergence()` currently requires `mu <= mu_final`
-  and centrality residual `|s * lambda - mu|`.
-- Standard KKT quality is about primal residual, stationarity residual, and
-  true complementarity gap `s * lambda`, not just closeness to the current
-  barrier target.
-- Simply removing `mu <= mu_final` is unsafe unless the solver also tracks true
-  complementarity. A large `mu` with `s * lambda ~= mu` is centered, but not
-  necessarily optimal.
+- `TerminationKernel::check_convergence()` uses primal infeasibility, dual
+  infeasibility, and true complementarity gap.
+- `max_barrier_complementarity_residual` remains available as centrality
+  diagnostics and for barrier scheduling, but it is no longer the strict
+  `OPTIMAL` certificate.
+- `mu_final` remains the lower bound for internal barrier scheduling.
 
 ## Recommended Contract
 
@@ -85,7 +84,7 @@ produce two concepts:
 - `SolutionQuality`: quality of the final iterate.
 - `TerminationReason`: why the loop stopped.
 
-`SolverStatus` remains the compact public summary for now:
+`SolverStatus` remains the compact public summary:
 
 - return `OPTIMAL` only when fresh residuals satisfy the strict quality criteria;
 - return `FEASIBLE` when primal feasibility is acceptable but strict quality is
@@ -190,40 +189,57 @@ Cons:
 
 ## Recommendation
 
-Use Option B for strict `OPTIMAL`, plus Option C for practical NMPC exits.
+Use Option B for strict `OPTIMAL`, plus Option C for practical NMPC exits. The
+first implementation pass follows this recommendation.
 
-Implementation should not start by editing `TerminationKernel`. First add the
-missing metrics and tests, then change semantics in a small commit.
+Implemented:
+
+- `StepResidualSummary` and `PostsolveResiduals` carry `max_complementarity_gap`
+  separately from `max_barrier_complementarity_residual`.
+- `TerminationKernel` consumes an internal `TerminationSnapshot`.
+- `SolverConfig::termination_profile` selects the internal termination mode.
+- `TerminationProfile::RTI_FIXED_ITERATION` mirrors legacy `enable_rti` behavior
+  without requiring users to enable the legacy flag.
+
+Still deferred:
+
+- public `SolverInfo`;
+- separate stationarity vs dual infeasibility naming for `tol_grad` / `tol_dual`;
+- acceptable/reduced-accuracy status beyond the existing `FEASIBLE` summary.
 
 ## Implementation Order
 
-1. Add internal metrics only:
+1. Done: Add internal metrics:
    - `max_complementarity_gap` to `StepResidualSummary` and `PostsolveResiduals`;
    - keep `max_barrier_complementarity_residual` for centrality diagnostics;
    - update iteration log only if needed, not by default.
 
-2. Add focused tests before changing behavior:
+2. Done: Add focused tests before changing behavior:
    - residual snapshot records both true gap and barrier centrality residual;
    - large `mu`, small true complementarity does not fail solely because of
      `mu_final`;
    - large true complementarity does not pass even if `mu <= mu_final`;
-   - L1 soft pair contributes to true complementarity;
    - postsolve uses fresh residuals, not stale in-loop metrics.
 
-3. Change `TerminationKernel`:
+3. Done: Change `TerminationKernel`:
    - strict convergence uses `primal_inf`, `dual_inf`, and true
      `complementarity_inf`;
    - centrality residual remains a diagnostic and barrier-update signal;
    - `mu_final` remains the lower bound for barrier scheduling, not a direct
      final-quality gate.
 
-4. Update docs and status semantics:
+4. Done: Add config-level profile:
+   - `TerminationProfile::STRICT_KKT`;
+   - `TerminationProfile::ACCEPTABLE_NMPC`;
+   - `TerminationProfile::RTI_FIXED_ITERATION`.
+
+5. Next: Update docs and status semantics:
    - explain `OPTIMAL` vs `FEASIBLE`;
    - document tolerance units and scaling assumptions;
    - mark `tol_grad` as unresolved until stationarity vs dual infeasibility
      naming is settled.
 
-5. Run validation:
+6. Run validation:
    - targeted termination/residual tests;
    - full ctest;
    - small benchmark smoke comparing status distribution before/after;
@@ -238,4 +254,3 @@ missing metrics and tests, then change semantics in a small commit.
   certificates until the solver can produce evidence.
 - acceptable/reduced-accuracy public status: keep using `FEASIBLE` until there
   is a concrete need for a separate `ACCEPTABLE` status.
-

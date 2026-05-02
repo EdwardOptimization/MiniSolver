@@ -31,6 +31,7 @@ struct SolverMetrics {
 struct StepResidualSummary {
     double barrier_mu = 0.0;
     double max_barrier_complementarity_residual = 0.0;
+    double max_complementarity_gap = 0.0;
     double max_primal_inf = 0.0;
     double avg_complementarity_gap = 0.0;
 };
@@ -53,6 +54,7 @@ struct SolveState {
 struct ResidualState {
     double barrier_mu = 0.0;
     double max_barrier_complementarity_residual = 0.0;
+    double max_complementarity_gap = 0.0;
     double max_primal_inf = 0.0;
     double max_dual_inf = 0.0;
     double avg_complementarity_gap = 0.0;
@@ -62,6 +64,7 @@ struct ResidualState {
     {
         barrier_mu = 0.0;
         max_barrier_complementarity_residual = 0.0;
+        max_complementarity_gap = 0.0;
         max_primal_inf = 0.0;
         max_dual_inf = 0.0;
         avg_complementarity_gap = 0.0;
@@ -131,6 +134,7 @@ struct PostsolveResiduals {
     double max_primal_inf = 0.0;
     double max_dual_inf = 0.0;
     double max_barrier_complementarity_residual = 0.0;
+    double max_complementarity_gap = 0.0;
 };
 
 struct SolverContext {

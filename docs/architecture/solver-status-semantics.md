@@ -39,7 +39,9 @@ counts, backend, restoration events, and subsolver diagnostics.
 Status groups:
 
 - `UNSOLVED`: internal/intermediate state only.
-- `OPTIMAL`: fresh postsolve residuals satisfy full KKT/barrier tolerances.
+- `OPTIMAL`: fresh postsolve residuals satisfy strict primal, dual, and true
+  complementarity tolerances. The internal barrier target `mu` is diagnostic
+  state, not a direct final-quality gate.
 - `FEASIBLE`: fresh postsolve residuals are primal-acceptable but not fully optimal.
 - `MAX_ITER`: iteration budget exhausted and the final iterate is not acceptable.
 - `STEP_TOO_SMALL`: globalization collapsed to a tiny step and no restoration path was available.

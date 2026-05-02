@@ -52,9 +52,10 @@ TEST(BarrierResidualContractTest, StepResidualSummaryRecordsBarrierMuSnapshot)
 
     EXPECT_DOUBLE_EQ(residuals.barrier_mu, 1e-2);
     EXPECT_NEAR(residuals.max_barrier_complementarity_residual, std::abs(0.25 * 0.5 - 1e-2), 1e-14);
+    EXPECT_NEAR(residuals.max_complementarity_gap, 0.25 * 0.5, 1e-14);
 }
 
-TEST(BarrierResidualContractTest, ConvergenceUsesResidualSnapshotMuNotCurrentSolverMu)
+TEST(BarrierResidualContractTest, ConvergenceUsesTrueComplementarityGapSnapshot)
 {
     constexpr int N = 1;
     using Solver = MiniSolver<BugTestModel, 10>;
@@ -72,14 +73,66 @@ TEST(BarrierResidualContractTest, ConvergenceUsesResidualSnapshotMuNotCurrentSol
     StepResidualSummary residuals;
     residuals.barrier_mu = 1e-2;
     residuals.max_primal_inf = 0.0;
-    residuals.max_barrier_complementarity_residual = 5e-6;
+    residuals.max_barrier_complementarity_residual = 0.0;
+    residuals.max_complementarity_gap = 5e-6;
 
-    // Simulate a barrier update after residual evaluation. The old wrapper
-    // used context_.solve.mu and would incorrectly accept this stale snapshot.
+    // Simulate a later barrier update. Termination must use the residual snapshot's
+    // true complementarity gap, not infer quality from the current internal barrier target.
     Access::mu(solver) = config.mu_final;
 
     EXPECT_FALSE(Access::check_convergence(solver, residuals, 0.0))
-        << "termination must interpret residuals with residuals.barrier_mu";
+        << "termination must interpret residuals with their true complementarity gap";
+}
+
+TEST(BarrierResidualContractTest, ConvergenceUsesKktComplementarityNotBarrierTarget)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.mu_final = 1e-8;
+    config.tol_con = 1e-8;
+    config.tol_dual = 1e-8;
+    config.tol_mu = 1e-6;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+
+    StepResidualSummary residuals;
+    residuals.barrier_mu = 1e-3;
+    residuals.max_primal_inf = 0.0;
+    residuals.max_barrier_complementarity_residual = 1e-3;
+    residuals.max_complementarity_gap = 0.0;
+
+    EXPECT_TRUE(Access::check_convergence(solver, residuals, 0.0))
+        << "termination should certify KKT quality from true complementarity, not require "
+           "the internal barrier target to have reached mu_final";
+}
+
+TEST(BarrierResidualContractTest, ConvergenceRejectsLargeTrueComplementarityAtMuFinal)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.mu_final = 1e-8;
+    config.tol_con = 1e-8;
+    config.tol_dual = 1e-8;
+    config.tol_mu = 1e-6;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+
+    StepResidualSummary residuals;
+    residuals.barrier_mu = config.mu_final;
+    residuals.max_primal_inf = 0.0;
+    residuals.max_barrier_complementarity_residual = 0.0;
+    residuals.max_complementarity_gap = 1e-3;
+
+    EXPECT_FALSE(Access::check_convergence(solver, residuals, 0.0))
+        << "small barrier centrality residual is not enough when true complementarity is large";
 }
 
 TEST(BarrierResidualContractTest, PostsolveResidualsRecordBarrierMuSnapshot)
@@ -104,6 +157,7 @@ TEST(BarrierResidualContractTest, PostsolveResidualsRecordBarrierMuSnapshot)
 
     EXPECT_DOUBLE_EQ(residuals.barrier_mu, 2e-2);
     EXPECT_NEAR(residuals.max_barrier_complementarity_residual, std::abs(0.25 * 0.5 - 2e-2), 1e-14);
+    EXPECT_NEAR(residuals.max_complementarity_gap, 0.25 * 0.5, 1e-14);
 }
 
 TEST(BarrierResidualContractTest, PostsolveRechecksDualResidualAfterLoopOptimal)

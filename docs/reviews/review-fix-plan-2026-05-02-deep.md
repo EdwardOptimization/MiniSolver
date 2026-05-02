@@ -47,7 +47,7 @@ Validation recorded before opening this ledger:
 | **N-NUM-1** Mehrotra `update_mu` divides `avg / current_mu` without zero guard; companion `mehrotra_target_mu` was patched in 5/2 but `update_mu` wasn't. | correction | [`barrier_update.h`](../../include/minisolver/algorithms/barrier_update.h), [`solver-refactor-plan.md`](../architecture/solver-refactor-plan.md). | Do not add hot-path guards for `current_mu <= 0`. A nonpositive barrier parameter is outside solver invariants and should be validated at config/build/initialization boundaries. The obsolete zero-mu test was removed in `58dafcd`. |
 | **N-NUM-2** `recover_dual_search_directions` divides by `lam_i` without flooring (`s_i` is floored to `min_barrier_slack` but `lam_i` is not). | fixed | [`riccati.h`](../../include/minisolver/solver/riccati.h), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). | Fixed in `58dafcd fix: harden solver diagnostics and dual recovery` with `BugfixTest.L1DualRecoveryFloorsNonpositiveLambda`. |
 | **N-CONV-2** `tol_grad` is declared, set, serialized, but `TerminationKernel` never reads it. Dead config field. | deferred-design | [`solver_options.h:151`](../../include/minisolver/core/solver_options.h) declares `tol_grad = 1e-4`; [`termination.h`](../../include/minisolver/algorithms/termination.h) does not reference it; 6 test files set values that have no effect. | Do not wire or delete in isolation. Resolve with the termination design pass after deciding whether MiniSolver exposes stationarity separately from dual infeasibility. |
-| **N-CONV-3** `OPTIMAL` requires `mu <= mu_final`, breaking standard IPM "KKT residual ≤ tol" semantics. Users with low-precision tolerances cannot reach OPTIMAL. | deferred-design | [`termination.h:14-21`](../../include/minisolver/algorithms/termination.h), [`termination-design.md`](../architecture/termination-design.md). | Termination needs a full residual/status design. Do not patch by only removing `mu <= mu_final`; first add true complementarity metrics and tests as specified in `termination-design.md`. |
+| **N-CONV-3** `OPTIMAL` requires `mu <= mu_final`, breaking standard IPM "KKT residual ≤ tol" semantics. Users with low-precision tolerances cannot reach OPTIMAL. | fixed | [`termination.h`](../../include/minisolver/algorithms/termination.h), [`solver_context.h`](../../include/minisolver/core/solver_context.h), [`test_barrier_residual_contract.cpp`](../../tests/test_barrier_residual_contract.cpp), [`termination-design.md`](../architecture/termination-design.md). | Fixed by adding true complementarity metrics and making strict `OPTIMAL` depend on primal/dual/true-complementarity residuals. `mu` remains internal barrier scheduling state. |
 | **N-OBS-1** `SolverContext` exposes ~8 of ~20 capability-adoption-plan diagnostic fields. Cannot query degraded-fallback flag, SOC counts, restoration counts, scaling status, linear-solver factorization status, etc. | deferred-design | [`solver_context.h`](../../include/minisolver/core/solver_context.h) inventory; capability adoption plan P0 #3. | Already prioritized; this review just elevates urgency. Implement incrementally: start with degraded_riccati_freeze_count, soc_attempted/accepted/rejected, restoration_attempted/accepted/rejected, regularization_escalation_count. |
 | **N-OBS-2** Logger uses `std::cout` / `std::endl` / hardcoded ANSI escape codes; no embedded-safe path; not redirectable. | confirmed | [`logger.h`](../../include/minisolver/core/logger.h):19-61. | Define `void minisolver_log(int level, const char* msg)` weak symbol or function pointer; default implementation writes to cout/cerr; embedded profile (N-EMBED-1) overrides to user callback; remove ANSI escapes when output is not a TTY. |
 | **N-API-1** Seven user-facing setter APIs are silent-return or `cerr+return` on bad input. | confirmed | [`solver.h`](../../include/minisolver/solver/solver.h) lines 246-250, 257-265, 268-277, 279-287, 289-297, 299-307, 549-554, 199-204, 118-120. | Convert to `bool` or `std::optional<int>` return types; deprecate void overloads; replace cerr with MLOG_WARN. Paired with N-OBS-2 (logger callback). |
@@ -90,9 +90,8 @@ Validation recorded before opening this ledger:
 
 This ledger's recommended sequence (also in main review, repeated here for ease of execution):
 
-1. **Termination design pass**: resolve **N-CONV-2** and **N-CONV-3** using
-   [`termination-design.md`](../architecture/termination-design.md), not an isolated condition
-   tweak.
+1. **Finish termination naming debt**: resolve **N-CONV-2** (`tol_grad`) using
+   [`termination-design.md`](../architecture/termination-design.md), not an isolated field wiring.
 2. **N-TEST-4** (CasADi cross-check, leverages existing dependency).
 3. **N-TEST-1** (Hessian FD).
 4. **N-TEST-3** (property-based with RapidCheck setup).
@@ -105,7 +104,8 @@ This ledger's recommended sequence (also in main review, repeated here for ease 
 10. **N-THEORY-4** (inertia detection — defer until benchmark evidence demands).
 
 Already resolved after this ledger was opened: **N-THEORY-5**, **N-CONV-1**,
-**N-NUM-2**, **N-CONV-4**, **N-RT-1**, **N-EMBED-2**, **N-OBS-3**. **N-NUM-1**
-was reclassified as an invalid-invariant / over-defensive-code correction.
+**N-NUM-2**, **N-CONV-3**, **N-CONV-4**, **N-RT-1**, **N-EMBED-2**,
+**N-OBS-3**. **N-NUM-1** was reclassified as an invalid-invariant /
+over-defensive-code correction.
 
 Items not on this critical path are deferred-design candidates: **N-PREC-1**, **N-API-2**, **N-MOD-1**.
