@@ -43,6 +43,7 @@ class OptimalControlModel:
         
         # Constraints (g <= 0)
         self.constraints = []
+        self.true_constraints = []
         
         # Flags
         self.use_rk4 = True
@@ -162,6 +163,7 @@ class OptimalControlModel:
                 
             # Add to constraints list
             self.constraints.append(expr)
+            self.true_constraints.append(expr)
             idx = len(self.constraints) - 1
             
             if weight is not None and weight > 0.0:
@@ -203,6 +205,8 @@ class OptimalControlModel:
         
         if is_exclusion:
             if linearize_at_boundary:
+                epsilon = 1e-6
+                true_expr = sp.sqrt(rhs) - sp.sqrt(quad_term + epsilon)
                 xp_syms = [sp.symbols(f"xp_{len(self.special_constraints)}_{i}") for i in range(len(x))]
                 xp_vec = sp.Matrix(xp_syms)
                 
@@ -213,6 +217,7 @@ class OptimalControlModel:
                 boundary_linear_expr = - (grad_at_boundary.T * (x_vec - xp_vec))[0]
                 
                 self.constraints.append(boundary_linear_expr)
+                self.true_constraints.append(true_expr)
                 
                 # Store info to generate the xp calculation code
                 self.special_constraints.append({
@@ -232,12 +237,15 @@ class OptimalControlModel:
                 robust_dist = sp.sqrt(quad_term + epsilon)
                 robust_rhs = sp.sqrt(rhs)
                 self.constraints.append(robust_rhs - robust_dist)
+                self.true_constraints.append(robust_rhs - robust_dist)
         else:
             # Standard form
             if sense == '<=':
                 self.constraints.append(quad_term - rhs)
+                self.true_constraints.append(quad_term - rhs)
             else:
                 self.constraints.append(rhs - quad_term)
+                self.true_constraints.append(rhs - quad_term)
 
     def _generate_unpack_block(self, source_kp=True, expressions=None):
         code = ""
@@ -408,8 +416,25 @@ class OptimalControlModel:
         code += self._generate_assign_block(assign_con, [g_terminal, C_terminal, D_terminal])
         return code
 
+    def _generate_true_constraints_body(self, terminal=False):
+        nc = len(self.true_constraints)
+        if nc == 0:
+            return "        (void)kp;\n"
+
+        exprs = self.true_constraints
+        if terminal:
+            u_zero = self._terminal_substitutions()
+            exprs = [sp.simplify(c.subs(u_zero)) for c in exprs]
+
+        g_true = sp.Matrix(exprs)
+        code = self._generate_unpack_block(source_kp=True, expressions=[g_true])
+        code += "\n"
+        code += self._generate_assign_block([("g_true", 0, nc, 1)], [g_true])
+        return code
+
     def _generate_soc_constraints_body(self):
-        code = "        compute_constraints(trial_kp);\n"
+        code = "        compute_qp_constraints(trial_kp);\n"
+        code += "        compute_true_constraints(trial_kp);\n"
         projected = [
             info for info in self.special_constraints
             if info['type'] == 'quad_boundary_proj'
@@ -1188,7 +1213,9 @@ class OptimalControlModel:
             code_compute_con += f"        T {name} = {sp.ccode(val)};\n"
         assign_con = [("g_val", 0, nc, 1), ("C", 1, nc, nx), ("D", 2, nc, nu)]
         code_compute_con += self._generate_assign_block(assign_con, reduced_con)
+        code_compute_true_con = self._generate_true_constraints_body(terminal=False)
         code_compute_terminal_con = self._generate_terminal_constraints_body(x_vec, u_vec)
+        code_compute_terminal_true_con = self._generate_true_constraints_body(terminal=True)
         code_compute_soc_con = self._generate_soc_constraints_body()
 
         # Compute Cost Body
@@ -1347,7 +1374,9 @@ class OptimalControlModel:
         content = content.replace("{{JACOBIAN_CONTINUOUS_BODY}}", code_jac_body)
         content = content.replace("{{COMPUTE_DYNAMICS_BODY}}", code_compute_dyn)
         content = content.replace("{{COMPUTE_CONSTRAINTS_BODY}}", code_compute_con)
+        content = content.replace("{{COMPUTE_TRUE_CONSTRAINTS_BODY}}", code_compute_true_con)
         content = content.replace("{{COMPUTE_TERMINAL_CONSTRAINTS_BODY}}", code_compute_terminal_con)
+        content = content.replace("{{COMPUTE_TERMINAL_TRUE_CONSTRAINTS_BODY}}", code_compute_terminal_true_con)
         content = content.replace("{{COMPUTE_SOC_CONSTRAINTS_BODY}}", code_compute_soc_con)
         content = content.replace("{{COMPUTE_COST_SECTION}}", code_compute_cost)
         content = content.replace("{{COMPUTE_TERMINAL_COST_SECTION}}", code_compute_terminal_cost)

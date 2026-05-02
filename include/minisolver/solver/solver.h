@@ -543,7 +543,7 @@ public:
         if (stage > N || stage < 0 || idx >= NC || idx < 0) {
             return 0.0;
         }
-        return trajectory[stage].g_val(idx);
+        return detail::true_constraint_value<Model>(trajectory[stage], idx);
     }
 
     void set_dt(const std::vector<double>& dts)
@@ -1662,6 +1662,7 @@ private:
             // 2. Check NaNs (bit-level, works under -ffast-math)
             for (int i = 0; i < NC; ++i) {
                 if (MatOps::is_nan_scalar(traj[k].g_val(i))
+                    || MatOps::is_nan_scalar(detail::true_constraint_value<Model>(traj[k], i))
                     || MatOps::is_nan_scalar(traj[k].s(i))) {
                     residuals.residuals_ok = false;
                     return residuals;
@@ -1831,12 +1832,13 @@ private:
                         w = Model::constraint_weights[i];
                     }
                 }
+                const double g_true = detail::true_constraint_value<Model>(kp, i);
                 if (type == 1 && w > 1e-6) { // L1
-                    viol = std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                    viol = std::abs(g_true + kp.s(i) - kp.soft_s(i));
                 } else if (type == 2 && w > 1e-6) { // L2
-                    viol = std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i) / w);
+                    viol = std::abs(g_true + kp.s(i) - kp.lam(i) / w);
                 } else { // Hard
-                    viol = std::abs(kp.g_val(i) + kp.s(i));
+                    viol = std::abs(g_true + kp.s(i));
                 }
                 if (viol > max_viol) {
                     max_viol = viol;

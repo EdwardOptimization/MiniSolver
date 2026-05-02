@@ -65,7 +65,8 @@ template <typename T, int _NX, int _NU, int _NC, int _NP> struct KnotState {
 
     // --- Evaluation Results ---
     T cost; // Scalar cost value
-    MSVec<T, _NC> g_val; // Constraint residuals g(x, u)
+    MSVec<T, _NC> g_val; // QP/IPM constraint residual packet used with C/D
+    MSVec<T, _NC> g_true; // True nonlinear constraint residual for reporting/globalization
     MSVec<T, _NX> f_resid; // Predicted next state f(x, u)
 
     // --- Cost Gradients ---
@@ -169,6 +170,7 @@ struct KnotPoint : KnotState<T, _NX, _NU, _NC, _NP>, KnotMatrices<T, _NX, _NU, _
 
         this->cost = 0;
         MatOps::setZero(this->g_val);
+        MatOps::setZero(this->g_true);
         MatOps::setZero(this->f_resid);
         MatOps::setZero(this->q);
         MatOps::setZero(this->r);

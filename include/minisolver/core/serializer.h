@@ -549,16 +549,7 @@ public:
 
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? solver.dt_traj[k] : 0.0;
-            if (solver.config.hessian_approximation
-                == HessianApproximation::OBJECTIVE_HESSIAN_ONLY) {
-                Model::compute_cost_gn(traj[k]);
-                Model::compute_dynamics(traj[k], solver.config.integrator, current_dt);
-                Model::compute_constraints(traj[k]);
-            } else {
-                Model::compute_cost_exact(traj[k]);
-                Model::compute_dynamics(traj[k], solver.config.integrator, current_dt);
-                Model::compute_constraints(traj[k]);
-            }
+            detail::evaluate_model_stage<Model>(traj[k], solver.config, current_dt, k == N);
         }
 
         if (has_trailing) {

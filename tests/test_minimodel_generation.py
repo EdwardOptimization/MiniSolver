@@ -175,6 +175,56 @@ def test_quad_boundary_projection_generates_soc_override():
         subprocess.run([exe], check=True)
 
 
+def test_quad_boundary_projection_splits_qp_and_true_residuals():
+    model = OptimalControlModel("ConstraintPacketModel")
+    x0, x1 = model.state("x0", "x1")
+    u0 = model.control("u0")
+    model.set_dynamics(x0, u0)
+    model.set_dynamics(x1, 0)
+    model.subject_to_quad(
+        [[1, 0], [0, 1]], [x0, x1], center=[0, 0], rhs=1.0,
+        type="outside", linearize_at_boundary=True)
+    model.minimize(x0**2 + x1**2 + u0**2)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        source = os.path.join(tmpdir, "constraint_packet_check.cpp")
+        exe = os.path.join(tmpdir, "constraint_packet_check")
+        with open(source, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(
+                """
+                #include "constraintpacketmodel.h"
+                #include <cmath>
+                #include <cstdlib>
+
+                int main() {
+                    using Model = minisolver::ConstraintPacketModel;
+                    minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                    kp.set_zero();
+                    kp.x(0) = 0.0;
+                    kp.x(1) = 2.0;
+
+                    Model::compute_qp_constraints(kp);
+                    Model::compute_true_constraints(kp);
+
+                    if (std::abs(kp.g_val(0) - (-2.0)) > 1e-8) return 1;
+                    if (std::abs(kp.g_true(0) - (-1.000000125)) > 1e-6) return 2;
+                    kp.g_val(0) = 999.0;
+                    Model::compute_constraints(kp);
+                    if (std::abs(kp.g_val(0) - (-2.0)) > 1e-8) return 3;
+                    return 0;
+                }
+                """))
+        subprocess.run(
+            [
+                "g++", "-std=c++17", "-DUSE_CUSTOM_MATRIX",
+                f"-I{ROOT}/include", f"-I{tmpdir}", source, "-o", exe
+            ],
+            check=True,
+        )
+        subprocess.run([exe], check=True)
+
+
 def test_quad_constraint_domain_guards():
     def negative_rhs():
         model = OptimalControlModel("BadRhsModel")
@@ -217,7 +267,7 @@ def test_generated_terminal_stage_uses_x_only_projection():
                     kp.x(0) = 3.0;
                     kp.u(0) = 10.0;
                     Model::compute_terminal_cost_exact(kp);
-                    Model::compute_terminal_constraints(kp);
+                    Model::compute_terminal_qp_constraints(kp);
                     if (std::abs(kp.cost - 9.0) > 1e-12) return 1;
                     if (std::abs(kp.q(0) - 6.0) > 1e-12) return 2;
                     if (std::abs(kp.r(0)) > 1e-12) return 3;
@@ -242,5 +292,6 @@ if __name__ == "__main__":
     test_cpp_identifier_validation_rejects_keywords_and_duplicates()
     test_quad_boundary_projection_codegen_uses_unique_temps()
     test_quad_boundary_projection_generates_soc_override()
+    test_quad_boundary_projection_splits_qp_and_true_residuals()
     test_quad_constraint_domain_guards()
     test_generated_terminal_stage_uses_x_only_projection()

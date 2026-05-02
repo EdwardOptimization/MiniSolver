@@ -232,11 +232,17 @@ Current codegen status:
 - Generated models provide that hook. By default it recomputes trial
   constraints; for `quad_boundary_proj`, it overrides only `trial.g_val(row)`
   using the active projected-boundary normal and the trial point.
+- Generated models also provide `compute_true_constraints()` and
+  `compute_terminal_true_constraints()`. They also provide explicit
+  `compute_qp_constraints()` and `compute_terminal_qp_constraints()` entry
+  points; `compute_constraints()` remains a compatibility alias. `g_val` remains
+  the QP/IPM residual packet paired with `C/D`; `g_true` is the true nonlinear
+  residual used by filter, merit, convergence, final reporting, and public
+  constraint access.
 - The hook does not change solver core geometry semantics. The core still only
   sees numerical residuals and active Riccati structure.
-- Full true/QP/SOC constraint packet separation is intentionally deferred until
-  the normal constraint path is split. For now, filter/merit/convergence still
-  use the existing `compute_constraints()` path.
+- Full constraint packet objects are intentionally deferred. The current
+  first-stage split is field-level: `g_true` vs `g_val/C/D`.
 
 ## Current State After Solver Build-State Pass
 
@@ -374,7 +380,7 @@ Current and intended seams:
 | Barrier update | `update_barrier_for_step_()` / `update_barrier()` | eventually internal `BarrierUpdateKernel` |
 | Direction solve | `compute_search_direction_()` plus Mehrotra helper | split regularization, linear solve, refinement |
 | Globalization | `globalize_step_()` and `LineSearchStrategy` | keep line-search variants behind one seam |
-| SOC | filter-only multiple-shooting correction via `try_soc_correction()` and optional model SOC hook | split full true/QP/SOC constraint packets before adding more geometry-aware behavior |
+| SOC | filter-only multiple-shooting correction via `try_soc_correction()` and optional model SOC hook | introduce full packet objects only after another real variation point needs them |
 | Restoration | `attempt_tiny_step_recovery_()` / `feasibility_restoration()` | isolate as recovery/restoration phase |
 | Termination | convergence checks plus loop exit checks | make termination criteria explicit and testable |
 | Diagnostics | timer, alpha log, metrics | avoid allocation in hot paths |

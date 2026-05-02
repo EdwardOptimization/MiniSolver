@@ -181,7 +181,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 // L2 Soft Constraint: Quadratic Penalty
                 else if (type == 2 && w > 1e-6) {
                     // L2 Quadratic Penalty: 0.5 * w * (g + s)^2
-                    double viol = kp.g_val(i) + kp.s(i);
+                    double viol = detail::true_constraint_value<Model>(kp, i) + kp.s(i);
                     total_merit += 0.5 * w * viol * viol;
                 }
             }
@@ -198,11 +198,16 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
 
                 if (type == 1 && w > 1e-6) {
-                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                    total_merit += merit_nu
+                        * std::abs(
+                            detail::true_constraint_value<Model>(kp, i) + kp.s(i) - kp.soft_s(i));
                 } else if (type == 2 && w > 1e-6) {
-                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i) / w);
+                    total_merit += merit_nu
+                        * std::abs(
+                            detail::true_constraint_value<Model>(kp, i) + kp.s(i) - kp.lam(i) / w);
                 } else {
-                    total_merit += merit_nu * std::abs(kp.g_val(i) + kp.s(i));
+                    total_merit += merit_nu
+                        * std::abs(detail::true_constraint_value<Model>(kp, i) + kp.s(i));
                 }
             }
 
@@ -426,7 +431,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 // L2 Soft Constraint
                 else if (type == 2 && w > 1e-6) {
                     // L2 Quadratic Penalty: 0.5 * w * (g + s)^2
-                    double viol = kp.g_val(i) + kp.s(i);
+                    double viol = detail::true_constraint_value<Model>(kp, i) + kp.s(i);
                     phi += 0.5 * w * viol * viol;
                 }
             }
@@ -445,15 +450,17 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
 
                 if (type == 1 && w > 1e-6) {
                     // L1: Check extended system residual
-                    theta += std::abs(kp.g_val(i) + kp.s(i) - kp.soft_s(i));
+                    theta += std::abs(
+                        detail::true_constraint_value<Model>(kp, i) + kp.s(i) - kp.soft_s(i));
                 } else if (type == 2 && w > 1e-6) {
                     // L2 soft constraints use the primal-dual residual
-                    // g + s - lam/w = 0. Keep filter theta consistent with
-                    // compute_max_violation() and Riccati's KKT system.
-                    theta += std::abs(kp.g_val(i) + kp.s(i) - kp.lam(i) / w);
+                    // g_true + s - lam/w = 0. Keep filter theta consistent with
+                    // compute_max_violation() on the true nonlinear constraint.
+                    theta += std::abs(
+                        detail::true_constraint_value<Model>(kp, i) + kp.s(i) - kp.lam(i) / w);
                 } else {
                     // Hard
-                    theta += std::abs(kp.g_val(i) + kp.s(i));
+                    theta += std::abs(detail::true_constraint_value<Model>(kp, i) + kp.s(i));
                 }
             }
 

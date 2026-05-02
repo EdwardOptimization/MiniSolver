@@ -293,6 +293,61 @@ struct SocOverrideResidualModel : public SocHardResidualModel {
     }
 };
 
+struct TrueResidualLineSearchModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& /*u*/,
+        const MSVec<T, NP>& /*p*/, double /*dt*/, IntegratorType /*type*/)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double /*dt*/)
+    {
+        kp.f_resid(0) = kp.x(0);
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = 100.0; // QP residual intentionally disagrees with true residual.
+        kp.C(0, 0) = 0.0;
+        kp.D(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_true_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_true(0) = kp.x(0);
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = 0.0;
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setZero();
+        kp.R.setIdentity();
+        kp.H.setZero();
+    }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
 class RolloutStubLinearSolver
     : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2>::TrajArray> {
 public:
@@ -524,6 +579,76 @@ TEST(LineSearchTest, FilterSocUsesModelSocConstraintOverride)
     EXPECT_DOUBLE_EQ(linear_solver.observed_soc_rhs_g, 7.0)
         << "SOC should let the model override correction residuals without changing normal true "
            "constraint evaluation.";
+}
+
+TEST(LineSearchTest, FilterAcceptanceUsesTrueResidualNotQpResidual)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = false;
+    config.line_search_tau = 0.9;
+
+    using Model = TrueResidualLineSearchModel;
+    FilterLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 1.0;
+    active[0].dx(0) = -1.0;
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_true_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+
+    EXPECT_GT(alpha, 0.0)
+        << "Filter globalization should evaluate true nonlinear residuals, not the QP/IPM "
+           "linearization residual packet.";
+}
+
+TEST(LineSearchTest, MeritAcceptanceUsesTrueResidualNotQpResidual)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::MERIT;
+    config.line_search_max_iters = 1;
+    config.armijo_c1 = 0.0;
+    config.line_search_tau = 0.9;
+
+    using Model = TrueResidualLineSearchModel;
+    MeritLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 1.0;
+    active[0].dx(0) = -1.0;
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_true_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+
+    EXPECT_GT(alpha, 0.0)
+        << "Merit globalization should evaluate true nonlinear residuals, not the QP/IPM "
+           "linearization residual packet.";
 }
 
 TEST(LineSearchTest, FilterSocSkippedInRolloutMode)

@@ -94,16 +94,40 @@ struct {{MODEL_NAME}} {
 {{COMPUTE_DYNAMICS_BODY}}
     }
 
-    // --- 2. Compute Constraints (g_val, C, D) ---
+    // --- 2. Compute QP/IPM Constraints (g_val, C, D) ---
     template<typename T>
-    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+    static void compute_qp_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
 {{COMPUTE_CONSTRAINTS_BODY}}
     }
 
-    // --- 2.5 Terminal Stage: x-only projection of cost/constraints ---
+    // Legacy alias for hand-written code that still calls compute_constraints().
+    template<typename T>
+    static void compute_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+        compute_qp_constraints(kp);
+    }
+
+    // --- 2.1 Compute True Constraints (g_true) ---
+    template<typename T>
+    static void compute_true_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+{{COMPUTE_TRUE_CONSTRAINTS_BODY}}
+    }
+
+    // --- 2.5 Terminal Stage: x-only projection of QP/IPM constraints ---
+    template<typename T>
+    static void compute_terminal_qp_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+{{COMPUTE_TERMINAL_CONSTRAINTS_BODY}}
+    }
+
+    // Legacy alias for hand-written code that still calls compute_terminal_constraints().
     template<typename T>
     static void compute_terminal_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
-{{COMPUTE_TERMINAL_CONSTRAINTS_BODY}}
+        compute_terminal_qp_constraints(kp);
+    }
+
+    // --- 2.5.1 Terminal Stage: true x-only constraint residuals ---
+    template<typename T>
+    static void compute_terminal_true_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
+{{COMPUTE_TERMINAL_TRUE_CONSTRAINTS_BODY}}
     }
 
     // --- 2.6 SOC correction constraints ---
@@ -124,14 +148,16 @@ struct {{MODEL_NAME}} {
     template<typename T>
     static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
+        compute_qp_constraints(kp);
+        compute_true_constraints(kp);
         compute_cost(kp); // Default GN
     }
 
     template<typename T>
     static void compute_exact(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
         compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
+        compute_qp_constraints(kp);
+        compute_true_constraints(kp);
         compute_cost_exact(kp); // Exact Hessian
     }
 
