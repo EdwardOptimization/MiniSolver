@@ -332,8 +332,8 @@ struct CarModel {
         }
     }
 
-    // --- 2. Compute Constraints (g_val, C, D) ---
-    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    // --- 2. Compute QP/IPM Constraints (g_val, C, D) ---
+    template <typename T> static void compute_qp_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
     {
         T x = kp.x(0);
         T y = kp.x(1);
@@ -393,8 +393,36 @@ struct CarModel {
         kp.D(4, 1) = 0;
     }
 
-    // --- 2.5 Terminal Stage: x-only projection of cost/constraints ---
-    template <typename T> static void compute_terminal_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    // Legacy alias for hand-written code that still calls compute_constraints().
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_qp_constraints(kp);
+    }
+
+    // --- 2.1 Compute True Constraints (g_true) ---
+    template <typename T> static void compute_true_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        T x = kp.x(0);
+        T y = kp.x(1);
+        T acc = kp.u(0);
+        T steer = kp.u(1);
+        T obs_x = kp.p(3);
+        T obs_y = kp.p(4);
+        T obs_rad = kp.p(5);
+        T car_rad = kp.p(7);
+
+        // g_true
+        kp.g_true(0, 0) = acc - 3.0;
+        kp.g_true(1, 0) = -acc - 3.0;
+        kp.g_true(2, 0) = steer - 0.5;
+        kp.g_true(3, 0) = -steer - 0.5;
+        kp.g_true(4, 0) = -sqrt(pow(-obs_x + x, 2) + pow(-obs_y + y, 2) + 9.9999999999999995e-7)
+            + sqrt(pow(car_rad + obs_rad, 2));
+    }
+
+    // --- 2.5 Terminal Stage: x-only projection of QP/IPM constraints ---
+    template <typename T>
+    static void compute_terminal_qp_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
     {
         T x = kp.x(0);
         T y = kp.x(1);
@@ -450,6 +478,42 @@ struct CarModel {
         kp.D(4, 1) = 0;
     }
 
+    // Legacy alias for hand-written code that still calls compute_terminal_constraints().
+    template <typename T> static void compute_terminal_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_terminal_qp_constraints(kp);
+    }
+
+    // --- 2.5.1 Terminal Stage: true x-only constraint residuals ---
+    template <typename T>
+    static void compute_terminal_true_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        T x = kp.x(0);
+        T y = kp.x(1);
+        T obs_x = kp.p(3);
+        T obs_y = kp.p(4);
+        T obs_rad = kp.p(5);
+        T car_rad = kp.p(7);
+
+        // g_true
+        kp.g_true(0, 0) = -3.0;
+        kp.g_true(1, 0) = -3.0;
+        kp.g_true(2, 0) = -0.5;
+        kp.g_true(3, 0) = -0.5;
+        kp.g_true(4, 0) = -sqrt(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7)
+            + sqrt(pow(car_rad + obs_rad, 2));
+    }
+
+    // --- 2.6 SOC correction constraints ---
+    template <typename T>
+    static void compute_soc_constraints(
+        const KnotPoint<T, NX, NU, NC, NP>& active_kp, KnotPoint<T, NX, NU, NC, NP>& trial_kp)
+    {
+        compute_qp_constraints(trial_kp);
+        compute_true_constraints(trial_kp);
+        (void)active_kp;
+    }
+
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
     template <typename T, int Mode> static void compute_cost_impl(KnotPoint<T, NX, NU, NC, NP>& kp)
     {
@@ -475,15 +539,12 @@ struct CarModel {
         T tmp_j1 = 2 * w_acc;
         T tmp_j2 = 2 * w_steer;
         T tmp_j3 = 2 * w_pos;
-        T tmp_j4 = obs_x - x;
-        T tmp_j5 = -tmp_j4;
-        T tmp_j6 = obs_y - y;
-        T tmp_j7 = -tmp_j6;
-        T tmp_j8 = pow(tmp_j5, 2) + pow(tmp_j7, 2) + 9.9999999999999995e-7;
-        T tmp_j9 = pow(tmp_j8, -1.0 / 2.0);
-        T tmp_j10 = pow(tmp_j8, -3.0 / 2.0);
-        T tmp_j11 = tmp_j10 * tmp_j5;
-        T tmp_j12 = -lam_4 * tmp_j11 * tmp_j6;
+        T tmp_j4 = obs_y - y;
+        T tmp_j5 = pow(tmp_j4, 2) + 9.9999999999999995e-7;
+        T tmp_j6 = obs_x - x;
+        T tmp_j7 = pow(tmp_j6, 2);
+        T tmp_j8 = lam_4 / pow(tmp_j5 + tmp_j7, 3.0 / 2.0);
+        T tmp_j9 = tmp_j4 * tmp_j6 * tmp_j8;
 
         // q
         kp.q(0, 0) = w_pos * (2 * x - 2 * x_ref);
@@ -498,21 +559,21 @@ struct CarModel {
         // Q (Mode 0=GN, 1=Exact)
         kp.Q(0, 0) = tmp_j3;
         if constexpr (Mode == 1) {
-            kp.Q(0, 0) += lam_4 * (-tmp_j11 * tmp_j4 - tmp_j9);
+            kp.Q(0, 0) += -tmp_j5 * tmp_j8;
         }
         kp.Q(0, 1) = 0;
         if constexpr (Mode == 1) {
-            kp.Q(0, 1) += tmp_j12;
+            kp.Q(0, 1) += tmp_j9;
         }
         kp.Q(0, 2) = 0;
         kp.Q(0, 3) = 0;
         kp.Q(1, 0) = 0;
         if constexpr (Mode == 1) {
-            kp.Q(1, 0) += tmp_j12;
+            kp.Q(1, 0) += tmp_j9;
         }
         kp.Q(1, 1) = tmp_j3;
         if constexpr (Mode == 1) {
-            kp.Q(1, 1) += lam_4 * (-tmp_j10 * tmp_j6 * tmp_j7 - tmp_j9);
+            kp.Q(1, 1) += -tmp_j8 * (tmp_j7 + 9.9999999999999995e-7);
         }
         kp.Q(1, 2) = 0;
         kp.Q(1, 3) = 0;
@@ -591,31 +652,25 @@ struct CarModel {
         // terminal Q (Mode 0=GN, 1=Exact)
         kp.Q(0, 0) = 2 * w_pos;
         if constexpr (Mode == 1) {
-            kp.Q(0, 0) += lam_4
-                * (-(-obs_x + x) * (obs_x - x)
-                        / pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7,
-                            3.0 / 2.0)
-                    - 1 / sqrt(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7));
+            kp.Q(0, 0) += -lam_4 * (pow(obs_y - y, 2) + 9.9999999999999995e-7)
+                / pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0 / 2.0);
         }
         kp.Q(0, 1) = 0;
         if constexpr (Mode == 1) {
-            kp.Q(0, 1) += -lam_4 * (-obs_x + x) * (obs_y - y)
+            kp.Q(0, 1) += lam_4 * (obs_x - x) * (obs_y - y)
                 / pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0 / 2.0);
         }
         kp.Q(0, 2) = 0;
         kp.Q(0, 3) = 0;
         kp.Q(1, 0) = 0;
         if constexpr (Mode == 1) {
-            kp.Q(1, 0) += -lam_4 * (-obs_x + x) * (obs_y - y)
+            kp.Q(1, 0) += lam_4 * (obs_x - x) * (obs_y - y)
                 / pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0 / 2.0);
         }
         kp.Q(1, 1) = 2 * w_pos;
         if constexpr (Mode == 1) {
-            kp.Q(1, 1) += lam_4
-                * (-(-obs_y + y) * (obs_y - y)
-                        / pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7,
-                            3.0 / 2.0)
-                    - 1 / sqrt(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7));
+            kp.Q(1, 1) += -lam_4 * (pow(obs_x - x, 2) + 9.9999999999999995e-7)
+                / pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0 / 2.0);
         }
         kp.Q(1, 2) = 0;
         kp.Q(1, 3) = 0;
@@ -663,15 +718,17 @@ struct CarModel {
     static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
     {
         compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
-        compute_cost(kp); // Default GN
+        compute_qp_constraints(kp);
+        compute_true_constraints(kp);
+        compute_cost(kp); // Default exact Hessian for backward compatibility.
     }
 
     template <typename T>
     static void compute_exact(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
     {
         compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
+        compute_qp_constraints(kp);
+        compute_true_constraints(kp);
         compute_cost_exact(kp); // Exact Hessian
     }
 

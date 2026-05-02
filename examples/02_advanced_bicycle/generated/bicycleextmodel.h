@@ -401,8 +401,8 @@ struct BicycleExtModel {
         }
     }
 
-    // --- 2. Compute Constraints (g_val, C, D) ---
-    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    // --- 2. Compute QP/IPM Constraints (g_val, C, D) ---
+    template <typename T> static void compute_qp_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
     {
         T kappa = kp.x(3);
         T v = kp.x(4);
@@ -509,8 +509,37 @@ struct BicycleExtModel {
         kp.D(9, 1) = 0;
     }
 
-    // --- 2.5 Terminal Stage: x-only projection of cost/constraints ---
-    template <typename T> static void compute_terminal_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    // Legacy alias for hand-written code that still calls compute_constraints().
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_qp_constraints(kp);
+    }
+
+    // --- 2.1 Compute True Constraints (g_true) ---
+    template <typename T> static void compute_true_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        T kappa = kp.x(3);
+        T v = kp.x(4);
+        T a = kp.x(5);
+        T dkappa = kp.u(0);
+        T jerk = kp.u(1);
+
+        // g_true
+        kp.g_true(0, 0) = v - 15.0;
+        kp.g_true(1, 0) = -v;
+        kp.g_true(2, 0) = a - 5.0;
+        kp.g_true(3, 0) = -a - 5.0;
+        kp.g_true(4, 0) = kappa - 0.5;
+        kp.g_true(5, 0) = -kappa - 0.5;
+        kp.g_true(6, 0) = jerk - 50.0;
+        kp.g_true(7, 0) = -jerk - 50.0;
+        kp.g_true(8, 0) = dkappa - 2.0;
+        kp.g_true(9, 0) = -dkappa - 2.0;
+    }
+
+    // --- 2.5 Terminal Stage: x-only projection of QP/IPM constraints ---
+    template <typename T>
+    static void compute_terminal_qp_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
     {
         T kappa = kp.x(3);
         T v = kp.x(4);
@@ -613,6 +642,43 @@ struct BicycleExtModel {
         kp.D(8, 1) = 0;
         kp.D(9, 0) = 0;
         kp.D(9, 1) = 0;
+    }
+
+    // Legacy alias for hand-written code that still calls compute_terminal_constraints().
+    template <typename T> static void compute_terminal_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_terminal_qp_constraints(kp);
+    }
+
+    // --- 2.5.1 Terminal Stage: true x-only constraint residuals ---
+    template <typename T>
+    static void compute_terminal_true_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        T kappa = kp.x(3);
+        T v = kp.x(4);
+        T a = kp.x(5);
+
+        // g_true
+        kp.g_true(0, 0) = v - 15.0;
+        kp.g_true(1, 0) = -v;
+        kp.g_true(2, 0) = a - 5.0;
+        kp.g_true(3, 0) = -a - 5.0;
+        kp.g_true(4, 0) = kappa - 0.5;
+        kp.g_true(5, 0) = -kappa - 0.5;
+        kp.g_true(6, 0) = -50.0;
+        kp.g_true(7, 0) = -50.0;
+        kp.g_true(8, 0) = -2.0;
+        kp.g_true(9, 0) = -2.0;
+    }
+
+    // --- 2.6 SOC correction constraints ---
+    template <typename T>
+    static void compute_soc_constraints(
+        const KnotPoint<T, NX, NU, NC, NP>& active_kp, KnotPoint<T, NX, NU, NC, NP>& trial_kp)
+    {
+        compute_qp_constraints(trial_kp);
+        compute_true_constraints(trial_kp);
+        (void)active_kp;
     }
 
     // --- 3. Compute Cost (Implemented via template for Exact/GN) ---
@@ -842,15 +908,17 @@ struct BicycleExtModel {
     static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
     {
         compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
-        compute_cost(kp); // Default GN
+        compute_qp_constraints(kp);
+        compute_true_constraints(kp);
+        compute_cost(kp); // Default exact Hessian for backward compatibility.
     }
 
     template <typename T>
     static void compute_exact(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
     {
         compute_dynamics(kp, type, dt);
-        compute_constraints(kp);
+        compute_qp_constraints(kp);
+        compute_true_constraints(kp);
         compute_cost_exact(kp); // Exact Hessian
     }
 
