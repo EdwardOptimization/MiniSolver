@@ -378,6 +378,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     std::array<std::pair<double, double>, FILTER_CAPACITY> filter {};
     size_t filter_size_ = 0;
     size_t filter_next_ = 0;
+    TrajArray soc_scratch_ {};
 
     std::pair<double, double> compute_metrics(
         const TrajArray& t, int N, double mu, const SolverConfig& config)
@@ -513,8 +514,13 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
             MLOG_DEBUG("Step rejected. Attempting SOC.");
         }
 
-        // Avoid heap allocation in the solve loop.
-        TrajArray soc_data = active; // Copy system matrices from active trajectory.
+        // Reuse preallocated scratch storage: SOC needs a full knot copy so the Riccati
+        // solve can reuse the active linearization matrices without putting a trajectory
+        // sized object on the call stack.
+        TrajArray& soc_data = soc_scratch_;
+        for (int k = 0; k <= N; ++k) {
+            soc_data[k] = active[k];
+        }
 
         // SOC correction is applied to the trial candidate, so the primal-dual variables used in
         // the correction equations must also be the candidate's. Keep A/B/C/D/Q/R/H from the
