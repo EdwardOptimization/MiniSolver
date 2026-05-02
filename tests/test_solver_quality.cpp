@@ -430,6 +430,124 @@ TEST(SolverQualityTest, FiniteDifferenceJacobianVerification)
     }
 }
 
+TEST(SolverQualityTest, ExactLagrangianHessianFiniteDifferenceVerification)
+{
+    using Model = CarModel;
+    constexpr int NX = 4, NU = 2, NC = 5, NP = 13;
+    using Knot = KnotPoint<double, NX, NU, NC, NP>;
+
+    auto make_base_knot = []() {
+        Knot kp;
+        kp.set_zero();
+
+        kp.x(0) = 5.0;
+        kp.x(1) = 1.0;
+        kp.x(2) = 0.3;
+        kp.x(3) = 8.0;
+        kp.u(0) = 1.5;
+        kp.u(1) = 0.2;
+
+        kp.p(0) = 5.0; // v_ref
+        kp.p(1) = 10.0; // x_ref
+        kp.p(2) = 2.0; // y_ref
+        kp.p(3) = 20.0; // obs_x
+        kp.p(4) = 3.0; // obs_y
+        kp.p(5) = 1.5; // obs_rad
+        kp.p(6) = 2.5; // L
+        kp.p(7) = 1.0; // car_rad
+        kp.p(8) = 1.0; // w_pos
+        kp.p(9) = 1.0; // w_vel
+        kp.p(10) = 0.1; // w_theta
+        kp.p(11) = 0.1; // w_acc
+        kp.p(12) = 1.0; // w_steer
+
+        // Exact mode includes lambda-weighted constraint Hessians.
+        kp.lam(4) = 0.7;
+        return kp;
+    };
+
+    auto compute_lagrangian_gradient
+        = [](const Knot& input, MSVec<double, NX>& grad_x, MSVec<double, NU>& grad_u) {
+              Knot tmp = input;
+              Model::compute_constraints(tmp);
+              Model::compute_cost_exact(tmp);
+
+              grad_x = tmp.q;
+              grad_u = tmp.r;
+              for (int c = 0; c < NC; ++c) {
+                  for (int i = 0; i < NX; ++i) {
+                      grad_x(i) += tmp.C(c, i) * tmp.lam(c);
+                  }
+                  for (int i = 0; i < NU; ++i) {
+                      grad_u(i) += tmp.D(c, i) * tmp.lam(c);
+                  }
+              }
+          };
+
+    Knot kp = make_base_knot();
+    Model::compute_constraints(kp);
+    Model::compute_cost_exact(kp);
+
+    const auto Q_an = kp.Q;
+    const auto R_an = kp.R;
+    const auto H_an = kp.H;
+
+    constexpr double eps = 1e-5;
+    constexpr double tol = 1e-3;
+
+    for (int j = 0; j < NX; ++j) {
+        Knot kp_p = kp;
+        Knot kp_m = kp;
+        kp_p.x(j) += eps;
+        kp_m.x(j) -= eps;
+
+        MSVec<double, NX> grad_x_p;
+        MSVec<double, NX> grad_x_m;
+        MSVec<double, NU> grad_u_p;
+        MSVec<double, NU> grad_u_m;
+        compute_lagrangian_gradient(kp_p, grad_x_p, grad_u_p);
+        compute_lagrangian_gradient(kp_m, grad_x_m, grad_u_m);
+
+        for (int i = 0; i < NX; ++i) {
+            const double fd = (grad_x_p(i) - grad_x_m(i)) / (2.0 * eps);
+            EXPECT_NEAR(Q_an(i, j), fd, tol)
+                << "Q(" << i << "," << j << ") mismatch: analytical=" << Q_an(i, j) << " fd=" << fd;
+        }
+
+        for (int i = 0; i < NU; ++i) {
+            const double fd = (grad_u_p(i) - grad_u_m(i)) / (2.0 * eps);
+            EXPECT_NEAR(H_an(i, j), fd, tol)
+                << "H(" << i << "," << j << ") from d(grad_u)/dx mismatch";
+        }
+    }
+
+    for (int j = 0; j < NU; ++j) {
+        Knot kp_p = kp;
+        Knot kp_m = kp;
+        kp_p.u(j) += eps;
+        kp_m.u(j) -= eps;
+
+        MSVec<double, NX> grad_x_p;
+        MSVec<double, NX> grad_x_m;
+        MSVec<double, NU> grad_u_p;
+        MSVec<double, NU> grad_u_m;
+        compute_lagrangian_gradient(kp_p, grad_x_p, grad_u_p);
+        compute_lagrangian_gradient(kp_m, grad_x_m, grad_u_m);
+
+        for (int i = 0; i < NU; ++i) {
+            const double fd = (grad_u_p(i) - grad_u_m(i)) / (2.0 * eps);
+            EXPECT_NEAR(R_an(i, j), fd, tol)
+                << "R(" << i << "," << j << ") mismatch: analytical=" << R_an(i, j) << " fd=" << fd;
+        }
+
+        for (int i = 0; i < NX; ++i) {
+            const double fd = (grad_x_p(i) - grad_x_m(i)) / (2.0 * eps);
+            EXPECT_NEAR(H_an(j, i), fd, tol)
+                << "H(" << j << "," << i << ") from d(grad_x)/du mismatch";
+        }
+    }
+}
+
 // =============================================================================
 // TEST 2: KKT Optimality Conditions Check
 // After solve, verifies the 4 KKT conditions:
