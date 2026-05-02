@@ -88,6 +88,16 @@ the same commit unless a test proves they are inseparable.
 
 ## Medium-Term (Next 2-3 Months)
 
+- Capability adoption from mature solvers:
+- Treat [`architecture/solver-capability-adoption-plan.md`](architecture/solver-capability-adoption-plan.md)
+  as the active filter for solver-landscape research.
+- Prioritize scaling/normalization, warm-start strategy, and structured
+  diagnostics before deeper RTI-lite or Riccati-mode work.
+- Add solver profiles (`Reference`, `Default`, `Speed`, `Robust`) as
+  `SolverConfig` presets, not as a new solver hierarchy.
+- Keep RTI-lite conservative: track linearization age and refresh whenever
+  safety gates fail.
+
 - Matrix backend hardening:
 - Keep `MiniMatrix` as an **NMPC-specialized** backend; do not grow it into a general linear algebra library.
 - Every new kernel must have:

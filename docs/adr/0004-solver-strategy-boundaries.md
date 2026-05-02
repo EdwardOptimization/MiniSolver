@@ -29,8 +29,14 @@ Use a config-driven Strategy boundary for solver variability:
   needed, check convergence.
 - Each variation point should have one narrow strategy seam. Existing examples
   are `LineSearchStrategy` and `LinearSolver`.
+- Strategy selection is config-driven and runtime-resolved. The resolved
+  execution path may use static kernel types that were compiled ahead of time;
+  it should not expose plugin objects or require users to assemble phases.
 - Hot generated paths may still use compile-time dispatch, SFINAE, and fused
   kernels. These are implementation details behind a config-driven boundary.
+- Repeated `solve()` calls should not rely on virtual or function-pointer
+  dispatch inside the hot iteration loop when a static resolved path is
+  practical.
 - Every optimized path must have a baseline/reference path available for tests
   or benchmarks. Optimizations may be default-on, but they should be defeatable
   or independently comparable before being trusted.
@@ -41,8 +47,9 @@ Use a config-driven Strategy boundary for solver variability:
    one internal evaluation strategy function. This removes scattered
    `HessianApproximation` branches without changing the public API.
 2. Keep `LineSearchStrategy` and `LinearSolver` as the current runtime
-   strategies. Do not add new public strategy classes until a variation point has
-   multiple real implementations and repeated call sites.
+   strategies. Do not expose public strategy classes; when a variation point has
+   multiple real implementations, users should still select them through
+   `SolverConfig`.
 3. Split `step()` internally into named algorithmic phases only where this
    reduces coupling: model evaluation, barrier/direction solve, line search
    recovery, and convergence verdict.

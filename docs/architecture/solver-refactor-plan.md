@@ -17,15 +17,25 @@ easy to test, and hard to accidentally break. Advanced behavior should be
 attached behind narrow internal seams, not spread through the solve loop as
 unbounded `if/else` branches.
 
-The target is not a large public plugin framework. The public API should remain
-`SolverConfig` plus `solve()`. Internal organization can evolve toward strategy
+The target is not a public plugin framework. The public API should remain
+`SolverConfig` plus `solve()`. Users should not pass solver-phase objects or
+compose a pipeline manually. Internal organization can evolve toward strategy
 kernels and a frozen solver plan only after the current phase boundaries prove
 useful.
+
+The long-term internal execution model is config-resolved static dispatch:
+`SolverConfig` is resolved at runtime, at solver construction, `set_config()`,
+or the first `solve()` after a dirty config. The resolved plan selects kernel
+types that are already compiled into the binary. MiniSolver should not generate
+code at runtime, and repeated `solve()` calls should not pay virtual-call or
+function-pointer dispatch inside the hot iteration loop when a static kernel
+path is practical.
 
 ## Non-Goals
 
 - Do not expose template policy stacks to users.
-- Do not add public strategy objects until a real external use case requires it.
+- Do not add public solver-phase strategy objects. User-facing variability
+  belongs in `SolverConfig`.
 - Do not move every helper into a new class just for aesthetic cleanup.
 - Do not change solver behavior during structural refactors unless a focused
   test or benchmark proves the need.
@@ -378,7 +388,7 @@ is blocking progress.
 | `ModelEvaluationKernel` | Do not add another wrapper now. `model_evaluation.h` is the existing seam. | There are at least two real evaluation modes, e.g. baseline generated evaluation, optimized generated evaluation, and piecewise/ppoly evaluation. |
 | Full `SolverPlan` | Keep the lightweight `SolverBuildState` / `SolverPlanInfo`. | Compatibility checks or phase-kernel construction become scattered, expensive, or allocation-sensitive beyond the current build-state boundary. |
 | Function-pointer phase table | Do not introduce now. | Phase kernels multiply and `solve()` has measurable runtime branch/dispatch pressure. |
-| `StrategySpec` / OOP configuration layer | Do not introduce now. Keep public API as `SolverConfig + solve()`. | Multiple stable backends/globalization/restoration strategies need user-facing composition without exposing hot-path virtual calls. |
+| Public `StrategySpec` / OOP plugin layer | Do not introduce. Keep public API as `SolverConfig + solve()`. | Multiple stable backends/globalization/restoration strategies may justify more internal build-time strategy construction, but the user-facing selection should still be expressed through `SolverConfig`. |
 | Multiple plans inside one solver | Do not introduce now. Use multiple solver/config instances for benchmark A/B tests. | Solver construction cost is benchmark-proven expensive, or an in-solve fallback such as Riccati-to-dense solve requires state-isolated plans. |
 
 The default rule is: prefer multiple `MiniSolver` instances over multi-plan
@@ -476,13 +486,19 @@ The final shape may still become:
 
 ```text
 SolverConfig
-  -> build internal SolverPlan
-  -> solve executes frozen phase ops
+  -> resolve internal SolverPlan / SolverResolvedConfig
+  -> solve executes selected static kernel path
 ```
 
-But this should wait until at least two or three seams have multiple real
-implementations. Today, a full `StrategySpec -> StrategyKernel` framework is
-still premature.
+This is a runtime resolve step, not C++ runtime code generation. All candidate
+kernel implementations are compiled ahead of time; the plan only chooses which
+ones this solver instance should use. A small outer `switch` at `solve()` entry
+is acceptable if it enters a templated/static implementation and avoids
+repeated virtual or function-pointer calls inside the hot loop.
+
+This should still wait until at least two or three seams have multiple real
+implementations. Today, a public `StrategySpec -> StrategyKernel` framework is
+not a MiniSolver goal.
 
 ### What OOP/Kernels Do And Do Not Solve
 
@@ -747,7 +763,10 @@ Priority order:
 5. `ModelEvaluationKernel`
 
 Do not convert `LinearSolver` and `LineSearchStrategy` just for consistency;
-they already have seams.
+they already have seams. When runtime dispatch shows measurable overhead or the
+config-resolved plan is introduced, prefer replacing hot-loop virtual dispatch
+with a runtime-resolved static kernel path rather than adding public strategy
+objects.
 
 Validation:
 
@@ -770,6 +789,12 @@ Scope:
   expensive or compatibility checks become scattered.
 - `set_config()` should mark components dirty, not rebuild immediately.
 - `solve()` or explicit component ensure path should rebuild once when needed.
+- The build step resolves `SolverConfig` into internal execution choices. It
+  should do compatibility checks, workspace preparation, kernel-state resets,
+  and profile expansion before repeated solves enter the hot loop.
+- Hot-loop phase execution should prefer static kernel types selected by the
+  resolved plan over virtual calls or function pointers when the added template
+  surface is justified by benchmarks or code clarity.
 
 Validation:
 
@@ -834,7 +859,8 @@ Do not mix:
 ## Near-Term Next Steps
 
 1. Keep the current lite build-state boundary stable; do not expand it into a
-   public strategy framework without a second real implementation.
+   public strategy framework. Additional internal strategy construction must
+   still be selected through `SolverConfig`.
 2. Keep zero-malloc instrumentation on any future build-boundary or diagnostics
    changes. The current `set_config()` then `solve()` path is covered.
 3. Extend reference/default checks only when the problem has a clear correctness
