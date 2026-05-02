@@ -19,8 +19,8 @@ This guide documents the architectural decisions (ADRs), internal mechanisms, an
 * **Double Buffering**: The `Trajectory` class maintains two buffers: `memory_A` (active) and `memory_B` (candidate).
 * **Pointer Swapping**: During Line Search, we generate trial steps in the `candidate` buffer. If accepted, we simply swap the `active_ptr` and `candidate_ptr` pointers. This avoids expensive `memcpy` operations (~200KB per step).
 
-### 3. Zero-Copy Iterative Refinement
-**Challenge**: Iterative Refinement (IR) requires preserving the original linear system $(A, b)$ to compute residuals $r = b - Ax$, but the Riccati solver factorizes matrices in-place (destroying $A$).
+### 3. Zero-Copy Direction Refinement
+**Challenge**: Direction refinement requires preserving the original linearized system to correct dynamics defects, but the Riccati solver factorizes matrices in-place (destroying parts of the stage data).
 **Solution**: We repurpose the **Candidate Buffer** (normally used for Line Search trials) as a "Backup Buffer" during the linear solve phase.
 1.  Copy `active` trajectory (linearization point) to `candidate`.
 2.  Run Riccati factorization on `active`.
@@ -112,7 +112,7 @@ It outputs the `SolverConfig` that achieved the highest success rate and lowest 
 
 ## 🔮 Future Roadmap
 
-* [x] **Iterative Refinement**: Implemented to recover precision from regularization errors.
+* [x] **Direction Refinement**: Implemented dynamics-defect rollout correction.
 * [x] **Slack Reset & Restoration**: Implemented for robust feasibility handling.
 * [x] **Fused Riccati**: Implemented via SymPy codegen.
 * [ ] **GPU Parallelization**: `gpu_ops.cu` exists as a placeholder. Parallel Scan (MPX/PCR) logic needs to be fully implemented for $N > 100$.

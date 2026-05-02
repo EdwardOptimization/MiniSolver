@@ -1,7 +1,7 @@
 /**
  * @file test_features.cpp
  * @brief Tests for individual solver features: cost stagnation, parameter
- *        persistence, explicit GPU unsupported behavior, and iterative refinement.
+ *        persistence, explicit GPU unsupported behavior, and direction refinement.
  */
 #include "../examples/01_car_tutorial/generated/car_model.h"
 #include "minisolver/core/solver_options.h"
@@ -138,9 +138,9 @@ TEST(FeaturesTest, GPUBackendUnsupportedFailsExplicitly)
 }
 
 // =============================================================================
-// Feature: Iterative Refinement (runs without crash, maintains convergence)
+// Feature: dynamics-defect rollout refinement (runs without crash, maintains convergence)
 // =============================================================================
-TEST(FeaturesTest, IterativeRefinement)
+TEST(FeaturesTest, DynamicsDefectRolloutRefinement)
 {
     int N = 20;
     SolverConfig config;
@@ -148,7 +148,7 @@ TEST(FeaturesTest, IterativeRefinement)
     config.integrator = IntegratorType::RK4_EXPLICIT;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
     config.inertia_strategy = InertiaStrategy::REGULARIZATION;
-    config.enable_iterative_refinement = true;
+    config.direction_refinement = DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT;
 
     MiniSolver<CarModel, 20> solver(N, Backend::CPU_SERIAL, config);
     solver.set_dt(0.1);

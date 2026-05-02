@@ -160,9 +160,7 @@ private:
         write_bool(out, cfg.enable_profiling);
 
         write_enum(out, cfg.hessian_approximation);
-        write_bool(out, cfg.enable_iterative_refinement);
-        std::int32_t max_refinement_steps = static_cast<std::int32_t>(cfg.max_refinement_steps);
-        write_pod(out, max_refinement_steps);
+        write_enum(out, cfg.direction_refinement);
         write_bool(out, cfg.enable_rti);
         write_bool(out, cfg.enable_line_search_rollout);
 
@@ -238,15 +236,9 @@ private:
 
         if (!read_enum(in, cfg.print_level) || !read_bool(in, cfg.enable_profiling)
             || !read_enum(in, cfg.hessian_approximation)
-            || !read_bool(in, cfg.enable_iterative_refinement)) {
+            || !read_enum(in, cfg.direction_refinement)) {
             return false;
         }
-
-        std::int32_t max_refinement_steps = 0;
-        if (!read_pod(in, max_refinement_steps)) {
-            return false;
-        }
-        cfg.max_refinement_steps = static_cast<int>(max_refinement_steps);
 
         if (!read_bool(in, cfg.enable_rti) || !read_bool(in, cfg.enable_line_search_rollout)
             || !read_bool(in, cfg.enable_defect_correction) || !read_bool(in, cfg.enable_corrector)

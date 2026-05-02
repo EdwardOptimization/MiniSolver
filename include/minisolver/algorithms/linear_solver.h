@@ -45,12 +45,10 @@ public:
         return false;
     }
 
-    // [NEW] Iterative Refinement
-    // Solves K * dx_corr = r - K * dx
-    // Uses the existing factorization (if available/stored) or re-solves.
-    // For Riccati, we use the original_system (candidate buffer) to re-run the solve on residuals.
-    virtual bool refine(TrajArray& /*traj*/, const TrajArray& /*original_system*/, int /*N*/,
-        double /*mu*/, double /*reg*/, const SolverConfig& /*config*/)
+    // Optional post-solve direction refinement. Implementations may use original_system
+    // as a read-only backup of the linearized system before in-place factorization.
+    virtual bool refine_direction(TrajArray& /*traj*/, const TrajArray& /*original_system*/,
+        int /*N*/, double /*mu*/, double /*reg*/, const SolverConfig& /*config*/)
     {
         return false;
     }

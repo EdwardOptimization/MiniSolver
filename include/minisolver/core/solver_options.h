@@ -100,6 +100,16 @@ enum class WarmStartRegularizationMode {
     DECAY_PREVIOUS_REG
 };
 
+enum class DirectionRefinementMode {
+    // No post-Riccati direction correction.
+    NONE,
+
+    // Correct only the linearized dynamics defect by rolling dx/du forward through the
+    // existing Riccati feedback gains. This is not full KKT iterative refinement and does
+    // not rebuild slack/dual directions.
+    DYNAMICS_DEFECT_ROLLOUT
+};
+
 struct SolverConfig {
     Backend backend = Backend::CPU_SERIAL;
     InitializationMode initialization = InitializationMode::COLD_START;
@@ -194,10 +204,7 @@ struct SolverConfig {
         = HessianApproximation::OBJECTIVE_HESSIAN_ONLY; // Default: fast, ignore constraint
                                                         // curvature
 
-    // Historical name. Current implementation is linear defect-rollout correction,
-    // not a full KKT iterative-refinement solve.
-    bool enable_iterative_refinement = false;
-    int max_refinement_steps = 1;
+    DirectionRefinementMode direction_refinement = DirectionRefinementMode::NONE;
 
     // SQP-RTI Mode
     bool enable_rti = false; // If true, solve() performs only 1 SQP iteration (or config.max_iters)

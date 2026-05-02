@@ -90,8 +90,7 @@ SolverConfig MakeNonDefaultConfig()
     config.enable_profiling = false;
 
     config.hessian_approximation = HessianApproximation::EXACT;
-    config.enable_iterative_refinement = true;
-    config.max_refinement_steps = 2;
+    config.direction_refinement = DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT;
     config.enable_rti = true;
     config.enable_line_search_rollout = true;
 
@@ -164,8 +163,7 @@ void ExpectConfigEq(const SolverConfig& a, const SolverConfig& b)
     EXPECT_EQ(a.enable_profiling, b.enable_profiling);
 
     EXPECT_EQ(a.hessian_approximation, b.hessian_approximation);
-    EXPECT_EQ(a.enable_iterative_refinement, b.enable_iterative_refinement);
-    EXPECT_EQ(a.max_refinement_steps, b.max_refinement_steps);
+    EXPECT_EQ(a.direction_refinement, b.direction_refinement);
     EXPECT_EQ(a.enable_rti, b.enable_rti);
     EXPECT_EQ(a.enable_line_search_rollout, b.enable_line_search_rollout);
 

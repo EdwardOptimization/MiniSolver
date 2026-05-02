@@ -68,16 +68,16 @@ public:
         return true;
     }
 
-    // Iterative Refinement Implementation
-    // High-precision mode to recover from regularization errors and linearization artifacts.
-    bool refine(TrajArray& traj, const TrajArray& original_system, int N, double /*mu*/,
+    // Direction refinement implementation.
+    // Current strategy: correct the linearized dynamics defect by rolling dx/du forward through
+    // the existing Riccati feedback gains. This is not full KKT iterative refinement.
+    bool refine_direction(TrajArray& traj, const TrajArray& original_system, int N, double /*mu*/,
         double /*reg*/, const SolverConfig& config) override
     {
-        if (!config.enable_iterative_refinement) {
+        if (config.direction_refinement != DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT) {
             return true;
         }
 
-        // [FIX] Implemented Linear Rollout Refinement (Defect Correction)
         // This pass enforces strict dynamic feasibility of the linear solution:
         // dx_{k+1} = A dx_k + B du_k + defect
         // It propagates the calculation error accumulated during the backward/forward Riccati pass.
@@ -138,7 +138,7 @@ public:
         traj[N].dx += delta_x;
 
         if (config.print_level >= PrintLevel::DEBUG) {
-            MLOG_DEBUG("Iterative Refinement: Max dynamic defect corrected = " << max_defect);
+            MLOG_DEBUG("Direction refinement: max dynamic defect corrected = " << max_defect);
         }
 
         return true;

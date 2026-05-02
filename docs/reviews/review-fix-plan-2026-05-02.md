@@ -38,6 +38,11 @@ Completed in the follow-up boundary-semantics batch:
 - Terminal model evaluation skips dynamics/integrator work and clears terminal dynamics data.
 - GPU backends now fail explicitly instead of silently running the CPU backend.
 - `-ffast-math` and `-march=native` are opt-in CMake flags for benchmark builds.
+- SOC now uses a preallocated `FilterLineSearch` scratch trajectory instead of a
+  function-local full-trajectory copy.
+- The historical `enable_iterative_refinement` boolean has been replaced by the
+  explicit `direction_refinement` enum; the current implemented mode is
+  dynamics-defect rollout correction, not full KKT iterative refinement.
 
 Validation recorded before landing:
 
@@ -69,15 +74,14 @@ Validation recorded before landing:
 
 | Finding | Status | Evidence Path | Resolution / Next Action |
 | --- | --- | --- | --- |
-| SOC uses `TrajArray soc_data = active` in the solve path. | confirmed | Zero heap tests pass; stack/cache pressure remains unmeasured. | Move SOC scratch into preallocated solver/line-search workspace after a stack/copy benchmark or size audit. |
+| SOC uses `TrajArray soc_data = active` in the solve path. | fixed | Code inspection confirms `FilterLineSearch` now owns `soc_scratch_`; zero-malloc SOC coverage still passes. | SOC scratch is preallocated in the line-search object and only the active horizon is copied into that workspace. |
 | `solve()` always resets `mu/reg`, reducing MPC warm-start reuse. | confirmed | MPC-style warm-start benchmark comparing reset vs reuse. | Add an explicit config once a benchmark shows benefit and safe failure reset policy. |
-| Defect rollout refinement only updates `dx/du`, not constraint directions. | confirmed/intentional | Existing docs say it is not full KKT refinement. | Either rename/deprecate the option or recompute dependent directions after a targeted constrained test. |
+| Defect rollout refinement only updates `dx/du`, not constraint directions. | confirmed/intentional | Existing docs say it is not full KKT refinement; the public config is now an explicit `DirectionRefinementMode`. | Naming is resolved. A constrained-direction consistency test is still needed before changing algorithm behavior. |
 | Small-`NU` Riccati fallback freezes control dimensions without external degraded flag. | intentional | Existing tests cover the fallback. | Add diagnostics if benchmark/debug use needs to distinguish exact vs degraded directions. |
 | Terminal stage still evaluates dynamics with `dt=0`. | fixed | Covered in P1. | No follow-up needed unless a future terminal model requires nonzero terminal dynamics data. |
 
 ## Open Follow-Up Order
 
-1. SOC scratch trajectory stack/copy measurement before changing storage.
-2. Warm-start `mu/reg` reuse benchmark before adding config.
-3. Defect rollout refinement naming or constrained-direction consistency test.
-4. Optional diagnostics for degraded Riccati fallback directions.
+1. Warm-start `mu/reg` reuse benchmark before adding config.
+2. Defect rollout refinement constrained-direction consistency test.
+3. Optional diagnostics for degraded Riccati fallback directions.

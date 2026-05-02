@@ -84,7 +84,7 @@ public:
 
     // Full copy: copies the entire KnotPoint (state + matrices).
     // Use this when the candidate needs complete data (e.g., Mehrotra predictor,
-    // Iterative Refinement backup) where the linear solver requires derivatives.
+    // direction-refinement backup) where the linear solver requires derivatives.
     void prepare_candidate_full()
     {
         auto& src = *active_ptr;

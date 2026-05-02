@@ -8,7 +8,7 @@ Status: Accepted
 
 MiniSolver has accumulated many feature switches in `SolverConfig`: barrier
 update rules, line search variants, Hessian approximation, integrator behavior,
-Riccati variants, restoration, slack reset, and iterative refinement. Directly
+Riccati variants, restoration, slack reset, and direction refinement. Directly
 threading every option through `solve()` / `step()` as local `if/else` blocks is
 convenient initially, but it couples independent algorithm choices and makes
 future correctness/performance comparisons harder.

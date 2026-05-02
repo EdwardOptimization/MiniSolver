@@ -16,7 +16,7 @@ inline SolverConfig make_reference_solver_config()
     config.line_search_type = LineSearchType::MERIT;
     config.enable_corrector = false;
     config.enable_aggressive_barrier = false;
-    config.enable_iterative_refinement = false;
+    config.direction_refinement = DirectionRefinementMode::NONE;
     config.enable_rti = false;
     config.enable_line_search_rollout = false;
     config.enable_slack_reset = false;

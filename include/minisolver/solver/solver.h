@@ -716,15 +716,16 @@ private:
 
     void prepare_direction_workspace_()
     {
-        // Candidate buffer preparation (shared by Mehrotra predictor and IR backup).
-        // Both features need a full copy of the current linearized system (A, B, Q, R).
+        // Candidate buffer preparation (shared by Mehrotra predictor and direction-refinement
+        // backup). Both features need a full copy of the current linearized system (A, B, Q, R).
         // - Mehrotra: uses it as the affine solve workspace
-        // - IR: uses it to access original A, B matrices after Riccati overwrites active
+        // - Direction refinement: uses it to access original A, B matrices after Riccati overwrites
+        //   active.
         // Note: The Mehrotra affine solve only modifies solver workspace (Q_bar, R_bar, K, dx...)
-        //        but NOT model derivatives (A, B, C, D, Q, R, f_resid, x), so the IR backup
-        //        remains valid even after the affine solve.
+        // but NOT model derivatives (A, B, C, D, Q, R, f_resid, x), so the backup remains valid
+        // even after the affine solve.
         bool need_candidate_backup = (config.barrier_strategy == BarrierStrategy::MEHROTRA)
-            || config.enable_iterative_refinement;
+            || config.direction_refinement != DirectionRefinementMode::NONE;
         if (need_candidate_backup) {
             trajectory.prepare_candidate_full();
         }
@@ -845,14 +846,14 @@ private:
         }
     }
 
-    void refine_direction_if_enabled_(TrajArray& traj, bool solve_success)
+    void apply_direction_refinement_if_enabled_(TrajArray& traj, bool solve_success)
     {
-        if (!solve_success || !config.enable_iterative_refinement) {
+        if (!solve_success || config.direction_refinement == DirectionRefinementMode::NONE) {
             return;
         }
         // Pass 'traj' (which contains solution dx, du) and 'candidate' (which contains original
         // system).
-        linear_solver->refine(
+        linear_solver->refine_direction(
             traj, trajectory.candidate(), N, context_.solve.mu, context_.solve.reg, config);
     }
 
@@ -1090,7 +1091,7 @@ private:
         // the conservative behavior we want post-recovery.
         maybe_decay_regularization_after_solve_(solve_success);
 
-        refine_direction_if_enabled_(traj, solve_success);
+        apply_direction_refinement_if_enabled_(traj, solve_success);
 
         timer.stop();
 

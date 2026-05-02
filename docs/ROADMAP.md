@@ -63,7 +63,7 @@ fixed findings should be marked with evidence instead of deleted.
 | P1 | Broaden solve-time finite checks beyond the first direction element. | Implemented | `StepRejectsNaNDirectionBeyondFirstKnot` |
 | P1 | Reconfirm L2 soft-constraint residual semantics end-to-end. | Implemented | L2 convergence, interface-vs-manual comparison, filter residual regression, `merit_armijo_bench` |
 | P2 | Document the actual Hessian approximation semantics. | Implemented | `OBJECTIVE_HESSIAN_ONLY` name added; `GAUSS_NEWTON` remains a compatibility alias |
-| P2 | Document iterative-refinement semantics. | Implemented | README/config comments clarify current behavior is defect-rollout correction, not full KKT iterative refinement |
+| P2 | Document direction-refinement semantics. | Implemented | README/config comments clarify current behavior is defect-rollout correction, not full KKT iterative refinement |
 
 ### Next Hardening Items
 

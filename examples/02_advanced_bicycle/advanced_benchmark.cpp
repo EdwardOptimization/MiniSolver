@@ -235,8 +235,9 @@ int main()
     c3.line_search_type = LineSearchType::MERIT;
     c3.mu_init = 1e2;
     c3.tol_con = 1e-2;
-    // [Fix] Enable iterative refinement for Mehrotra to handle ill-conditioning near solution
-    c3.enable_iterative_refinement = true;
+    // Enable dynamics-defect rollout refinement for Mehrotra to handle ill-conditioning near
+    // solution.
+    c3.direction_refinement = DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT;
     c3.inertia_max_retries = 2; // Allow some retries if factorization fails
     c3.filter_gamma_theta = 1e-5; // Relax filter slightly
     results.push_back(run_test("ExtBicycle (Mehrotra)", c3));
