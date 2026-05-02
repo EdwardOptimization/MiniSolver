@@ -334,7 +334,12 @@ Fuzzing on `set_initial_state` / `set_parameter` could surface the silent-failur
 
 #### N-TEST-4 (P1) — No golden-reference comparison vs IPOPT/CasADi/acados in this repo
 
-The `solver-capability-adoption-plan.md` and `ROADMAP.md` defer this to a separate `nmpc-bench` repository. **However, `requirements.txt` already lists `casadi >= 3.6.0`** (used to generate test reference data). This means the dependency for in-repo IPM-vs-CasADi cross-check on a few canonical small problems is already there — the gap is now testing infrastructure, not external dependency. A 2-3 problem comparison (linear MPC on double integrator, kinematic bicycle obstacle avoidance, chain-mass) would be cheap and would catch the kind of silent algorithm gap N-THEORY-5 represents.
+Resolution note: this is now covered in-tree by
+[`tests/reference/generate_asset_regression_reference_data.py`](../../tests/reference/generate_asset_regression_reference_data.py)
+and [`tests/test_asset_regressions.cpp`](../../tests/test_asset_regressions.cpp).
+The generator uses CasADi/IPOPT to produce references, and the C++ test compares
+MiniSolver on kinematic bicycle and 3D double-integrator cases. Broader
+solver-to-solver comparison remains in MiniSolver-Bench.
 
 #### N-TEST-5 (P2) — ASan/UBSan in CI Debug builds but not in `build.sh`
 
@@ -704,7 +709,7 @@ P1 (significant):
 | N-TEST-1 | Hessian FD verification | Small (extend existing FD test) | AD codegen safety |
 | N-TEST-2 | `test_autodiff.cpp` rename | Trivial | Test discoverability |
 | N-TEST-3 | Property-based tests | Medium (RapidCheck + 5-10 properties) | Catch regression bugs |
-| N-TEST-4 | Golden cross-check vs CasADi | Small (CasADi already in deps) | Algorithm validation |
+| N-TEST-4 | Golden cross-check vs CasADi | Fixed by asset regression suite | Algorithm validation |
 | N-MOD-1 | DSL unit checks | Medium (sympy-based) | Modeling safety |
 | N-THEORY-1 | Filter `θ_max` + f-type | Medium (paired with ADR 0002 work) | Convergence theory |
 | N-THEORY-2 | Filter Pareto-frontier | Small | Acceptance certificate completeness |
