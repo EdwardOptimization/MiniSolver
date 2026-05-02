@@ -88,9 +88,9 @@ model.subject_to( vz <= 5.0, weight=100.0, loss='L1' )
 
 # 5. Generate C++ Code
 model.generate("include/model")
-````
+```
 
-### 2\. Solve in C++
+### 2. Solve in C++
 
 Include the generated header and the solver.
 
@@ -121,7 +121,7 @@ int main() {
 }
 ```
 
-### 3\. Build & Run
+### 3. Build & Run
 
 MiniSolver includes a one-click build script that handles dependency checking, code generation, and compilation.
 
@@ -140,16 +140,30 @@ MiniSolver includes a one-click build script that handles dependency checking, c
 
 ## 📂 Project Structure
 
-  * **`include/core/`**: Core types (`KnotPoint`), memory-safe containers (`Trajectory`), and Matrix Abstraction Layer (`MiniMatrix`/`Eigen`).
-  * **`include/solver/`**: The main `MiniSolver` class orchestrating the IPM loop.
-  * **`include/algorithms/`**: Numerical engines:
+  * **`include/minisolver/core/`**: Core types (`KnotPoint`), memory-safe containers (`Trajectory`), and solver configuration/state.
+  * **`include/minisolver/matrix/`**: Fixed-size matrix abstraction layer (`MiniMatrix`/`Eigen`).
+  * **`include/minisolver/solver/`**: The main `MiniSolver` class orchestrating the IPM loop.
+  * **`include/minisolver/algorithms/`**: Numerical engines:
       * `RiccatiSolver`: Block-tridiagonal linear system solver.
       * `LineSearch`: Filter and Merit function strategies.
   * **`python/minisolver/`**: The `MiniModel` DSL and C++ code generator.
+  * **`examples/`**: Runnable generated-model examples, including the car tutorial and advanced bicycle case.
   * **`tools/`**:
       * `auto_tuner.cpp`: Monte-Carlo search for optimal solver configurations.
       * `replay_solver.cpp`: Debugging tool to replay serialized solver states.
-      * `benchmark_suite/`: comprehensive performance testing.
+      * `benchmark_suite/`: MiniSolver configuration benchmark suite.
+  * **`docs/`**: Design notes, ADRs, review ledgers, and testing plans.
+
+## 🧭 Development Workflow
+
+MiniSolver is developed with a multi-agent engineering workflow. AI coding and
+review agents are used for implementation, independent review, benchmark
+investigation, debugging, and documentation research. Final architecture
+decisions, validation criteria, and releases are maintained by Edward Qu.
+
+Non-trivial solver changes are expected to be evidence-driven: reproduce the
+issue, add a focused test or benchmark, make the smallest defensible change, and
+record validation results before trusting the change.
 
 ## 🤝 License & Citation
 

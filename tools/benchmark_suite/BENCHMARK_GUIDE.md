@@ -1,6 +1,8 @@
-# MiniSolver Benchmark & Configuration Guide
+# MiniSolver Internal Benchmark & Configuration Guide
 
-This document details the configuration archetypes used in the `benchmark_suite`. It serves as a guide for selecting the optimal solver settings for your specific application requirements.
+This document details the configuration archetypes used in
+`tools/benchmark_suite`. It is a repository-local MiniSolver benchmark guide,
+not a cross-solver comparison.
 
 ## 1. Solver Archetypes
 

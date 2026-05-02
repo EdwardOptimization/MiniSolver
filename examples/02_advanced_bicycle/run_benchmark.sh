@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Get the directory of this script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -7,11 +7,23 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 
 mkdir -p "$SCRIPT_DIR/build"
 
+CXX=${CXX:-g++}
+# Benchmark-only flags: these favor local speed measurement over portable binaries.
+CXXFLAGS=(-O3 -std=c++17 -march=native -ffast-math)
+
+restore_default_model() {
+    echo ""
+    echo ">> Restoring Default Model (Fused Riccati ENABLED)..."
+    python3 "$SCRIPT_DIR/generate_advanced_model.py"
+}
+
+trap restore_default_model EXIT
+
 echo ">> Compiling Advanced Benchmark (Fused vs Standard)..."
 
 # 1. Compile Fused Riccati (Default generated model has it enabled)
 # Using MiniMatrix as backend for embedded relevance
-g++ -O3 -std=c++17 -march=native -ffast-math \
+"$CXX" "${CXXFLAGS[@]}" \
     -I"$PROJECT_ROOT/include" -I"$SCRIPT_DIR/generated" \
     -DUSE_CUSTOM_MATRIX \
     "$SCRIPT_DIR/advanced_benchmark.cpp" \
@@ -19,11 +31,10 @@ g++ -O3 -std=c++17 -march=native -ffast-math \
 
 echo ""
 echo ">> Regenerating Model with Fused Riccati DISABLED..."
-cd "$SCRIPT_DIR"
-python3 generate_advanced_model.py --no-fused
+python3 "$SCRIPT_DIR/generate_advanced_model.py" --no-fused
 
 echo ">> Compiling Standard Benchmark..."
-g++ -O3 -std=c++17 -march=native -ffast-math \
+"$CXX" "${CXXFLAGS[@]}" \
     -I"$PROJECT_ROOT/include" -I"$SCRIPT_DIR/generated" \
     -DUSE_CUSTOM_MATRIX \
     "$SCRIPT_DIR/advanced_benchmark.cpp" \
@@ -41,9 +52,3 @@ echo ">> Running Standard Benchmark..."
 
 echo ">> Running Fused Riccati Benchmark..."
 "$SCRIPT_DIR/build/benchmark_fused"
-
-echo ""
-echo ">> Restoring Default Model (Fused Riccati ENABLED)..."
-python3 generate_advanced_model.py
-
-
