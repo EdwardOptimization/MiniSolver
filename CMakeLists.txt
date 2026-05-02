@@ -358,7 +358,7 @@ add_minisolver_test(test_integrator tests/test_integrator.cpp)
 # --- Solver Components ---
 add_minisolver_test(test_riccati tests/test_riccati.cpp)
 add_minisolver_test(test_line_search tests/test_line_search.cpp)
-add_minisolver_test(test_autodiff tests/test_autodiff.cpp)
+add_minisolver_test(test_car_model_basic tests/test_car_model_basic.cpp)
 add_minisolver_test(test_status tests/test_status.cpp)
 add_minisolver_test(test_robustness tests/test_robustness.cpp)
 

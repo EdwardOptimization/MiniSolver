@@ -8,7 +8,7 @@ using namespace minisolver;
 // produces values consistent with expected kinematics.
 // This indirectly validates MiniModel.py's code generation.
 
-TEST(AutoDiffTest, CarModelDynamics)
+TEST(CarModelBasicTest, CarModelDynamics)
 {
     // x = [x, y, theta, v]
     // u = [acc, steer]
@@ -41,7 +41,7 @@ TEST(AutoDiffTest, CarModelDynamics)
     EXPECT_NEAR(xdot(2), expected_theta_dot, 1e-9);
 }
 
-TEST(AutoDiffTest, CarModelIntegratorEuler)
+TEST(CarModelBasicTest, CarModelIntegratorEuler)
 {
     MSVec<double, 4> x;
     x.setZero();
@@ -67,7 +67,7 @@ TEST(AutoDiffTest, CarModelIntegratorEuler)
     EXPECT_DOUBLE_EQ(x_next(1), 0.0);
 }
 
-TEST(AutoDiffTest, CostDerivatives)
+TEST(CarModelBasicTest, CostDerivatives)
 {
     // Check if gradients are non-zero where expected
     KnotPoint<double, 4, 2, 5, 13> kp;

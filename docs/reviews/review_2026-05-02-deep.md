@@ -309,7 +309,10 @@ The existing `tests/test_implicit_sparse_riccati.cpp` (3 tests, fused vs generic
 
 #### N-TEST-2 (P1) — `test_autodiff.cpp` filename misleads
 
-[`tests/test_autodiff.cpp`](../../tests/test_autodiff.cpp) is 88 lines, 3 tests:
+Historical note: this file was later renamed to
+[`tests/test_car_model_basic.cpp`](../../tests/test_car_model_basic.cpp).
+
+The old `tests/test_autodiff.cpp` was 88 lines, 3 tests:
 - `CarModelDynamics`: asserts continuous dynamics returns `v*cos(0) = v` etc.
 - `CarModelIntegratorEuler`: asserts one Euler step value
 - `CostDerivatives`: asserts a single cost gradient component
@@ -462,7 +465,8 @@ Already documented in N-RT-1 / N-API-1 from a different angle. From the embedded
 
 #### N-AD-1 (corrected) — Generated 1st-order derivatives ARE FD-verified
 
-Initially I suspected `test_autodiff.cpp` (88 lines) was the only AD test. On follow-up, [`tests/test_solver_quality.cpp`](../../tests/test_solver_quality.cpp):309-431 has comprehensive 1st-order coverage on CarModel; [`tests/test_integrator.cpp`](../../tests/test_integrator.cpp):767 (`JacobiansMatchFiniteDifferenceForAllImplicitSchemes`) covers implicit integrator A/B. **This is not a finding — correction to plan-stage assumption.**
+Initially I suspected the old `test_autodiff.cpp` (later renamed to
+[`tests/test_car_model_basic.cpp`](../../tests/test_car_model_basic.cpp)) was the only AD test. On follow-up, [`tests/test_solver_quality.cpp`](../../tests/test_solver_quality.cpp):309-431 has comprehensive 1st-order coverage on CarModel; [`tests/test_integrator.cpp`](../../tests/test_integrator.cpp):767 (`JacobiansMatchFiniteDifferenceForAllImplicitSchemes`) covers implicit integrator A/B. **This is not a finding — correction to plan-stage assumption.**
 
 #### N-AD-2 (P2) — Generated `jacobian_continuous` writes all zero entries explicitly
 
@@ -627,7 +631,7 @@ This is the same mechanism ADR 0002 lists as needing-implementation for the f-ty
 
 | Initial concern | Verification | Resolution |
 | --- | --- | --- |
-| `test_autodiff.cpp` is the only AD test, FD verification absent | Found `test_solver_quality.cpp:309-431` (1st-order FD), `test_integrator.cpp:767` (implicit A/B FD) | 1st-order FD coverage exists; only 2nd-order Hessians remain uncovered (recorded as N-TEST-1) |
+| Old `test_autodiff.cpp` is the only AD test, FD verification absent | Found `test_solver_quality.cpp:309-431` (1st-order FD), `test_integrator.cpp:767` (implicit A/B FD); the old file was later renamed to `test_car_model_basic.cpp` | 1st-order FD coverage exists; only 2nd-order Hessians remain uncovered (recorded as N-TEST-1) |
 | ASan/UBSan completely missing from CI | Found `.github/workflows/ci.yml:83` enables `-fsanitize=address,undefined` for Debug build matrix | Sanitizers in CI; only `build.sh` lacks the option (recorded as N-TEST-5) |
 | GPU backend silently lies about being implemented | Found `src/cuda/gpu_ops.cu:2` `#error "GPU Backend implementation is incomplete..."` plus 5/2 `FeaturesTest.GPUBackendUnsupportedFailsExplicitly` confirmation | Honest-incomplete; not a finding |
 | No CasADi in tree, golden reference impossible without external project | Found CasADi already in `requirements.txt:12` for reference data generation | Cross-check infrastructure cheap to add (recorded as N-TEST-4) |
