@@ -23,17 +23,15 @@ public:
         const SolverConfig& config, const TrajArray* affine_traj = nullptr) override
     {
 
-        // GPU Dispatch
+        // GPU backends are reserved but not implemented. Do not silently run CPU when the
+        // requested backend is GPU; that would make benchmark/deployment results misleading.
         if (config.backend == Backend::GPU_MPX || config.backend == Backend::GPU_PCR) {
 #ifdef USE_CUDA
-            MLOG_ERROR("GPU backend is not implemented yet. Falling back to CPU.");
-            return cpu_serial_solve<TrajArray, Model>(
-                traj, N, mu, reg, strategy, config, workspace, affine_traj);
+            MLOG_ERROR("GPU backend is not implemented yet.");
 #else
-            MLOG_WARN("CUDA not enabled. Falling back to CPU.");
-            return cpu_serial_solve<TrajArray, Model>(
-                traj, N, mu, reg, strategy, config, workspace, affine_traj);
+            MLOG_ERROR("CUDA not enabled; GPU backend is unsupported.");
 #endif
+            return false;
         }
 
         // Call the static/template function with Model type info

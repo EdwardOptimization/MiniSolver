@@ -1,7 +1,7 @@
 /**
  * @file test_features.cpp
  * @brief Tests for individual solver features: cost stagnation, parameter
- *        persistence, GPU backend fallback, and iterative refinement.
+ *        persistence, explicit GPU unsupported behavior, and iterative refinement.
  */
 #include "../examples/01_car_tutorial/generated/car_model.h"
 #include "minisolver/core/solver_options.h"
@@ -117,18 +117,15 @@ TEST(FeaturesTest, ParameterPersistenceCheck)
 }
 
 // =============================================================================
-// Feature: GPU Backend Fallback (CPU-only build should not crash)
+// Feature: GPU Backend Unsupported
 // =============================================================================
-TEST(FeaturesTest, GPUBackendFallback)
+TEST(FeaturesTest, GPUBackendUnsupportedFailsExplicitly)
 {
-    // Verify that requesting GPU backend falls back to CPU gracefully.
-    // The test uses FlatCostModel (simple quadratic) to avoid model-specific
-    // numerical issues — we're testing the backend dispatch, not solver convergence.
     int N = 1;
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
     config.backend = Backend::GPU_MPX;
-    config.max_iters = 10;
+    config.max_iters = 1;
 
     MiniSolver<FlatCostModel, 10> solver(N, config.backend, config);
     solver.set_dt(0.1);
@@ -136,9 +133,8 @@ TEST(FeaturesTest, GPUBackendFallback)
 
     SolverStatus status = solver.solve();
 
-    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE)
-        << "GPU fallback should produce a valid solution (status=" << static_cast<int>(status)
-        << ")";
+    EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR)
+        << "GPU backend is not implemented; it must not silently benchmark as CPU";
 }
 
 // =============================================================================
