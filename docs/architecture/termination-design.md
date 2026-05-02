@@ -1,9 +1,11 @@
 # Termination Design
 
 MiniSolver termination is a solver contract, not a small condition tweak. The
-first implementation pass is complete: strict `OPTIMAL` now uses true
-complementarity instead of the internal barrier target, and fixed-iteration RTI
-behavior can be selected through `SolverConfig`.
+first two implementation phases are complete: strict `OPTIMAL` now uses true
+complementarity instead of the internal barrier target, fixed-iteration RTI
+behavior can be selected through `SolverConfig`, and `SolverInfo` records the
+final solution quality, loop exit status, termination reason, and residual
+snapshot.
 
 ## Design Question
 
@@ -52,10 +54,15 @@ residuals that justify the status.
 Public surface:
 
 - `SolverStatus solve()` is the primary result.
+- `const SolverInfo& get_info() const` exposes the last solve's structured
+  diagnostics without changing `solve()` return semantics.
 - `SolverStatus` now distinguishes quality (`OPTIMAL`, `FEASIBLE`) from several
   exit causes (`MAX_ITER`, `STEP_TOO_SMALL`, `INSUFFICIENT_PROGRESS`,
   `LINEAR_SOLVE_FAILED`, `RESTORATION_FAILED`, `INVALID_INPUT`,
   `NUMERICAL_ERROR`).
+- `TerminationReason` records why the loop stopped, e.g. strict convergence,
+  fixed-iteration profile, cost stagnation, line-search failure, max iteration,
+  or postsolve infeasibility.
 
 Internal residuals:
 
@@ -92,13 +99,15 @@ produce two concepts:
 - otherwise return the loop termination reason, not a guessed infeasibility
   claim.
 
-Add a future `SolverInfo` / `SolverReport` only after the internal fields are
-stable. It can contain:
+`SolverInfo` is a fixed-size diagnostic object, not a plugin or strategy layer.
+It intentionally has no dynamic containers so reading it does not compromise the
+zero-malloc solve contract. It currently contains:
 
 ```cpp
 struct SolverInfo {
     SolverStatus status;
-    SolverStatus loop_exit_status;
+    SolverStatus loop_status;
+    TerminationReason termination_reason;
     int iterations;
 
     double primal_inf;
@@ -107,15 +116,15 @@ struct SolverInfo {
     double barrier_centrality_inf;
     double mu;
     double alpha;
-    double objective;
 
+    bool linear_ok;
+    bool line_search_failed;
     bool restoration_used;
     bool degraded_direction;
-    bool postsolve_refreshed;
 };
 ```
 
-This is intentionally an info object, not a plugin or public strategy layer.
+This is intentionally an info object, not a public OOP strategy layer.
 
 ## Residual Definitions
 
@@ -200,12 +209,15 @@ Implemented:
 - `SolverConfig::termination_profile` selects the internal termination mode.
 - `TerminationProfile::RTI_FIXED_ITERATION` mirrors legacy `enable_rti` behavior
   without requiring users to enable the legacy flag.
+- `SolverInfo` and `TerminationReason` expose the final residual snapshot and
+  loop stop reason through `get_info()`.
 
 Still deferred:
 
-- public `SolverInfo`;
 - separate stationarity vs dual infeasibility naming for `tol_grad` / `tol_dual`;
 - acceptable/reduced-accuracy status beyond the existing `FEASIBLE` summary.
+- full `ACCEPTABLE_NMPC` behavior beyond the current documented profile;
+- scale-aware termination thresholds.
 
 ## Implementation Order
 
@@ -233,13 +245,19 @@ Still deferred:
    - `TerminationProfile::ACCEPTABLE_NMPC`;
    - `TerminationProfile::RTI_FIXED_ITERATION`.
 
-5. Next: Update docs and status semantics:
+5. Done: Add structured info:
+   - `SolverInfo` records final `status`, `loop_status`, `termination_reason`,
+     residual channels, `mu`, last accepted `alpha`, and coarse event flags;
+   - `get_info()` is read-only and does not replace `solve()`;
+   - fixed-size fields only, no solve-time allocation.
+
+6. Done: Update docs and status semantics:
    - explain `OPTIMAL` vs `FEASIBLE`;
    - document tolerance units and scaling assumptions;
    - mark `tol_grad` as unresolved until stationarity vs dual infeasibility
      naming is settled.
 
-6. Run validation:
+7. Run validation:
    - targeted termination/residual tests;
    - full ctest;
    - small benchmark smoke comparing status distribution before/after;
@@ -254,3 +272,10 @@ Still deferred:
   certificates until the solver can produce evidence.
 - acceptable/reduced-accuracy public status: keep using `FEASIBLE` until there
   is a concrete need for a separate `ACCEPTABLE` status.
+- `ACCEPTABLE_NMPC`: implement behavior only after continuous MPC benchmarks
+  show which relaxed criteria preserve control quality.
+- scale-aware termination: defer until scaling / constraint normalization has a
+  stable design and tests.
+- benchmark-driven tuning: run after `SolverInfo` fields are available in
+  benchmark reports so status distribution, residuals, alpha, and iteration
+  counts are comparable.

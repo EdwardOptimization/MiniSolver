@@ -2,6 +2,7 @@
 #include "minisolver/core/types.h"
 #include "minisolver/solver/solver.h"
 #include <array>
+#include <cmath>
 #include <gtest/gtest.h>
 
 using namespace minisolver;
@@ -151,10 +152,17 @@ TEST(StatusTest, IterationBudgetExhaustionIsNotInfeasibility)
     solver.set_initial_state("x", 10.0);
 
     SolverStatus status = solver.solve();
+    const SolverInfo& info = solver.get_info();
 
     EXPECT_EQ(status, SolverStatus::MAX_ITER)
         << "A feasible model with zero iteration budget should report budget exhaustion, "
            "not mathematical infeasibility.";
+    EXPECT_EQ(info.status, status);
+    EXPECT_EQ(info.loop_status, SolverStatus::MAX_ITER);
+    EXPECT_EQ(info.termination_reason, TerminationReason::MAX_ITERATIONS);
+    EXPECT_EQ(info.iterations, 0);
+    EXPECT_TRUE(std::isfinite(info.primal_inf));
+    EXPECT_TRUE(std::isfinite(info.dual_inf));
 }
 
 TEST(StatusTest, ConflictingConstraintsWithoutCertificateReturnMaxIter)
@@ -193,7 +201,15 @@ TEST(StatusTest, RtiFixedIterationProfileStopsAfterOneIteration)
     solver.set_initial_state("x", 0.0);
 
     (void)solver.solve();
+    const SolverInfo& info = solver.get_info();
 
     EXPECT_EQ(solver.get_iteration_count(), 1)
         << "RTI_FIXED_ITERATION should be selected through SolverConfig without enable_rti.";
+    EXPECT_EQ(info.loop_status, SolverStatus::UNSOLVED);
+    EXPECT_EQ(info.termination_reason, TerminationReason::FIXED_ITERATION);
+    EXPECT_EQ(info.iterations, 1);
+    EXPECT_TRUE(info.primal_inf >= 0.0);
+    EXPECT_TRUE(info.dual_inf >= 0.0);
+    EXPECT_DOUBLE_EQ(
+        info.alpha, solver.get_alpha_log().empty() ? 1.0 : solver.get_alpha_log().back());
 }

@@ -124,6 +124,7 @@ struct TerminationState {
 struct LoopExitDecision {
     bool should_exit = false;
     SolverStatus status = SolverStatus::UNSOLVED;
+    TerminationReason reason = TerminationReason::NONE;
     bool cost_stagnated = false;
 };
 
@@ -144,6 +145,7 @@ struct SolverContext {
     DirectionState direction;
     GlobalizationState globalization;
     TerminationState termination;
+    SolverInfo info;
 
     void reset_algorithmic(double mu_init, double reg_init)
     {
@@ -153,6 +155,7 @@ struct SolverContext {
         direction.reset_iteration();
         globalization.reset_iteration();
         termination.reset_solve();
+        info.reset();
     }
 
     void reset_solve()
@@ -162,6 +165,7 @@ struct SolverContext {
         direction.reset_iteration();
         globalization.reset_iteration();
         termination.reset_solve();
+        info.reset();
     }
 };
 

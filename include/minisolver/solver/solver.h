@@ -234,6 +234,8 @@ public:
 
     int get_iteration_count() const { return context_.solve.current_iter; }
 
+    const SolverInfo& get_info() const { return context_.info; }
+
     double get_profile_time_ms(const std::string& name) const
     {
         auto it = timer.times.find(name);
@@ -576,6 +578,74 @@ public:
     }
 
 private:
+    TerminationReason reason_for_loop_status_(SolverStatus status) const
+    {
+        switch (status) {
+        case SolverStatus::OPTIMAL:
+            return TerminationReason::CONVERGED;
+        case SolverStatus::FEASIBLE:
+            return TerminationReason::PRIMAL_FEASIBLE;
+        case SolverStatus::MAX_ITER:
+        case SolverStatus::UNSOLVED:
+            return TerminationReason::MAX_ITERATIONS;
+        case SolverStatus::STEP_TOO_SMALL:
+            return TerminationReason::LINE_SEARCH_FAILED;
+        case SolverStatus::INSUFFICIENT_PROGRESS:
+            return TerminationReason::COST_STAGNATION;
+        case SolverStatus::LINEAR_SOLVE_FAILED:
+            return TerminationReason::LINEAR_SOLVE_FAILED;
+        case SolverStatus::RESTORATION_FAILED:
+            return TerminationReason::RESTORATION_FAILED;
+        case SolverStatus::INVALID_INPUT:
+            return TerminationReason::INVALID_INPUT;
+        case SolverStatus::NUMERICAL_ERROR:
+            return TerminationReason::NUMERICAL_ERROR;
+        case SolverStatus::INFEASIBLE:
+            return TerminationReason::POSTSOLVE_INFEASIBLE;
+        default:
+            return TerminationReason::NUMERICAL_ERROR;
+        }
+    }
+
+    void record_iteration_info_(const StepResidualSummary& residuals, double max_dual)
+    {
+        context_.info.iterations = context_.solve.current_iter;
+        context_.info.primal_inf = residuals.max_primal_inf;
+        context_.info.dual_inf = max_dual;
+        context_.info.complementarity_inf = residuals.max_complementarity_gap;
+        context_.info.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
+        context_.info.mu = residuals.barrier_mu;
+        context_.info.alpha = context_.metrics.last_alpha;
+        context_.info.linear_ok = true;
+    }
+
+    void record_postsolve_info_(SolverStatus final_status, SolverStatus loop_status,
+        TerminationReason reason, const PostsolveResiduals& residuals)
+    {
+        context_.info.status = final_status;
+        context_.info.loop_status = loop_status;
+        context_.info.termination_reason = reason;
+        context_.info.iterations = context_.solve.current_iter;
+        context_.info.primal_inf = residuals.max_primal_inf;
+        context_.info.dual_inf = residuals.max_dual_inf;
+        context_.info.complementarity_inf = residuals.max_complementarity_gap;
+        context_.info.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
+        context_.info.mu = residuals.barrier_mu;
+        context_.info.alpha = context_.metrics.last_alpha;
+        context_.info.linear_ok = residuals.linear_ok;
+    }
+
+    void record_terminal_info_(SolverStatus final_status, SolverStatus loop_status)
+    {
+        context_.info.status = final_status;
+        context_.info.loop_status = loop_status;
+        context_.info.termination_reason = reason_for_loop_status_(loop_status);
+        context_.info.iterations = context_.solve.current_iter;
+        context_.info.mu = context_.solve.mu;
+        context_.info.alpha = context_.metrics.last_alpha;
+        context_.info.linear_ok = false;
+    }
+
     bool check_convergence(const StepResidualSummary& residuals, double max_dual)
     {
         detail::TerminationSnapshot snapshot;
@@ -993,6 +1063,7 @@ private:
 
             if (!result.recovered) {
                 // Both Slack Reset and Feasibility Restoration failed (or were disabled).
+                context_.info.line_search_failed = true;
                 timer.stop();
                 print_iteration_log(result.alpha);
                 result.status = config.enable_feasibility_restoration
@@ -1315,6 +1386,7 @@ private:
 
     bool feasibility_restoration()
     {
+        context_.info.restoration_used = true;
         if (config.print_level >= PrintLevel::DEBUG) {
             MLOG_DEBUG("Entering Feasibility Restoration Phase.");
         }
@@ -1548,6 +1620,7 @@ private:
         // Preserve the existing priority: RTI exits before inspecting step_stat.
         if (detail::TerminationKernel::uses_fixed_iteration_profile(config)) {
             decision.should_exit = true;
+            decision.reason = TerminationReason::FIXED_ITERATION;
             return decision;
         }
 
@@ -1555,6 +1628,7 @@ private:
         if (step_stat == SolverStatus::OPTIMAL) {
             decision.should_exit = true;
             decision.status = SolverStatus::OPTIMAL;
+            decision.reason = TerminationReason::CONVERGED;
             if (config.print_level >= PrintLevel::INFO) {
                 MLOG_INFO("Converged in " << iter + 1 << " iterations.");
             }
@@ -1564,6 +1638,7 @@ private:
         if (step_stat == SolverStatus::FEASIBLE || step_stat == SolverStatus::INFEASIBLE) {
             decision.should_exit = true;
             decision.status = step_stat;
+            decision.reason = reason_for_loop_status_(step_stat);
             return decision;
         }
 
@@ -1576,6 +1651,7 @@ private:
             || step_stat == SolverStatus::INVALID_INPUT) {
             decision.should_exit = true;
             decision.status = step_stat;
+            decision.reason = reason_for_loop_status_(step_stat);
             return decision;
         }
 
@@ -1600,6 +1676,7 @@ private:
             // if fresh residuals justify it.
             decision.should_exit = true;
             decision.status = SolverStatus::INSUFFICIENT_PROGRESS;
+            decision.reason = TerminationReason::COST_STAGNATION;
             decision.cost_stagnated = true;
             return decision;
         }
@@ -1612,6 +1689,7 @@ private:
     SolverStatus run_solve_loop_()
     {
         SolverStatus loop_exit_status = SolverStatus::MAX_ITER;
+        TerminationReason loop_exit_reason = TerminationReason::MAX_ITERATIONS;
         double last_cost = 1e30;
         double last_mu = context_.solve.mu;
 
@@ -1624,6 +1702,7 @@ private:
             LoopExitDecision step_exit = should_exit_after_step_status_(step_stat, iter);
             if (step_exit.should_exit) {
                 loop_exit_status = step_exit.status;
+                loop_exit_reason = step_exit.reason;
                 context_.termination.loop_exit_status = step_exit.status;
                 break;
             }
@@ -1631,6 +1710,7 @@ private:
             LoopExitDecision stagnation_exit = should_exit_for_cost_stagnation_(last_cost, last_mu);
             if (stagnation_exit.should_exit) {
                 loop_exit_status = stagnation_exit.status;
+                loop_exit_reason = stagnation_exit.reason;
                 context_.termination.loop_exit_status = stagnation_exit.status;
                 context_.termination.cost_stagnated = stagnation_exit.cost_stagnated;
                 break;
@@ -1638,6 +1718,9 @@ private:
         }
 
         context_.termination.loop_exit_status = loop_exit_status;
+        context_.info.loop_status = loop_exit_status;
+        context_.info.termination_reason = loop_exit_reason;
+        context_.info.iterations = context_.solve.current_iter;
         return loop_exit_status;
     }
 
@@ -1650,6 +1733,7 @@ private:
         update_barrier_for_step_(residuals);
 
         DirectionResult direction = compute_search_direction_(traj);
+        record_iteration_info_(residuals, direction.max_dual_inf);
         if (direction.status != SolverStatus::UNSOLVED) {
             return direction.status;
         }
@@ -1868,6 +1952,7 @@ private:
         if (loop_status == SolverStatus::NUMERICAL_ERROR
             || loop_status == SolverStatus::LINEAR_SOLVE_FAILED
             || loop_status == SolverStatus::INVALID_INPUT) {
+            record_terminal_info_(loop_status, loop_status);
             return loop_status;
         }
         if (config.print_level >= PrintLevel::INFO) {
@@ -1886,6 +1971,8 @@ private:
         auto& traj = trajectory.active();
         PostsolveResiduals residuals = refresh_postsolve_residuals_(traj);
         if (!residuals.residuals_ok) {
+            record_postsolve_info_(SolverStatus::NUMERICAL_ERROR, loop_status,
+                TerminationReason::NUMERICAL_ERROR, residuals);
             return SolverStatus::NUMERICAL_ERROR;
         }
 
@@ -1893,10 +1980,24 @@ private:
 
         SolverStatus quality_status = classify_postsolve_solution_quality_(residuals);
         if (quality_status == SolverStatus::OPTIMAL || quality_status == SolverStatus::FEASIBLE) {
+            TerminationReason reason = context_.info.termination_reason;
+            if (reason == TerminationReason::NONE) {
+                reason = (quality_status == SolverStatus::OPTIMAL)
+                    ? TerminationReason::CONVERGED
+                    : TerminationReason::PRIMAL_FEASIBLE;
+            }
+            record_postsolve_info_(quality_status, loop_status, reason, residuals);
             return quality_status;
         }
 
         const SolverStatus final_status = classify_postsolve_failure_(loop_status);
+        TerminationReason final_reason = context_.info.termination_reason;
+        if (final_status == SolverStatus::INFEASIBLE) {
+            final_reason = TerminationReason::POSTSOLVE_INFEASIBLE;
+        } else if (final_reason == TerminationReason::NONE) {
+            final_reason = reason_for_loop_status_(final_status);
+        }
+        record_postsolve_info_(final_status, loop_status, final_reason, residuals);
         if (config.print_level >= PrintLevel::WARN) {
             const double feasible_bound = config.tol_con * config.feasible_tol_scale;
             MLOG_WARN("Result: " << status_to_string(final_status) << " (Viol: "

@@ -23,6 +23,21 @@ enum class SolverStatus {
     NUMERICAL_ERROR = 10 // Invalid arithmetic, NaN/Inf, or invalid search direction.
 };
 
+enum class TerminationReason {
+    NONE = 0,
+    CONVERGED = 1,
+    PRIMAL_FEASIBLE = 2,
+    MAX_ITERATIONS = 3,
+    FIXED_ITERATION = 4,
+    COST_STAGNATION = 5,
+    LINE_SEARCH_FAILED = 6,
+    LINEAR_SOLVE_FAILED = 7,
+    RESTORATION_FAILED = 8,
+    INVALID_INPUT = 9,
+    NUMERICAL_ERROR = 10,
+    POSTSOLVE_INFEASIBLE = 11
+};
+
 inline const char* status_to_string(SolverStatus status)
 {
     switch (status) {
@@ -52,6 +67,75 @@ inline const char* status_to_string(SolverStatus status)
         return "UNKNOWN";
     }
 }
+
+inline const char* termination_reason_to_string(TerminationReason reason)
+{
+    switch (reason) {
+    case TerminationReason::NONE:
+        return "NONE";
+    case TerminationReason::CONVERGED:
+        return "CONVERGED";
+    case TerminationReason::PRIMAL_FEASIBLE:
+        return "PRIMAL_FEASIBLE";
+    case TerminationReason::MAX_ITERATIONS:
+        return "MAX_ITERATIONS";
+    case TerminationReason::FIXED_ITERATION:
+        return "FIXED_ITERATION";
+    case TerminationReason::COST_STAGNATION:
+        return "COST_STAGNATION";
+    case TerminationReason::LINE_SEARCH_FAILED:
+        return "LINE_SEARCH_FAILED";
+    case TerminationReason::LINEAR_SOLVE_FAILED:
+        return "LINEAR_SOLVE_FAILED";
+    case TerminationReason::RESTORATION_FAILED:
+        return "RESTORATION_FAILED";
+    case TerminationReason::INVALID_INPUT:
+        return "INVALID_INPUT";
+    case TerminationReason::NUMERICAL_ERROR:
+        return "NUMERICAL_ERROR";
+    case TerminationReason::POSTSOLVE_INFEASIBLE:
+        return "POSTSOLVE_INFEASIBLE";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+struct SolverInfo {
+    SolverStatus status = SolverStatus::UNSOLVED;
+    SolverStatus loop_status = SolverStatus::UNSOLVED;
+    TerminationReason termination_reason = TerminationReason::NONE;
+
+    int iterations = 0;
+    double primal_inf = 0.0;
+    double dual_inf = 0.0;
+    double complementarity_inf = 0.0;
+    double barrier_centrality_inf = 0.0;
+    double mu = 0.0;
+    double alpha = 1.0;
+
+    bool linear_ok = true;
+    bool line_search_failed = false;
+    bool restoration_used = false;
+    bool degraded_step = false;
+
+    void reset()
+    {
+        status = SolverStatus::UNSOLVED;
+        loop_status = SolverStatus::UNSOLVED;
+        termination_reason = TerminationReason::NONE;
+        iterations = 0;
+        primal_inf = 0.0;
+        dual_inf = 0.0;
+        complementarity_inf = 0.0;
+        barrier_centrality_inf = 0.0;
+        mu = 0.0;
+        alpha = 1.0;
+        linear_ok = true;
+        line_search_failed = false;
+        restoration_used = false;
+        degraded_step = false;
+    }
+};
 
 // =============================================================================
 // Sub-structure 1: KnotState

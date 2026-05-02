@@ -32,9 +32,9 @@ made explicit before changing convergence behavior.
 
 MiniSolver keeps the public API compact and config-driven. It does not expose a public plugin status
 framework. Statuses should be added only when the solver can route them from existing evidence.
-`solve()` continues to return one primary `SolverStatus`; a future `SolverInfo` / `SolverReport`
-may expose finer details and can include `status` as one field alongside residuals, iteration
-counts, backend, restoration events, and subsolver diagnostics.
+`solve()` continues to return one primary `SolverStatus`; `get_info()` exposes the last solve's
+fixed-size `SolverInfo`, including `status`, `loop_status`, `termination_reason`, residuals,
+iteration count, final `mu`, last `alpha`, and coarse event flags.
 
 Status groups:
 
@@ -69,3 +69,9 @@ Postsolve precedence:
 This gives MPC users actionable information: increase `max_iters`, inspect line-search/restoration,
 or inspect linear-solver conditioning, instead of treating every unacceptable final residual as a
 mathematical infeasibility claim.
+
+`TerminationReason` is more specific than `SolverStatus`: for example a solve can return
+`FEASIBLE` while `termination_reason == COST_STAGNATION`, meaning the loop stopped because progress
+stalled and postsolve then found the final iterate primal-acceptable. Likewise, fixed-iteration
+NMPC can return whatever final quality postsolve proves while keeping
+`termination_reason == FIXED_ITERATION`.

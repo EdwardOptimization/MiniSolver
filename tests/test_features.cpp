@@ -8,6 +8,7 @@
 #include "minisolver/core/types.h"
 #include "minisolver/solver/solver.h"
 #include <array>
+#include <cmath>
 #include <gtest/gtest.h>
 
 using namespace minisolver;
@@ -87,11 +88,17 @@ TEST(FeaturesTest, CostStagnationTermination)
     solver.set_initial_state("x", 1.0);
 
     SolverStatus status = solver.solve();
+    const SolverInfo& info = solver.get_info();
 
     EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE)
         << "Cost stagnation should stop early; strict OPTIMAL now requires true "
            "complementarity, while this flat-cost case is only primal acceptable.";
     EXPECT_LT(solver.get_iteration_count(), config.max_iters);
+    EXPECT_EQ(info.status, status);
+    EXPECT_EQ(info.termination_reason, TerminationReason::COST_STAGNATION);
+    EXPECT_LT(info.iterations, config.max_iters);
+    EXPECT_TRUE(std::isfinite(info.primal_inf));
+    EXPECT_TRUE(std::isfinite(info.complementarity_inf));
 }
 
 // =============================================================================
