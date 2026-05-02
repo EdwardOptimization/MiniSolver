@@ -96,6 +96,10 @@ MiniMatrix `ctest` should pass before commit or push.
 
 ## Current Follow-Up Items
 
+These are testing obligations, not a request to delete old gap records. When a
+gap is closed, keep the discovery in the dated gap/review document and add the
+regression test that now protects it.
+
 P0:
 
 - Keep implicit integrator A/B Jacobian checks for all implicit schemes.
@@ -114,4 +118,3 @@ P2:
 - Move long horizon or slow stress coverage to nightly if it becomes expensive.
 - Revisit serializer as a separate snapshot/replay refactor, not as part of
   solver-loop testing.
-

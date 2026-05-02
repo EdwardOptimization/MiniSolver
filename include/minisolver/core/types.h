@@ -5,16 +5,16 @@
 namespace minisolver {
 
 enum class SolverStatus {
-    // [初始/中间状态]
+    // Initial / intermediate status.
     UNSOLVED,
 
-    // [成功状态]
-    OPTIMAL, // 完美收敛 (Optimal): 满足所有 KKT 条件且违反度 <= tol
-    FEASIBLE, // 工程可用 (Suboptimal): 迭代结束或停滞，但违反度在允许范围内
+    // Successful statuses.
+    OPTIMAL, // Fully converged: KKT conditions and constraint violation meet tolerances.
+    FEASIBLE, // Acceptable but suboptimal: violation is within the configured bound.
 
-    // [失败状态]
-    INFEASIBLE, // 不可用 (Failed): 迭代结束，违反度过大
-    NUMERICAL_ERROR // 数值错误: 矩阵奇异或 NaN，无法继续
+    // Failure statuses.
+    INFEASIBLE, // Not acceptable: iteration ended with excessive violation.
+    NUMERICAL_ERROR // Numerical failure: singular matrix, NaN, or invalid arithmetic.
 };
 
 inline const char* status_to_string(SolverStatus status)

@@ -6,7 +6,7 @@ Status: first refactor stage complete; further expansion requires new evidence
 
 Related:
 
-- `docs/adr/0004-solver-strategy-boundaries.md`
+- [ADR 0004: Solver Strategy Boundaries](../adr/0004-solver-strategy-boundaries.md)
 - `include/minisolver/solver/solver.h`
 - `include/minisolver/core/solver_context.h`
 

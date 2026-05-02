@@ -43,6 +43,11 @@ review pass. Each item should follow the project rule:
 2. Make the smallest code change that fixes the behavior.
 3. Compare before/after correctness and runtime when performance can be affected.
 
+For issue-level discovery, evidence, and resolution status, use
+[Review Issue Ledger: 2026-05-02](reviews/review-fix-plan-2026-05-02.md).
+Historical review files are preserved in `docs/reviews/` as evolution records;
+fixed findings should be marked with evidence instead of deleted.
+
 ### May 2026 Hardening Batch
 
 | Priority | Item | Status | Validation |

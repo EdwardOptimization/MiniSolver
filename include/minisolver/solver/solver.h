@@ -1485,7 +1485,7 @@ public:
         begin_solve_();
         SolverStatus loop_exit_status = run_solve_loop_();
 
-        // 3. Postsolve: 扫尾、刷新导数、统一评级
+        // 3. Postsolve: refresh residuals and produce the final verdict.
         return postsolve(loop_exit_status);
     }
 
@@ -1493,7 +1493,7 @@ private:
     void begin_solve_()
     {
         rebuild_solver_components_if_dirty_();
-        // 1. Presolve: 数据准备、冷热启动处理、内存复位
+        // 1. Presolve: prepare data, handle initialization, and reset runtime state.
         presolve();
 
         // Diagnostic line-search trace — fresh per solve. Reserve once at the
@@ -1507,14 +1507,14 @@ private:
     {
         LoopExitDecision decision;
 
-        // SQP-RTI 模式：做一步即走，状态由 postsolve 判定。
+        // SQP-RTI mode exits after one step; postsolve assigns the final status.
         // Preserve the existing priority: RTI exits before inspecting step_stat.
         if (config.enable_rti) {
             decision.should_exit = true;
             return decision;
         }
 
-        // 完美收敛 -> 记录状态并跳出，交给 postsolve 复核。
+        // Candidate convergence: exit the loop and let postsolve verify with fresh residuals.
         if (step_stat == SolverStatus::OPTIMAL) {
             decision.should_exit = true;
             decision.status = SolverStatus::OPTIMAL;
@@ -1530,7 +1530,7 @@ private:
             return decision;
         }
 
-        // 数值错误 -> 立即中止。
+        // Numerical errors stop immediately.
         if (step_stat == SolverStatus::NUMERICAL_ERROR) {
             decision.should_exit = true;
             decision.status = SolverStatus::NUMERICAL_ERROR;
@@ -1554,7 +1554,8 @@ private:
             if (config.print_level >= PrintLevel::INFO) {
                 MLOG_INFO("Cost Stagnation detected. Stopping early.");
             }
-            // 标记为 UNSOLVED，表示非自然收敛，交给 postsolve 判定是 Feasible 还是 Optimal。
+            // Mark as UNSOLVED: this is not natural convergence, so postsolve will decide
+            // whether the final iterate is feasible or optimal.
             decision.should_exit = true;
             decision.cost_stagnated = true;
             return decision;
@@ -1571,7 +1572,7 @@ private:
         double last_cost = 1e30;
         double last_mu = context_.solve.mu;
 
-        // 2. Solve Loop: 数值迭代
+        // 2. Solve loop: numerical iterations.
         for (int iter = 0; iter < config.max_iters; ++iter) {
             timer.start("Total Step");
             SolverStatus step_stat = execute_solve_iteration_();
@@ -1753,7 +1754,8 @@ private:
     SolverStatus classify_postsolve_result_(const PostsolveResiduals& residuals)
     {
         // Level 1: SOLVED (Optimal)
-        // 即使 Loop 是因为 Stagnation 退出的，如果此时恰好满足最优性，也给 SOLVED
+        // Even if the loop exited due to stagnation, return OPTIMAL when the fresh postsolve
+        // residuals satisfy the full convergence criteria.
         if (residuals.linear_ok && check_convergence(residuals)) {
             return SolverStatus::OPTIMAL;
         }
@@ -1784,9 +1786,8 @@ private:
                 MLOG_INFO("Max iterations or stagnation.");
             }
         }
-        // [Fix 2 Logic] 强制刷新导数
-        // 无论是因为收敛还是因为耗尽步数退出，我们都重新计算一次精确的残差，
-        // 以便做出最公正的最终评判。
+        // Always refresh residuals before the final verdict. This keeps loop-level shortcuts,
+        // stagnation exits, and max-iteration exits from returning stale status.
         auto& traj = trajectory.active();
         PostsolveResiduals residuals = refresh_postsolve_residuals_(traj);
         if (!residuals.residuals_ok) {
@@ -1795,7 +1796,7 @@ private:
 
         evaluate_postsolve_dual_residual_(residuals);
 
-        // [最终评级]
+        // Final classification.
         return classify_postsolve_result_(residuals);
     }
 

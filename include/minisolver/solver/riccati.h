@@ -611,9 +611,9 @@ bool cpu_serial_solve(TrajVector& traj, int N, double mu, double reg,
                         }
                     }
 
-                    // If no element is less than the threshold but the factorization still fails
-                    // (non-diagonal dominant等情况), or the corrected matrix needs to be
-                    // re-calculated:
+                    // If no element is below the threshold but factorization still fails
+                    // (for example, a non-diagonally-dominant matrix), or the corrected matrix
+                    // needs to be re-factorized:
                     if (fixed) {
                         // Re-factorize the corrected matrix (Retry Factorization)
                         ws.spd_solver.compute(kp.R_bar);
