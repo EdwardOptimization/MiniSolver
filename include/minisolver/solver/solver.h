@@ -1314,28 +1314,26 @@ private:
             // This pulls the solution towards the constraint manifold more aggressively than simple
             // min-norm. This is a restoration heuristic, not a full ALADIN or augmented-Lagrangian
             // outer loop.
-            if (config.barrier_strategy != BarrierStrategy::MEHROTRA) {
-                double rho = 1000.0; // Fixed quadratic restoration penalty.
-                for (int k = 0; k <= N; ++k) {
-                    auto& kp = traj[k];
+            double rho = 1000.0; // Fixed quadratic restoration penalty.
+            for (int k = 0; k <= N; ++k) {
+                auto& kp = traj[k];
 
-                    // Q += rho * C^T * C
-                    kp.Q.noalias() += rho * kp.C.transpose() * kp.C;
+                // Q += rho * C^T * C
+                kp.Q.noalias() += rho * kp.C.transpose() * kp.C;
 
-                    // R += rho * D^T * D
-                    kp.R.noalias() += rho * kp.D.transpose() * kp.D;
+                // R += rho * D^T * D
+                kp.R.noalias() += rho * kp.D.transpose() * kp.D;
 
-                    // H += rho * D^T * C (Cross term)
-                    kp.H.noalias() += rho * kp.D.transpose() * kp.C;
+                // H += rho * D^T * C (Cross term)
+                kp.H.noalias() += rho * kp.D.transpose() * kp.C;
 
-                    // q += rho * C^T * g_val
-                    // Note: Restoration usually ignores 's' in the quadratic penalty approximation
-                    // or treats it as fixed residuals g_val.
-                    kp.q.noalias() += rho * kp.C.transpose() * kp.g_val;
+                // q += rho * C^T * g_val
+                // Note: Restoration usually ignores 's' in the quadratic penalty approximation
+                // or treats it as fixed residuals g_val.
+                kp.q.noalias() += rho * kp.C.transpose() * kp.g_val;
 
-                    // r += rho * D^T * g_val
-                    kp.r.noalias() += rho * kp.D.transpose() * kp.g_val;
-                }
+                // r += rho * D^T * g_val
+                kp.r.noalias() += rho * kp.D.transpose() * kp.g_val;
             }
 
             if (!linear_solver->solve(traj, N, context_.solve.mu, context_.solve.reg,

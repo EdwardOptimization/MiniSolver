@@ -1724,6 +1724,32 @@ public:
 };
 
 template <typename TrajArray>
+class CapturingRestorationPenaltySolver : public RiccatiSolver<TrajArray, BugTestModel> {
+public:
+    bool called = false;
+    double captured_R00 = 0.0;
+    double captured_r0 = 0.0;
+
+    bool solve(TrajArray& traj, int /*N*/, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        called = true;
+        captured_R00 = traj[0].R(0, 0);
+        captured_r0 = traj[0].r(0);
+
+        for (auto& kp : traj) {
+            kp.dx.setZero();
+            kp.du.setZero();
+            kp.ds.setZero();
+            kp.dlam.setZero();
+            kp.dsoft_s.setZero();
+        }
+        return false;
+    }
+};
+
+template <typename TrajArray>
 class FailingCorrectorRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
     int calls = 0;
@@ -1736,6 +1762,39 @@ public:
         return calls == 1; // affine predictor succeeds; corrector fails.
     }
 };
+}
+
+TEST(BugfixTest, MehrotraRestorationBuildsFeasibilityPenalty)
+{
+    SolverConfig config;
+    config.max_restoration_iters = 1;
+    config.enable_feasibility_restoration = true;
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
+
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = CapturingRestorationPenaltySolver<Solver::TrajArray>;
+
+    Solver solver(1, Backend::CPU_SERIAL, config);
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].u(0) = 10.0; // BugTestModel constraint is u - 1 <= 0, so g = 9.
+    traj[0].s(0) = 1e-3;
+    traj[0].lam(0) = 1.0;
+    traj[1].u(0) = 10.0;
+    traj[1].s(0) = 1e-3;
+    traj[1].lam(0) = 1.0;
+
+    (void)Access::feasibility_restoration(solver);
+
+    EXPECT_TRUE(fake_solver_ptr->called);
+    EXPECT_GT(fake_solver_ptr->captured_R00, 1.0)
+        << "Restoration must include rho * D^T * D even under Mehrotra.";
+    EXPECT_GT(fake_solver_ptr->captured_r0, 0.0)
+        << "Restoration must include rho * D^T * g_val even under Mehrotra.";
 }
 
 TEST(BugfixTest, FeasibilityRestorationRequiresViolationImprovement)
