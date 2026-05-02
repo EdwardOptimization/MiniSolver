@@ -429,7 +429,8 @@ TEST(LineSearchTest, MeritFunctionBacktracking)
     if (status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE) {
         EXPECT_NEAR(solver.get_state(0, 0), 1.0, 0.2);
     } else {
-        EXPECT_TRUE(true); // Merit LS can be fragile — at least no crash
+        EXPECT_TRUE(status == SolverStatus::INFEASIBLE || status == SolverStatus::NUMERICAL_ERROR)
+            << "Unexpected merit line-search solve status: " << status_to_string(status);
     }
 }
 
@@ -791,6 +792,51 @@ public:
         return true;
     }
 };
+
+TEST(LineSearchTest, FilterHistoryWrapsAtFixedCapacity)
+{
+    constexpr int N = 1;
+    constexpr int Repetitions = 1100;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = false;
+
+    using Model = NoLineSearchEvalModel;
+    FilterLineSearch<Model, N> ls;
+    NoLineSearchStubLinearSolver<N> linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, N> trajectory(N);
+
+    std::array<double, N> dts;
+    dts.fill(0.1);
+
+    for (int iter = 0; iter < Repetitions; ++iter) {
+        auto& active = trajectory.active();
+        for (int k = 0; k <= N; ++k) {
+            active[k].set_zero();
+        }
+
+        // Dynamic defect theta starts large and decreases monotonically.
+        // The trial point reduces the defect enough to be acceptable against
+        // every previous filter entry, while still pushing beyond FILTER_CAPACITY.
+        active[0].x(0) = 0.0;
+        active[0].u(0) = 0.0;
+        active[1].x(0) = 2000.0 - static_cast<double>(iter);
+        active[1].dx(0) = -0.5;
+
+        for (int k = 0; k <= N; ++k) {
+            const double current_dt = (k < N) ? dts[static_cast<size_t>(k)] : 0.0;
+            detail::evaluate_model_stage<Model>(active[k], config, current_dt, k == N);
+        }
+
+        const double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+        ASSERT_GT(alpha, 0.0) << "filter rejected at iteration " << iter;
+    }
+
+    EXPECT_EQ(ls.filter_size(), 1024u);
+}
 
 TEST(LineSearchTest, NoLineSearchRefreshesAcceptedPointEvaluations)
 {

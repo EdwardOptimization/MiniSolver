@@ -249,10 +249,18 @@ else()
     set(MINISOLVER_PYTHON_EXECUTABLE ${PYTHON_EXECUTABLE})
 endif()
 
-add_test(
-    NAME test_minimodel_generation
-    COMMAND ${MINISOLVER_PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_minimodel_generation.py
-)
+function(add_minisolver_python_test test_name source_file)
+    add_test(
+        NAME ${test_name}
+        COMMAND ${MINISOLVER_PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/${source_file}
+    )
+endfunction()
+
+add_minisolver_python_test(test_minimodel_identifiers tests/minimodel/test_identifiers.py)
+add_minisolver_python_test(test_minimodel_implicit_patterns tests/minimodel/test_implicit_patterns.py)
+add_minisolver_python_test(test_minimodel_constraints tests/minimodel/test_constraints.py)
+add_minisolver_python_test(test_minimodel_residual_costs tests/minimodel/test_residual_costs.py)
+add_minisolver_python_test(test_minimodel_terminal tests/minimodel/test_terminal.py)
 
 set(TEST_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated_tests")
 set(KINEMATIC_BICYCLE_TEST_MODEL "${TEST_GENERATED_DIR}/kinematicbicycleregressionmodel.h")
@@ -351,6 +359,8 @@ add_minisolver_test(test_features tests/test_features.cpp)
 add_minisolver_test(test_advanced tests/test_advanced.cpp)
 add_minisolver_test(test_soft_constraints tests/test_soft_constraints.cpp)
 add_minisolver_test(test_serializer tests/test_serializer.cpp)
+add_minisolver_test(test_config_regressions tests/test_config_regressions.cpp)
+add_minisolver_test(test_barrier_residual_contract tests/test_barrier_residual_contract.cpp)
 
 # --- Quality & Regression ---
 add_minisolver_test(test_bugfixes tests/test_bugfixes.cpp)

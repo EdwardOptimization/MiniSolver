@@ -1,3 +1,4 @@
+#include "minisolver/algorithms/model_evaluation.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include "minisolver/integrator/implicit_integrator.h"
@@ -637,6 +638,181 @@ TEST(ImplicitIntegratorTest, JacobianAccuracy)
         << "Analytical A should match numerical discrete Jacobian";
 }
 
+struct ControlledImplicitJacobianModel {
+    static const int NX = 2;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x0", "x1" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> dynamics_continuous(
+        const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/)
+    {
+        MSVec<T, NX> xdot;
+        xdot(0) = -static_cast<T>(0.2) * x(0) * x(0) + std::sin(x(1)) + static_cast<T>(0.7) * u(0);
+        xdot(1) = x(0) * x(1) + static_cast<T>(0.1) * u(0) * u(0) - static_cast<T>(0.3) * x(1);
+        return xdot;
+    }
+
+    template <typename T>
+    static ContinuousJacobians<T, NX, NU> jacobian_continuous(
+        const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/)
+    {
+        ContinuousJacobians<T, NX, NU> jac;
+        jac.Jx(0, 0) = -static_cast<T>(0.4) * x(0);
+        jac.Jx(0, 1) = std::cos(x(1));
+        jac.Jx(1, 0) = x(1);
+        jac.Jx(1, 1) = x(0) - static_cast<T>(0.3);
+        jac.Ju(0, 0) = static_cast<T>(0.7);
+        jac.Ju(1, 0) = static_cast<T>(0.2) * u(0);
+        return jac;
+    }
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& p, double dt, IntegratorType /*type*/)
+    {
+        return x + dynamics_continuous(x, u, p) * dt;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        kp.f_resid = integrate(kp.x, kp.u, kp.p, dt, type);
+        auto jac = jacobian_continuous(kp.x, kp.u, kp.p);
+        kp.A = MSMat<T, NX, NX>::Identity() + jac.Jx * dt;
+        kp.B = jac.Ju * dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0) + kp.x(1) * kp.x(1) + kp.u(0) * kp.u(0);
+        kp.q(0) = static_cast<T>(2.0) * kp.x(0);
+        kp.q(1) = static_cast<T>(2.0) * kp.x(1);
+        kp.r(0) = static_cast<T>(2.0) * kp.u(0);
+        kp.Q.setZero();
+        kp.Q(0, 0) = 2.0;
+        kp.Q(1, 1) = 2.0;
+        kp.R(0, 0) = 2.0;
+        kp.H.setZero();
+    }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+TEST(ImplicitIntegratorTest, JacobiansMatchFiniteDifferenceForAllImplicitSchemes)
+{
+    using Model = ControlledImplicitJacobianModel;
+    using Knot = KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>;
+
+    MSVec<double, Model::NX> x;
+    x(0) = 0.4;
+    x(1) = -0.2;
+    MSVec<double, Model::NU> u;
+    u(0) = 0.3;
+    MSVec<double, Model::NP> p;
+
+    const double dt = 0.03;
+    const double eps = 1e-6;
+    NewtonConfig cfg;
+    cfg.max_iters = 30;
+    cfg.tol = 1e-13;
+
+    const std::array<IntegratorType, 3> implicit_types = {
+        IntegratorType::EULER_IMPLICIT,
+        IntegratorType::RK2_IMPLICIT,
+        IntegratorType::RK4_IMPLICIT,
+    };
+
+    for (IntegratorType type : implicit_types) {
+        Knot kp;
+        kp.set_zero();
+        kp.x = x;
+        kp.u = u;
+        ImplicitIntegrator<Model>::compute_dynamics(kp, type, dt, cfg);
+
+        ASSERT_TRUE(kp.f_resid.allFinite()) << static_cast<int>(type);
+        ASSERT_TRUE(kp.A.allFinite()) << static_cast<int>(type);
+        ASSERT_TRUE(kp.B.allFinite()) << static_cast<int>(type);
+
+        for (int j = 0; j < Model::NX; ++j) {
+            auto x_plus = x;
+            auto x_minus = x;
+            x_plus(j) += eps;
+            x_minus(j) -= eps;
+            const auto f_plus = ImplicitIntegrator<Model>::integrate(x_plus, u, p, dt, type, cfg);
+            const auto f_minus = ImplicitIntegrator<Model>::integrate(x_minus, u, p, dt, type, cfg);
+
+            for (int i = 0; i < Model::NX; ++i) {
+                const double fd = (f_plus(i) - f_minus(i)) / (2.0 * eps);
+                EXPECT_NEAR(kp.A(i, j), fd, 2e-5)
+                    << "A mismatch for integrator " << static_cast<int>(type) << " at (" << i << ","
+                    << j << ")";
+            }
+        }
+
+        for (int j = 0; j < Model::NU; ++j) {
+            auto u_plus = u;
+            auto u_minus = u;
+            u_plus(j) += eps;
+            u_minus(j) -= eps;
+            const auto f_plus = ImplicitIntegrator<Model>::integrate(x, u_plus, p, dt, type, cfg);
+            const auto f_minus = ImplicitIntegrator<Model>::integrate(x, u_minus, p, dt, type, cfg);
+
+            for (int i = 0; i < Model::NX; ++i) {
+                const double fd = (f_plus(i) - f_minus(i)) / (2.0 * eps);
+                EXPECT_NEAR(kp.B(i, j), fd, 2e-5)
+                    << "B mismatch for integrator " << static_cast<int>(type) << " at (" << i << ","
+                    << j << ")";
+            }
+        }
+    }
+}
+
+TEST(ImplicitIntegratorTest, TerminalImplicitEvaluationAtZeroDtIsFinite)
+{
+    using Model = ControlledImplicitJacobianModel;
+    using Knot = KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>;
+
+    SolverConfig config;
+    config.integrator = IntegratorType::RK4_IMPLICIT;
+    config.newton_config.tol = 1e-13;
+
+    Knot kp;
+    kp.set_zero();
+    kp.x(0) = 0.4;
+    kp.x(1) = -0.2;
+    kp.u(0) = 0.3;
+
+    detail::evaluate_model_stage<Model>(kp, config, 0.0, true);
+
+    EXPECT_TRUE(kp.f_resid.allFinite());
+    EXPECT_TRUE(kp.A.allFinite());
+    EXPECT_TRUE(kp.B.allFinite());
+    EXPECT_NEAR(kp.f_resid(0), kp.x(0), 1e-12);
+    EXPECT_NEAR(kp.f_resid(1), kp.x(1), 1e-12);
+    EXPECT_NEAR(kp.A(0, 0), 1.0, 1e-12);
+    EXPECT_NEAR(kp.A(0, 1), 0.0, 1e-12);
+    EXPECT_NEAR(kp.A(1, 0), 0.0, 1e-12);
+    EXPECT_NEAR(kp.A(1, 1), 1.0, 1e-12);
+    EXPECT_NEAR(kp.B(0, 0), 0.0, 1e-12);
+    EXPECT_NEAR(kp.B(1, 0), 0.0, 1e-12);
+}
+
 // --- Gauss-Legendre (RK4 Implicit) accuracy: O(dt^4) for linear ---
 TEST(ImplicitIntegratorTest, GaussLegendreAccuracy)
 {
@@ -701,7 +877,6 @@ TEST(ImplicitIntegratorTest, WarmStartVsColdStart)
     // Warm start should converge in fewer iterations because the previous
     // solution is a good initial guess.
     double lambda = 2.0;
-    double dt = 0.1;
 
     MSVec<double, 1> u;
     u.setZero();

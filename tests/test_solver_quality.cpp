@@ -160,6 +160,147 @@ struct ConstrainedQPModel {
     }
 };
 
+struct ReferenceL1SoftModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 1.0 };
+    static constexpr std::array<int, NC> constraint_types = { 1 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + u(0) * dt;
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = kp.x(0) - 1.0; // x <= 1, softened by L1 penalty.
+        kp.C(0, 0) = 1.0;
+        kp.D(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        const T diff = kp.x(0) - static_cast<T>(2.0);
+        kp.cost = diff * diff + static_cast<T>(1e-3) * kp.u(0) * kp.u(0);
+        kp.q(0) = static_cast<T>(2.0) * diff;
+        kp.r(0) = static_cast<T>(2e-3) * kp.u(0);
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2e-3;
+        kp.H(0, 0) = 0.0;
+    }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
+    }
+};
+
+struct ReferenceImplicitQPModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> dynamics_continuous(
+        const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>& /*p*/)
+    {
+        MSVec<T, NX> xdot;
+        xdot(0) = u(0) - static_cast<T>(0.25) * x(0);
+        return xdot;
+    }
+
+    template <typename T>
+    static ContinuousJacobians<T, NX, NU> jacobian_continuous(
+        const MSVec<T, NX>& /*x*/, const MSVec<T, NU>& /*u*/, const MSVec<T, NP>& /*p*/)
+    {
+        ContinuousJacobians<T, NX, NU> jac;
+        jac.Jx(0, 0) = -0.25;
+        jac.Ju(0, 0) = 1.0;
+        return jac;
+    }
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + dt * (u(0) - static_cast<T>(0.25) * x(0));
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid = integrate(kp.x, kp.u, kp.p, dt, IntegratorType::EULER_EXPLICIT);
+        kp.A(0, 0) = 1.0 - 0.25 * dt;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0) + static_cast<T>(0.05) * kp.u(0) * kp.u(0);
+        kp.q(0) = static_cast<T>(2.0) * kp.x(0);
+        kp.r(0) = static_cast<T>(0.1) * kp.u(0);
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 0.1;
+        kp.H(0, 0) = 0.0;
+    }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
+    }
+};
+
 // =============================================================================
 // TEST 1: Finite Difference Jacobian Verification
 // Verifies that the SymPy-generated analytical Jacobians (A, B, C, D, q, r)
@@ -440,9 +581,111 @@ TEST(SolverQualityTest, ReferenceAndDefaultAgreeOnSimpleQP)
     const SolveSummary reference = solve_with_config(reference_config);
     const SolveSummary default_result = solve_with_config(default_config);
 
-    ASSERT_TRUE(reference.status == SolverStatus::OPTIMAL || reference.status == SolverStatus::FEASIBLE);
     ASSERT_TRUE(
-        default_result.status == SolverStatus::OPTIMAL || default_result.status == SolverStatus::FEASIBLE);
+        reference.status == SolverStatus::OPTIMAL || reference.status == SolverStatus::FEASIBLE);
+    ASSERT_TRUE(default_result.status == SolverStatus::OPTIMAL
+        || default_result.status == SolverStatus::FEASIBLE);
+
+    EXPECT_NEAR(default_result.total_cost, reference.total_cost, 1e-2);
+    EXPECT_NEAR(default_result.terminal_x, reference.terminal_x, 1e-3);
+    EXPECT_NEAR(default_result.first_u, reference.first_u, 1e-3);
+}
+
+TEST(SolverQualityTest, ReferenceAndDefaultAgreeOnL1SoftConstraint)
+{
+    constexpr int N = 3;
+
+    struct SolveSummary {
+        SolverStatus status = SolverStatus::UNSOLVED;
+        double total_cost = 0.0;
+        double terminal_x = 0.0;
+        double first_u = 0.0;
+    };
+
+    auto solve_with_config = [&](SolverConfig config) {
+        config.print_level = PrintLevel::NONE;
+        config.enable_profiling = false;
+        config.max_iters = 120;
+        config.tol_con = 1e-5;
+        config.tol_dual = 1e-5;
+        config.mu_final = 1e-7;
+
+        MiniSolver<ReferenceL1SoftModel, 10> solver(N, Backend::CPU_SERIAL, config);
+        solver.set_dt(1.0);
+        solver.set_initial_state("x", 0.0);
+        for (int k = 0; k < N; ++k) {
+            solver.set_control_guess(k, "u", 0.5);
+        }
+        solver.rollout_dynamics();
+
+        SolveSummary summary;
+        summary.status = solver.solve();
+        for (int k = 0; k <= N; ++k) {
+            summary.total_cost += solver.get_stage_cost(k);
+        }
+        summary.terminal_x = solver.get_state(N, 0);
+        summary.first_u = solver.get_control(0, 0);
+        return summary;
+    };
+
+    const SolveSummary reference
+        = solve_with_config(minisolver::test::make_reference_solver_config());
+    const SolveSummary default_result = solve_with_config(SolverConfig {});
+
+    ASSERT_TRUE(
+        reference.status == SolverStatus::OPTIMAL || reference.status == SolverStatus::FEASIBLE);
+    ASSERT_TRUE(default_result.status == SolverStatus::OPTIMAL
+        || default_result.status == SolverStatus::FEASIBLE);
+
+    EXPECT_NEAR(default_result.total_cost, reference.total_cost, 2e-2);
+    EXPECT_NEAR(default_result.terminal_x, reference.terminal_x, 2e-3);
+    EXPECT_NEAR(default_result.first_u, reference.first_u, 2e-3);
+}
+
+TEST(SolverQualityTest, ReferenceAndDefaultAgreeOnImplicitIntegrator)
+{
+    constexpr int N = 5;
+
+    struct SolveSummary {
+        SolverStatus status = SolverStatus::UNSOLVED;
+        double total_cost = 0.0;
+        double terminal_x = 0.0;
+        double first_u = 0.0;
+    };
+
+    auto solve_with_config = [&](SolverConfig config) {
+        config.print_level = PrintLevel::NONE;
+        config.enable_profiling = false;
+        config.max_iters = 120;
+        config.tol_con = 1e-6;
+        config.tol_dual = 1e-6;
+        config.mu_final = 1e-8;
+        config.integrator = IntegratorType::EULER_IMPLICIT;
+        config.newton_config.tol = 1e-12;
+
+        MiniSolver<ReferenceImplicitQPModel, 10> solver(N, Backend::CPU_SERIAL, config);
+        solver.set_dt(0.2);
+        solver.set_initial_state("x", 1.0);
+        solver.rollout_dynamics();
+
+        SolveSummary summary;
+        summary.status = solver.solve();
+        for (int k = 0; k <= N; ++k) {
+            summary.total_cost += solver.get_stage_cost(k);
+        }
+        summary.terminal_x = solver.get_state(N, 0);
+        summary.first_u = solver.get_control(0, 0);
+        return summary;
+    };
+
+    const SolveSummary reference
+        = solve_with_config(minisolver::test::make_reference_solver_config());
+    const SolveSummary default_result = solve_with_config(SolverConfig {});
+
+    ASSERT_TRUE(
+        reference.status == SolverStatus::OPTIMAL || reference.status == SolverStatus::FEASIBLE);
+    ASSERT_TRUE(default_result.status == SolverStatus::OPTIMAL
+        || default_result.status == SolverStatus::FEASIBLE);
 
     EXPECT_NEAR(default_result.total_cost, reference.total_cost, 1e-2);
     EXPECT_NEAR(default_result.terminal_x, reference.terminal_x, 1e-3);

@@ -389,6 +389,28 @@ TEST(MiniMatrixTest, Kernel_SymmetrizeAndFiniteChecks)
     EXPECT_TRUE(matrix::has_nan(A));
 }
 
+TEST(MiniMatrixTest, Kernel_HasNanAndAllFiniteBoundaryCases)
+{
+    MiniMatrix<double, 2, 2> A;
+    A.setZero();
+    EXPECT_TRUE(A.allFinite());
+    EXPECT_FALSE(matrix::has_nan(A));
+
+    A(0, 0) = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(A.allFinite());
+    EXPECT_TRUE(matrix::has_nan(A));
+
+    A.setZero();
+    A(1, 1) = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(A.allFinite());
+    EXPECT_TRUE(matrix::has_nan(A));
+
+    A.setZero();
+    A(0, 1) = std::numeric_limits<double>::infinity();
+    EXPECT_FALSE(A.allFinite());
+    EXPECT_FALSE(matrix::has_nan(A)) << "Inf is non-finite but not NaN";
+}
+
 TEST(MiniMatrixTest, EigenLikeBlocksForIntegratorCompatibility)
 {
     MiniMatrix<double, 4, 1> v;

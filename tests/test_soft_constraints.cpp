@@ -3,6 +3,7 @@
  * @brief Tests for L1/L2 soft constraints: basic convergence + comparison
  *        between interface-based and manual-slack implementations.
  */
+#include "minisolver/algorithms/initialization.h"
 #include "minisolver/solver/solver.h"
 #include <array>
 #include <cmath>
@@ -157,6 +158,23 @@ TEST(SoftConstraintTest, L1InvalidDualWarmStartFallsBackSafely)
     EXPECT_NE(status, SolverStatus::NUMERICAL_ERROR);
     EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
     EXPECT_NEAR(solver.get_state(1, 0), 9.5, 1.0e-3);
+}
+
+TEST(SoftConstraintTest, L1TinyWeightInitializationStaysFinite)
+{
+    SoftModel::constraint_types[0] = 1;
+    SoftModel::constraint_weights[0] = 1e-10;
+
+    KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP> kp;
+    kp.g_val(0) = -0.5;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, 1e-5);
+
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_TRUE(std::isfinite(kp.soft_s(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
 }
 
 TEST(SoftConstraintTest, L2_Convergence)
