@@ -253,6 +253,18 @@ struct MatOps {
         }
         return false;
     }
+
+    template <typename Derived> inline static bool all_finite(const Eigen::MatrixBase<Derived>& m)
+    {
+        for (int i = 0; i < m.rows(); ++i) {
+            for (int j = 0; j < m.cols(); ++j) {
+                if (!is_finite_scalar(m(i, j))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
 };
 
 }
@@ -579,6 +591,18 @@ struct MatOps {
             }
         }
         return false;
+    }
+
+    template <typename Derived> inline static bool all_finite(const Derived& m)
+    {
+        for (int i = 0; i < Derived::Rows; ++i) {
+            for (int j = 0; j < Derived::Cols; ++j) {
+                if (!is_finite_scalar(m(i, j))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 };
 }

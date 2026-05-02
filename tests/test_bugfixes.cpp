@@ -26,6 +26,10 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
         return s.trajectory[stage].soft_s(idx);
     }
     static bool has_nans(Solver& s, const typename Solver::TrajArray& t) { return s.has_nans(t); }
+    static bool has_valid_primal_dual_guess(Solver& s, const typename Solver::TrajArray& t)
+    {
+        return s.has_valid_primal_dual_guess(t);
+    }
     static typename Solver::TrajArray& get_trajectory(Solver& s) { return s.trajectory.active(); }
     static StepResidualSummary evaluate_step_model(Solver& s, typename Solver::TrajArray& traj)
     {
@@ -36,6 +40,11 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         return s.check_convergence(residuals, max_dual_inf);
     }
+    static bool should_stop_after_line_search(
+        Solver& s, const typename Solver::TrajArray& traj, double alpha, double max_dual_inf)
+    {
+        return s.should_stop_after_line_search_(traj, alpha, max_dual_inf);
+    }
     static SolverStatus postsolve(Solver& s, SolverStatus loop_status)
     {
         return s.postsolve(loop_status);
@@ -45,6 +54,7 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         return s.refresh_postsolve_residuals_(traj);
     }
+    static bool feasibility_restoration(Solver& s) { return s.feasibility_restoration(); }
     static SolverStatus step(Solver& s) { return s.execute_solve_iteration_(); }
     static void set_linear_solver(
         Solver& s, std::unique_ptr<RiccatiSolver<typename Solver::TrajArray, Model>> solver)
@@ -1432,6 +1442,36 @@ TEST(BugfixTest, HasNansDetectsL1SoftSlackDirectionNaN)
         << "has_nans() must include L1 soft slack search direction dsoft_s";
 }
 
+TEST(BugfixTest, PrimalDualGuessRejectsInfState)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].x(0) = std::numeric_limits<double>::infinity();
+
+    EXPECT_FALSE(Access::has_valid_primal_dual_guess(solver, traj))
+        << "warm-start validation must reject Inf in primal variables";
+}
+
+TEST(BugfixTest, HasNansRejectsInfDynamicsJacobian)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].A(0, 0) = std::numeric_limits<double>::infinity();
+
+    EXPECT_TRUE(Access::has_nans(solver, traj))
+        << "model-output validation must reject Inf in dynamics Jacobians";
+}
+
 TEST(BugfixTest, L1BarrierDerivativesClampSoftDualGapAtWeightBoundary)
 {
     using Knot = KnotPoint<double, 1, 1, 1, 0>;
@@ -1465,7 +1505,89 @@ TEST(BugfixTest, L1BarrierDerivativesClampSoftDualGapAtWeightBoundary)
     EXPECT_TRUE(MatOps::is_finite_scalar(kp.dsoft_s(0)));
 }
 
+TEST(BugfixTest, L1RestorationRebuildKeepsDualInsideBoxWhenSlackIsTiny)
+{
+    SolverConfig config;
+    config.max_restoration_iters = 0; // Isolate the restoration tail rebuild logic.
+    config.mu_init = 1e-2;
+    config.min_barrier_slack = 1e-8;
+
+    using Solver = MiniSolver<L1TestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<L1TestModel, 10>;
+
+    Solver solver(1, Backend::CPU_SERIAL, config);
+    Access::mu(solver) = config.mu_init;
+
+    auto& traj = Access::get_trajectory(solver);
+    constexpr double w = L1TestModel::constraint_weights[0];
+    for (int k = 0; k <= 1; ++k) {
+        traj[k].s(0) = 1e-12; // Forces saved_mu / s far above the L1 dual box.
+        traj[k].lam(0) = 1.0;
+        traj[k].soft_s(0) = 1.0;
+    }
+
+    (void)Access::feasibility_restoration(solver);
+
+    for (int k = 0; k <= 1; ++k) {
+        const double soft_dual = w - traj[k].lam(0);
+        EXPECT_TRUE(MatOps::is_finite_scalar(traj[k].s(0)));
+        EXPECT_TRUE(MatOps::is_finite_scalar(traj[k].lam(0)));
+        EXPECT_TRUE(MatOps::is_finite_scalar(traj[k].soft_s(0)));
+        EXPECT_GT(traj[k].s(0), 0.0);
+        EXPECT_GT(traj[k].lam(0), 0.0);
+        EXPECT_GT(soft_dual, config.min_barrier_slack)
+            << "L1 restoration must keep lam strictly inside w - lam > 0";
+        EXPECT_GT(traj[k].soft_s(0), 0.0);
+    }
+}
+
+TEST(BugfixTest, PostLineSearchStopRejectsStaleFeasibilitySnapshot)
+{
+    SolverConfig config;
+    config.mu_final = 1e-6;
+    config.tol_con = 1e-8;
+    config.tol_dual = 1e-8;
+    config.tol_grad = 1e-8;
+
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    Solver solver(1, Backend::CPU_SERIAL, config);
+    Access::mu(solver) = 1e-8;
+
+    auto& traj = Access::get_trajectory(solver);
+    for (int k = 0; k <= 1; ++k) {
+        traj[k].dx.setZero();
+        traj[k].du.setZero();
+        traj[k].g_val(0) = 10.0;
+        traj[k].s(0) = 0.0;
+    }
+    traj[0].f_resid(0) = 0.0;
+    traj[1].x(0) = 0.0;
+
+    EXPECT_FALSE(Access::should_stop_after_line_search(solver, traj, 1.0, /*max_dual_inf=*/0.0))
+        << "post-line-search early stop must not trust a stale pre-line-search feasibility "
+           "snapshot when the accepted trajectory is infeasible";
+}
+
 namespace {
+template <typename TrajArray>
+class NoImprovementRestorationSolver : public RiccatiSolver<TrajArray, BugTestModel> {
+public:
+    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx.setZero();
+            traj[k].du.setZero();
+            traj[k].ds.setZero();
+            traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
+        }
+        return true;
+    }
+};
+
 template <typename TrajArray>
 class FailingCorrectorRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
@@ -1479,6 +1601,33 @@ public:
         return calls == 1; // affine predictor succeeds; corrector fails.
     }
 };
+}
+
+TEST(BugfixTest, FeasibilityRestorationRequiresViolationImprovement)
+{
+    SolverConfig config;
+    config.max_restoration_iters = 1;
+    config.enable_feasibility_restoration = true;
+
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using TrajArray = Solver::TrajArray;
+
+    Solver solver(1, Backend::CPU_SERIAL, config);
+    Access::set_linear_solver(
+        solver, std::make_unique<NoImprovementRestorationSolver<TrajArray>>());
+
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].u(0) = 10.0; // BugTestModel constraint is u - 1 <= 0.
+    traj[0].s(0) = 1e-3;
+    traj[0].lam(0) = 1.0;
+    traj[1].u(0) = 10.0;
+    traj[1].s(0) = 1e-3;
+    traj[1].lam(0) = 1.0;
+
+    EXPECT_FALSE(Access::feasibility_restoration(solver))
+        << "restoration should not report success when the applied step leaves violation "
+           "unchanged";
 }
 
 TEST(BugfixTest, MehrotraDoesNotUpdateMuWhenCorrectorSolveFails)

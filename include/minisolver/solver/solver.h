@@ -857,9 +857,10 @@ private:
     }
 
     bool should_stop_after_line_search_(
-        const TrajArray& traj, double alpha, double max_prim_inf, double max_dual_inf) const
+        const TrajArray& traj, double alpha, double max_dual_inf) const
     {
-        bool is_feasible = (max_prim_inf < config.tol_con);
+        const double current_prim_inf = compute_max_violation(traj);
+        bool is_feasible = (current_prim_inf < config.tol_con);
         bool is_dual_feasible = (max_dual_inf < config.tol_dual);
 
         if (context_.solve.mu > config.mu_final || alpha <= 1e-5) {
@@ -1189,19 +1190,30 @@ private:
 
     bool has_nans(const typename TrajectoryType::TrajArray& t) const
     {
-        // Bit-level NaN detection (MatOps::has_nan) — works even under -ffast-math.
-        // Only checks fields that are sources of NaN: search directions, cost, Jacobians.
+        // Historical name: this is the invalid-number guard for solve hot-path data.
+        // Use bit-level finite checks so Inf is rejected even under -ffast-math.
         for (int k = 0; k <= N; ++k) {
             const auto& kp = t[k];
-            if (MatOps::has_nan(kp.dx) || MatOps::has_nan(kp.du) || MatOps::has_nan(kp.ds)
-                || MatOps::has_nan(kp.dlam) || MatOps::has_nan(kp.dsoft_s)) {
+            if (!MatOps::all_finite(kp.x) || !MatOps::all_finite(kp.u) || !MatOps::all_finite(kp.p)
+                || !MatOps::all_finite(kp.s) || !MatOps::all_finite(kp.lam)
+                || !MatOps::all_finite(kp.soft_s)) {
+                return true;
+            }
+            if (!MatOps::all_finite(kp.dx) || !MatOps::all_finite(kp.du)
+                || !MatOps::all_finite(kp.ds) || !MatOps::all_finite(kp.dlam)
+                || !MatOps::all_finite(kp.dsoft_s)) {
                 return true;
             }
             if (!MatOps::is_finite_scalar(kp.cost)) {
                 return true;
             }
-            // Dynamics outputs — NaN here propagates into defect checks/Riccati.
-            if (MatOps::has_nan(kp.f_resid) || MatOps::has_nan(kp.A) || MatOps::has_nan(kp.B)) {
+            // Model outputs — invalid numbers here propagate into barrier/Riccati.
+            if (!MatOps::all_finite(kp.g_val) || !MatOps::all_finite(kp.g_true)
+                || !MatOps::all_finite(kp.f_resid) || !MatOps::all_finite(kp.A)
+                || !MatOps::all_finite(kp.B) || !MatOps::all_finite(kp.C)
+                || !MatOps::all_finite(kp.D) || !MatOps::all_finite(kp.Q)
+                || !MatOps::all_finite(kp.R) || !MatOps::all_finite(kp.H)
+                || !MatOps::all_finite(kp.q) || !MatOps::all_finite(kp.r)) {
                 return true;
             }
         }
@@ -1236,10 +1248,11 @@ private:
     {
         for (int k = 0; k <= N; ++k) {
             const auto& kp = t[k];
-            if (MatOps::has_nan(kp.x) || MatOps::has_nan(kp.u) || MatOps::has_nan(kp.p)) {
+            if (!MatOps::all_finite(kp.x) || !MatOps::all_finite(kp.u)
+                || !MatOps::all_finite(kp.p)) {
                 return false;
             }
-            if (MatOps::has_nan(kp.s) || MatOps::has_nan(kp.lam)) {
+            if (!MatOps::all_finite(kp.s) || !MatOps::all_finite(kp.lam)) {
                 return false;
             }
 
@@ -1282,6 +1295,15 @@ private:
 
         auto& traj = trajectory.active();
         bool success = false;
+        auto refresh_trajectory_model = [this, &traj]() {
+            for (int k = 0; k <= N; ++k) {
+                double current_dt = (k < N) ? dt_traj[k] : 0.0;
+                detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
+            }
+        };
+
+        refresh_trajectory_model();
+        const double violation_before = compute_max_violation(traj);
 
         for (int r_iter = 0; r_iter < config.max_restoration_iters; ++r_iter) {
             for (int k = 0; k <= N; ++k) {
@@ -1416,23 +1438,29 @@ private:
                     }
                 }
 
-                // Preserve dual info from restoration if valuable, but ensure complementarity lower
-                // bound.
-                double lam_min = saved_mu / traj[k].s(i);
-
                 if (type == 1 && w > 1e-6) {
-                    // Keep lam strictly inside the dual box so barrier terms remain well-defined.
-                    double lam_max = w - config.min_barrier_slack;
-                    if (lam_max < config.min_barrier_slack) {
-                        lam_max = config.min_barrier_slack;
+                    // Keep the L1 dual box non-empty before projecting lam. If s is too small,
+                    // saved_mu / s can exceed any valid lam < w; raise s first so both
+                    // complementarity and w-lam > 0 can hold.
+                    const double barrier_floor = std::max(
+                        config.min_barrier_slack, std::numeric_limits<double>::epsilon());
+                    const double soft_dual_floor = std::min(2.0 * barrier_floor, 0.5 * w);
+                    const double lam_max = w - soft_dual_floor;
+                    const double min_s_for_box = saved_mu / lam_max;
+                    if (traj[k].s(i) < min_s_for_box) {
+                        traj[k].s(i) = min_s_for_box;
                     }
-                    traj[k].lam(i) = std::min(traj[k].lam(i), lam_max);
-                    traj[k].lam(i) = std::max(traj[k].lam(i), lam_min);
+
+                    const double lam_min = saved_mu / traj[k].s(i);
+                    traj[k].lam(i) = std::clamp(traj[k].lam(i), lam_min, lam_max);
 
                     // Rebuild the soft slack on the central path for the restored mu.
-                    traj[k].soft_s(i)
-                        = std::max(config.min_barrier_slack, saved_mu / (w - traj[k].lam(i)));
+                    const double soft_dual = std::max(soft_dual_floor, w - traj[k].lam(i));
+                    traj[k].soft_s(i) = std::max(config.min_barrier_slack, saved_mu / soft_dual);
                 } else {
+                    // Preserve dual info from restoration if valuable, but ensure complementarity
+                    // lower bound.
+                    const double lam_min = saved_mu / traj[k].s(i);
                     traj[k].lam(i) = std::max(traj[k].lam(i), lam_min);
                 }
             }
@@ -1441,7 +1469,14 @@ private:
         context_.solve.mu = saved_mu;
         context_.solve.reg = saved_reg;
 
-        return success;
+        refresh_trajectory_model();
+        const double violation_after = compute_max_violation(traj);
+        const double feasible_bound = config.tol_con * config.feasible_tol_scale;
+        const double improvement_tol = 1e-12 * std::max(1.0, violation_before);
+
+        return success && MatOps::is_finite_scalar(violation_after)
+            && (violation_after <= feasible_bound
+                || violation_after < violation_before - improvement_tol);
     }
 
 public:
@@ -1590,7 +1625,7 @@ private:
         // Final Convergence Check using Step Size and Residuals.
         // Avoids wasting a full derivative computation in next step if we are already done.
         if (should_stop_after_line_search_(
-                trajectory.active(), globalization.alpha, residuals.max_primal_inf, max_dual_inf)) {
+                trajectory.active(), globalization.alpha, max_dual_inf)) {
             return SolverStatus::OPTIMAL;
         }
 

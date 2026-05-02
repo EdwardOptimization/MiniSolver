@@ -69,11 +69,11 @@ import sympy as sp
 model = OptimalControlModel(name="DroneModel")
 
 # 1. Define Variables
-px, py, vz = model.state("px", "py", "vz")
+px, py, vx, vy, vz = model.state("px", "py", "vx", "vy", "vz")
 thrust = model.control("thrust")
 
 # 2. Dynamics (f(x,u))
-model.set_dynamics(px, vx) # ... assume vx defined
+model.set_dynamics(px, vx)
 model.set_dynamics(py, vy)
 model.set_dynamics(vz, thrust - 9.81)
 
@@ -108,8 +108,10 @@ int main() {
     solver.set_initial_state("px", -10.0);
     
     // Configure for Robustness
-    solver.config.barrier_strategy = BarrierStrategy::MEHROTRA;
-    solver.config.enable_soc = true;
+    SolverConfig config = solver.get_config();
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
+    config.enable_soc = true;
+    solver.set_config(config);
     
     // Solve
     SolverStatus status = solver.solve();
