@@ -32,12 +32,12 @@ enum class InertiaStrategy {
 enum class LineSearchType { MERIT, FILTER, NONE };
 
 enum class HessianApproximation {
-    EXACT, // Full Hessian (Objective + Constraints)
-    // Objective Hessian only: keep objective curvature, ignore constraint curvature.
-    // This is not a strict least-squares Gauss-Newton J^T J approximation unless
-    // the generated objective itself is a least-squares residual Hessian.
+    EXACT, // Exact objective Hessian + constraint Hessian; dynamics Hessian is not included.
+    // Objective-only curvature: exact Hessian for general minimize() terms plus
+    // true Gauss-Newton J^T W J for add_residual() least-squares terms. Constraint
+    // and dynamics Hessians are ignored.
     OBJECTIVE_HESSIAN_ONLY,
-    GAUSS_NEWTON = OBJECTIVE_HESSIAN_ONLY // Backward-compatible legacy name
+    GAUSS_NEWTON = OBJECTIVE_HESSIAN_ONLY // Backward-compatible legacy name.
 };
 
 // Print Levels
@@ -166,7 +166,8 @@ struct SolverConfig {
 
     // --- Advanced Features ---
     HessianApproximation hessian_approximation
-        = HessianApproximation::OBJECTIVE_HESSIAN_ONLY; // Default: fast, ignore constraint curvature
+        = HessianApproximation::OBJECTIVE_HESSIAN_ONLY; // Default: fast, ignore constraint
+                                                        // curvature
 
     // Historical name. Current implementation is linear defect-rollout correction,
     // not a full KKT iterative-refinement solve.

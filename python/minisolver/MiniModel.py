@@ -40,6 +40,8 @@ class OptimalControlModel:
         
         # Objective
         self.objective = 0.0
+        self.residuals = []
+        self.residual_weights = []
         
         # Constraints (g <= 0)
         self.constraints = []
@@ -140,6 +142,82 @@ class OptimalControlModel:
         """
         for expr in exprs:
             self.objective += expr
+
+    def _flatten_expr_list(self, value):
+        if isinstance(value, sp.MatrixBase):
+            return [sp.sympify(item) for item in value]
+        if isinstance(value, (list, tuple)):
+            result = []
+            for item in value:
+                result.extend(self._flatten_expr_list(item))
+            return result
+        return [sp.sympify(value)]
+
+    def _is_sequence_like(self, value):
+        return isinstance(value, (list, tuple, sp.MatrixBase))
+
+    def _validate_residual_weight(self, weight):
+        weight_expr = sp.sympify(weight)
+        if self._is_numeric_expr(weight_expr) and float(sp.N(weight_expr)) < 0.0:
+            raise ValueError("residual weight must be non-negative")
+        decision_symbols = set(self.states) | set(self.controls)
+        if weight_expr.free_symbols.intersection(decision_symbols):
+            raise ValueError("residual weight must not depend on state or control variables")
+        return weight_expr
+
+    def add_residual(self, residual, weight=1.0):
+        """
+        Add least-squares residual cost terms:
+            0.5 * weight_i * residual_i^2
+
+        `residual` may be a scalar, list/tuple, or SymPy Matrix. `weight` may be
+        a scalar broadcast to every residual or a same-length diagonal weight
+        list/tuple/Matrix. Dense weight matrices are intentionally not supported.
+        """
+        residuals = self._flatten_expr_list(residual)
+        if not residuals:
+            raise ValueError("add_residual requires at least one residual")
+
+        weight_is_sequence = self._is_sequence_like(weight)
+        weights = self._flatten_expr_list(weight)
+        if not weight_is_sequence and len(weights) == 1:
+            weights = weights * len(residuals)
+        elif len(weights) != len(residuals):
+            raise ValueError("residual weight length must match residual length")
+
+        for residual_expr, weight_expr in zip(residuals, weights):
+            self.residuals.append(sp.sympify(residual_expr))
+            self.residual_weights.append(self._validate_residual_weight(weight_expr))
+
+    def _least_squares_objective(self, substitutions=None):
+        total = sp.sympify(0)
+        for residual, weight in zip(self.residuals, self.residual_weights):
+            r_expr = residual
+            w_expr = weight
+            if substitutions:
+                r_expr = sp.simplify(r_expr.subs(substitutions))
+                w_expr = sp.simplify(w_expr.subs(substitutions))
+            total += sp.Rational(1, 2) * w_expr * r_expr**2
+        return sp.simplify(total)
+
+    def _total_objective(self, substitutions=None):
+        general = sp.sympify(self.objective)
+        if substitutions:
+            general = sp.simplify(general.subs(substitutions))
+        return sp.simplify(general + self._least_squares_objective(substitutions))
+
+    def _residual_gauss_newton_hessian(self, xu_vec, substitutions=None):
+        dim = xu_vec.rows
+        hess = sp.zeros(dim, dim)
+        for residual, weight in zip(self.residuals, self.residual_weights):
+            r_expr = residual
+            w_expr = weight
+            if substitutions:
+                r_expr = sp.simplify(r_expr.subs(substitutions))
+                w_expr = sp.simplify(w_expr.subs(substitutions))
+            jac = sp.Matrix([r_expr]).jacobian(xu_vec)
+            hess += w_expr * (jac.T * jac)
+        return sp.simplify(hess)
 
     def subject_to(self, *constraints, weight=None, loss='L2'):
         """
@@ -525,17 +603,21 @@ class OptimalControlModel:
         xu_vec = sp.Matrix.vstack(x_vec, u_vec)
         u_zero = self._terminal_substitutions()
 
-        objective_terminal = sp.simplify(self.objective.subs(u_zero))
+        objective_terminal = self._total_objective(u_zero)
+        general_objective_terminal = sp.simplify(sp.sympify(self.objective).subs(u_zero))
         constraints_terminal = [sp.simplify(c.subs(u_zero)) for c in self.constraints]
 
         grad_cost = sp.Matrix([objective_terminal]).jacobian(xu_vec).T
         q_grad = grad_cost[:nx, :]
         r_grad = grad_cost[nx:, :]
 
-        hess_cost = sp.hessian(objective_terminal, xu_vec)
-        Q_hess_obj = hess_cost[:nx, :nx]
-        R_hess_obj = hess_cost[nx:, nx:]
-        H_hess_obj = hess_cost[nx:, :nx]
+        hess_cost_exact = sp.hessian(objective_terminal, xu_vec)
+        hess_cost_gn = sp.hessian(general_objective_terminal, xu_vec)
+        hess_cost_gn += self._residual_gauss_newton_hessian(xu_vec, u_zero)
+        hess_cost_delta = sp.simplify(hess_cost_exact - hess_cost_gn)
+        Q_hess_gn = hess_cost_gn[:nx, :nx]
+        R_hess_gn = hess_cost_gn[nx:, nx:]
+        H_hess_gn = hess_cost_gn[nx:, :nx]
 
         lam_sym = [sp.symbols(f"lam_{i}") for i in range(nc)]
         hess_con_total = sp.zeros(nx + nu, nx + nu)
@@ -543,13 +625,14 @@ class OptimalControlModel:
             for i in range(nc):
                 hess_con_total += lam_sym[i] * sp.hessian(constraints_terminal[i], xu_vec)
 
-        Q_hess_con = hess_con_total[:nx, :nx]
-        R_hess_con = hess_con_total[nx:, nx:]
-        H_hess_con = hess_con_total[nx:, :nx]
+        hess_mode1_delta = sp.simplify(hess_cost_delta + hess_con_total)
+        Q_hess_delta = hess_mode1_delta[:nx, :nx]
+        R_hess_delta = hess_mode1_delta[nx:, nx:]
+        H_hess_delta = hess_mode1_delta[nx:, :nx]
 
         exprs = [
-            q_grad, r_grad, Q_hess_obj, R_hess_obj, H_hess_obj,
-            Q_hess_con, R_hess_con, H_hess_con, objective_terminal
+            q_grad, r_grad, Q_hess_gn, R_hess_gn, H_hess_gn,
+            Q_hess_delta, R_hess_delta, H_hess_delta, objective_terminal
         ]
 
         code = "template<typename T, int Mode>\n"
@@ -557,7 +640,7 @@ class OptimalControlModel:
         code += self._generate_unpack_block(source_kp=True, expressions=exprs)
 
         used_syms = set()
-        for expr in [Q_hess_con, R_hess_con, H_hess_con]:
+        for expr in [Q_hess_delta, R_hess_delta, H_hess_delta]:
             if hasattr(expr, 'free_symbols'):
                 used_syms.update(expr.free_symbols)
         for i in range(nc):
@@ -572,19 +655,19 @@ class OptimalControlModel:
         )
 
         target_names = ["Q", "R", "H"]
-        obj_mats = [Q_hess_obj, R_hess_obj, H_hess_obj]
-        con_mats = [Q_hess_con, R_hess_con, H_hess_con]
-        for name, mat_obj, mat_con in zip(target_names, obj_mats, con_mats):
+        gn_mats = [Q_hess_gn, R_hess_gn, H_hess_gn]
+        delta_mats = [Q_hess_delta, R_hess_delta, H_hess_delta]
+        for name, mat_gn, mat_delta in zip(target_names, gn_mats, delta_mats):
             code += f"\n        // terminal {name} (Mode 0=GN, 1=Exact)\n"
-            rows = mat_obj.shape[0]
-            cols = mat_obj.shape[1]
+            rows = mat_gn.shape[0]
+            cols = mat_gn.shape[1]
             for r in range(rows):
                 for c in range(cols):
-                    val_obj = mat_obj[r, c]
-                    val_con = mat_con[r, c]
-                    code += f"        kp.{name}({r},{c}) = {sp.ccode(val_obj)};\n"
-                    if sp.sympify(val_con).is_zero is not True:
-                        code += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {sp.ccode(val_con)};\n"
+                    val_gn = mat_gn[r, c]
+                    val_delta = mat_delta[r, c]
+                    code += f"        kp.{name}({r},{c}) = {sp.ccode(val_gn)};\n"
+                    if sp.sympify(val_delta).is_zero is not True:
+                        code += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {sp.ccode(val_delta)};\n"
 
         code += f"\n        kp.cost = {sp.ccode(objective_terminal)};\n"
         code += "    }\n\n"
@@ -1085,16 +1168,25 @@ class OptimalControlModel:
         # 3.5 Derivatives for Cost & Constraints (Independent of Integrator)
         xu_vec = sp.Matrix.vstack(x_vec, u_vec)
         
+        total_objective = self._total_objective()
+        general_objective = sp.sympify(self.objective)
+
         # Cost Derivatives
-        grad_cost = sp.Matrix([self.objective]).jacobian(xu_vec).T
+        grad_cost = sp.Matrix([total_objective]).jacobian(xu_vec).T
         q_grad = grad_cost[:nx, :]
         r_grad = grad_cost[nx:, :]
         
-        # Hessian Cost
-        hess_cost = sp.hessian(self.objective, xu_vec)
-        Q_hess_obj = hess_cost[:nx, :nx]
-        R_hess_obj = hess_cost[nx:, nx:]
-        H_hess_obj = hess_cost[nx:, :nx]
+        # Cost Hessians:
+        # - Mode 0 uses the exact general-objective Hessian plus the true
+        #   Gauss-Newton residual Hessian J^T W J.
+        # - Mode 1 adds the residual second-order terms and constraint Hessians.
+        hess_cost_exact = sp.hessian(total_objective, xu_vec)
+        hess_cost_gn = sp.hessian(general_objective, xu_vec)
+        hess_cost_gn += self._residual_gauss_newton_hessian(xu_vec)
+        hess_cost_delta = sp.simplify(hess_cost_exact - hess_cost_gn)
+        Q_hess_gn = hess_cost_gn[:nx, :nx]
+        R_hess_gn = hess_cost_gn[nx:, nx:]
+        H_hess_gn = hess_cost_gn[nx:, :nx]
         
         # Constraint Derivatives
         g_vec = sp.Matrix(self.constraints) if nc > 0 else sp.Matrix.zeros(0,1)
@@ -1109,33 +1201,18 @@ class OptimalControlModel:
                 hess_g_i = sp.hessian(self.constraints[i], xu_vec)
                 hess_con_total += lam_sym[i] * hess_g_i
         
-        Q_hess_con = hess_con_total[:nx, :nx]
-        R_hess_con = hess_con_total[nx:, nx:]
-        H_hess_con = hess_con_total[nx:, :nx]
+        hess_mode1_delta = sp.simplify(hess_cost_delta + hess_con_total)
+        Q_hess_delta = hess_mode1_delta[:nx, :nx]
+        R_hess_delta = hess_mode1_delta[nx:, nx:]
+        H_hess_delta = hess_mode1_delta[nx:, :nx]
         
         # CSE Constraints/Cost
         print("Optimizing expressions (CSE)...")
         repl_con, reduced_con = sp.cse([g_vec, C_expr, D_expr], symbols=sp.numbered_symbols("tmp_c"))
         repl_cost, reduced_cost = sp.cse(
-            [q_grad, r_grad, Q_hess_obj, R_hess_obj, H_hess_obj, Q_hess_con, R_hess_con, H_hess_con, self.objective], 
+            [q_grad, r_grad, Q_hess_gn, R_hess_gn, H_hess_gn, Q_hess_delta, R_hess_delta, H_hess_delta, total_objective],
             symbols=sp.numbered_symbols("tmp_j")
         )
-        
-        # [NEW] Gauss-Newton Hessian (Objective Only)
-        # H_gn = J^T W J. Wait, self.objective might not be in LS form explicitly.
-        # But commonly we assume H_obj is dominated by J^T J if residuals are small.
-        # Acados assumes cost is explicitly y - y_ref.
-        # For general objective, if it is convex, H_obj is PSD.
-        # If we want GN, we need the user to provide LS terms? 
-        # Or we just assume H_obj is good, but we DROP the constraint Hessian.
-        # "Gauss-Newton" in SQP context usually means dropping the Constraint Hessian (Lagrangian term).
-        # So H_approx = H_obj (assuming H_obj is PSD).
-        # Let's generate a separate set of expressions where we don't add hess_con_total.
-        
-        # Actually, reduced_cost contains 8 matrices: q, r, Q_obj, R_obj, H_obj, Q_con, R_con, H_con.
-        # We can just construct a separate compute_gn function that uses Q_obj but ignores Q_con!
-        # The CSE `reduced_cost` already separates them.
-        # So we just need to generate a new C++ function `compute_gn` that assigns Q = Q_obj (instead of Q_obj + Q_con).
         
         # 5. Code Construction
         
@@ -1219,11 +1296,8 @@ class OptimalControlModel:
         code_compute_soc_con = self._generate_soc_constraints_body()
 
         # Compute Cost Body
-        # Template param: 0 = Exact (with Con Hessian), 1 = GN (without Con Hessian)
-        # Note: We also had 'Exact' bool before to toggle Con Hessian?
-        # Let's redefine: compute_cost_impl<T, Mode>
-        # Mode 0: Gauss-Newton (Q = Q_obj only)
-        # Mode 1: Exact (Q = Q_obj + Q_con)
+        # Mode 0: Gauss-Newton residual Hessian + exact general-objective Hessian.
+        # Mode 1: Exact objective Hessian + constraint Hessian.
         
         code_cost_impl = "template<typename T, int Mode>\n"
         code_cost_impl += "    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
@@ -1232,16 +1306,18 @@ class OptimalControlModel:
         # We must use the *derivative* expressions, because parameters used only in linear terms
         # of the cost/constraints will disappear from the derivatives (gradients/Hessians),
         # but would still be flagged as "used" if we checked the primal expressions.
-        cost_exprs = [q_grad, r_grad, Q_hess_obj, R_hess_obj, H_hess_obj, Q_hess_con, R_hess_con, H_hess_con, self.objective]
+        cost_exprs = [
+            q_grad, r_grad, Q_hess_gn, R_hess_gn, H_hess_gn,
+            Q_hess_delta, R_hess_delta, H_hess_delta, total_objective
+        ]
         
         code_unpack = self._generate_unpack_block(source_kp=True, expressions=cost_exprs)
         if nc > 0:
-            # Check if lambdas are used in the Constraint Hessian expressions
-            # H_con = sum(lam_i * H_g_i)
-            # We can check if lam_i is in free_symbols of Q_hess_con, R_hess_con, H_hess_con
+            # Check if lambdas are used in the exact-mode delta expressions
+            # H_delta includes sum(lam_i * H_g_i) plus residual second-order terms.
             
             # Combine all Hessian expressions for check
-            hess_exprs = [Q_hess_con, R_hess_con, H_hess_con]
+            hess_exprs = [Q_hess_delta, R_hess_delta, H_hess_delta]
             used_syms = set()
             for expr in hess_exprs:
                 if hasattr(expr, 'free_symbols'):
@@ -1265,41 +1341,35 @@ class OptimalControlModel:
         assign_grads = [("q", 0, nx, 1), ("r", 1, nu, 1)]
         code_assign += self._generate_assign_block(assign_grads, reduced_cost)
         
-        # The key difference: generate_assign_block_exact handles the conditional addition
-        # Mode 1 -> Exact. Mode 0 -> GN.
-        # We need to adapt _generate_assign_block_exact to use the integer template.
-        
         # Inline modified generation logic here
         target_names = ["Q", "R", "H"]
-        offset_obj = 2
-        offset_con = 5
+        offset_gn = 2
+        offset_delta = 5
         
         for i, name in enumerate(target_names):
-            idx_obj = offset_obj + i
-            idx_con = offset_con + i
+            idx_gn = offset_gn + i
+            idx_delta = offset_delta + i
             
-            mat_obj = reduced_cost[idx_obj]
-            mat_con = reduced_cost[idx_con]
+            mat_gn = reduced_cost[idx_gn]
+            mat_delta = reduced_cost[idx_delta]
             
-            rows = mat_obj.shape[0]
-            cols = mat_obj.shape[1]
+            rows = mat_gn.shape[0]
+            cols = mat_gn.shape[1]
             
             code_assign += f"\n        // {name} (Mode 0=GN, 1=Exact)\n"
             for r in range(rows):
                 for c in range(cols):
-                    val_obj = mat_obj[r, c]
-                    val_con = mat_con[r, c]
+                    val_gn = mat_gn[r, c]
+                    val_delta = mat_delta[r, c]
                     
-                    code_val_obj = sp.ccode(val_obj)
-                    code_val_con = sp.ccode(val_con)
+                    code_val_gn = sp.ccode(val_gn)
+                    code_val_delta = sp.ccode(val_delta)
                     
-                    # kp.Q = Q_obj
-                    if val_con == 0:
-                        code_assign += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
+                    if val_delta == 0:
+                        code_assign += f"        kp.{name}({r},{c}) = {code_val_gn};\n"
                     else:
-                        code_assign += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
-                        # Add constraint hessian only if Mode == 1
-                        code_assign += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {code_val_con};\n"
+                        code_assign += f"        kp.{name}({r},{c}) = {code_val_gn};\n"
+                        code_assign += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {code_val_delta};\n"
         
         if len(reduced_cost) > 8:
             code_assign += f"\n        kp.cost = {sp.ccode(reduced_cost[8])};\n"
@@ -1308,19 +1378,6 @@ class OptimalControlModel:
         code_cost_impl += "    }\n\n"
         
         # Wrappers
-        # compute_cost -> GN (Default? No, existing code expects Exact usually? Or GN?)
-        # Let's align with Acados philosophy: GN is preferred for control.
-        # But strictly, compute_cost usually means evaluate everything.
-        # Solver calls compute() which calls compute_cost().
-        # We need to exposing a way to select.
-        # The current C++ code in MiniSolver calls Model::compute_cost(kp).
-        # We should make compute_cost use a template or runtime switch?
-        # Runtime switch inside compute is nice.
-        
-        # New approach: compute_cost takes a flag? 
-        # But signature is fixed in solver.
-        
-        # Let's provide explicit named functions.
         code_wrappers = "template<typename T>\n"
         code_wrappers += "    static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
         code_wrappers += "        compute_cost_impl<T, 0>(kp);\n"

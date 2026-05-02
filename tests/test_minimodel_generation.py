@@ -4,6 +4,8 @@ import sys
 import tempfile
 import textwrap
 
+import sympy as sp
+
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(ROOT, "python"))
@@ -240,6 +242,224 @@ def test_quad_constraint_domain_guards():
     expect_value_error(non_psd_q, "PSD")
 
 
+def test_add_residual_generates_true_gauss_newton_hessian():
+    model = OptimalControlModel("ResidualCostModel")
+    x = model.state("x")
+    u = model.control("u")
+    model.set_dynamics(x, u)
+    model.add_residual(sp.sin(x), weight=3.0)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        source = os.path.join(tmpdir, "residual_cost_check.cpp")
+        exe = os.path.join(tmpdir, "residual_cost_check")
+        with open(source, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(
+                """
+                #include "residualcostmodel.h"
+                #include <cmath>
+                #include <cstdlib>
+
+                int main() {
+                    using Model = minisolver::ResidualCostModel;
+                    minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                    kp.set_zero();
+                    kp.x(0) = 0.4;
+
+                    const double s = std::sin(0.4);
+                    const double c = std::cos(0.4);
+                    const double expected_cost = 0.5 * 3.0 * s * s;
+                    const double expected_grad = 3.0 * s * c;
+                    const double expected_gn_hess = 3.0 * c * c;
+                    const double expected_exact_hess = 3.0 * (c * c - s * s);
+
+                    Model::compute_cost_gn(kp);
+                    if (std::abs(kp.cost - expected_cost) > 1e-12) return 1;
+                    if (std::abs(kp.q(0) - expected_grad) > 1e-12) return 2;
+                    if (std::abs(kp.Q(0,0) - expected_gn_hess) > 1e-12) return 3;
+
+                    Model::compute_cost_exact(kp);
+                    if (std::abs(kp.cost - expected_cost) > 1e-12) return 4;
+                    if (std::abs(kp.q(0) - expected_grad) > 1e-12) return 5;
+                    if (std::abs(kp.Q(0,0) - expected_exact_hess) > 1e-12) return 6;
+                    return 0;
+                }
+                """))
+        subprocess.run(
+            [
+                "g++", "-std=c++17", "-DUSE_CUSTOM_MATRIX",
+                f"-I{ROOT}/include", f"-I{tmpdir}", source, "-o", exe
+            ],
+            check=True,
+        )
+        subprocess.run([exe], check=True)
+
+
+def test_add_residual_mixes_general_objective_and_vector_weights():
+    model = OptimalControlModel("MixedResidualCostModel")
+    x = model.state("x")
+    u = model.control("u")
+    model.set_dynamics(x, u)
+    model.minimize(x**4)
+    model.add_residual([sp.sin(x), u], weight=[2.0, 0.5])
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        source = os.path.join(tmpdir, "mixed_residual_cost_check.cpp")
+        exe = os.path.join(tmpdir, "mixed_residual_cost_check")
+        with open(source, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(
+                """
+                #include "mixedresidualcostmodel.h"
+                #include <cmath>
+                #include <cstdlib>
+
+                int main() {
+                    using Model = minisolver::MixedResidualCostModel;
+                    minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                    kp.set_zero();
+                    kp.x(0) = 0.3;
+                    kp.u(0) = -0.2;
+
+                    const double x = 0.3;
+                    const double u = -0.2;
+                    const double s = std::sin(x);
+                    const double c = std::cos(x);
+                    const double expected_cost = std::pow(x, 4) + s * s + 0.25 * u * u;
+                    const double expected_q = 4.0 * std::pow(x, 3) + 2.0 * s * c;
+                    const double expected_r = 0.5 * u;
+                    const double expected_gn_Q = 12.0 * x * x + 2.0 * c * c;
+                    const double expected_exact_Q = 12.0 * x * x + 2.0 * (c * c - s * s);
+
+                    Model::compute_cost_gn(kp);
+                    if (std::abs(kp.cost - expected_cost) > 1e-12) return 1;
+                    if (std::abs(kp.q(0) - expected_q) > 1e-12) return 2;
+                    if (std::abs(kp.r(0) - expected_r) > 1e-12) return 3;
+                    if (std::abs(kp.Q(0,0) - expected_gn_Q) > 1e-12) return 4;
+                    if (std::abs(kp.R(0,0) - 0.5) > 1e-12) return 5;
+
+                    Model::compute_cost_exact(kp);
+                    if (std::abs(kp.Q(0,0) - expected_exact_Q) > 1e-12) return 6;
+                    if (std::abs(kp.R(0,0) - 0.5) > 1e-12) return 7;
+                    return 0;
+                }
+                """))
+        subprocess.run(
+            [
+                "g++", "-std=c++17", "-DUSE_CUSTOM_MATRIX",
+                f"-I{ROOT}/include", f"-I{tmpdir}", source, "-o", exe
+            ],
+            check=True,
+        )
+        subprocess.run([exe], check=True)
+
+
+def test_add_residual_terminal_stage_projects_controls():
+    model = OptimalControlModel("TerminalResidualCostModel")
+    x = model.state("x")
+    u = model.control("u")
+    model.set_dynamics(x, u)
+    model.add_residual(x + u, weight=2.0)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        source = os.path.join(tmpdir, "terminal_residual_cost_check.cpp")
+        exe = os.path.join(tmpdir, "terminal_residual_cost_check")
+        with open(source, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(
+                """
+                #include "terminalresidualcostmodel.h"
+                #include <cmath>
+                #include <cstdlib>
+
+                int main() {
+                    using Model = minisolver::TerminalResidualCostModel;
+                    minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                    kp.set_zero();
+                    kp.x(0) = 3.0;
+                    kp.u(0) = 10.0;
+                    Model::compute_terminal_cost_gn(kp);
+                    if (std::abs(kp.cost - 9.0) > 1e-12) return 1;
+                    if (std::abs(kp.q(0) - 6.0) > 1e-12) return 2;
+                    if (std::abs(kp.r(0)) > 1e-12) return 3;
+                    if (std::abs(kp.Q(0,0) - 2.0) > 1e-12) return 4;
+                    if (std::abs(kp.R(0,0)) > 1e-12) return 5;
+                    return 0;
+                }
+                """))
+        subprocess.run(
+            [
+                "g++", "-std=c++17", "-DUSE_CUSTOM_MATRIX",
+                f"-I{ROOT}/include", f"-I{tmpdir}", source, "-o", exe
+            ],
+            check=True,
+        )
+        subprocess.run([exe], check=True)
+
+
+def test_add_residual_validates_weights():
+    def negative_weight():
+        model = OptimalControlModel("NegativeResidualWeightModel")
+        x = model.state("x")
+        model.add_residual(x, weight=-1.0)
+
+    def mismatched_weights():
+        model = OptimalControlModel("MismatchedResidualWeightModel")
+        x, y = model.state("x", "y")
+        model.add_residual([x, y], weight=[1.0])
+
+    expect_value_error(negative_weight, "weight")
+    expect_value_error(mismatched_weights, "weight")
+
+
+def test_add_residual_accepts_parameter_vector_weight():
+    model = OptimalControlModel("ParameterResidualWeightModel")
+    x = model.state("x")
+    u = model.control("u")
+    x_weight = model.parameter("x_weight")
+    model.set_dynamics(x, u)
+    model.add_residual([x], weight=[x_weight])
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        source = os.path.join(tmpdir, "parameter_residual_weight_check.cpp")
+        exe = os.path.join(tmpdir, "parameter_residual_weight_check")
+        with open(source, "w", encoding="utf-8") as f:
+            f.write(textwrap.dedent(
+                """
+                #include "parameterresidualweightmodel.h"
+                #include <cmath>
+                #include <cstdlib>
+
+                int main() {
+                    using Model = minisolver::ParameterResidualWeightModel;
+                    minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                    kp.set_zero();
+                    kp.x(0) = 0.5;
+                    kp.p(0) = 4.0;
+
+                    Model::compute_cost_gn(kp);
+                    if (std::abs(kp.cost - 0.5) > 1e-12) return 1;
+                    if (std::abs(kp.q(0) - 2.0) > 1e-12) return 2;
+                    if (std::abs(kp.Q(0,0) - 4.0) > 1e-12) return 3;
+
+                    Model::compute_cost_exact(kp);
+                    if (std::abs(kp.cost - 0.5) > 1e-12) return 4;
+                    if (std::abs(kp.q(0) - 2.0) > 1e-12) return 5;
+                    if (std::abs(kp.Q(0,0) - 4.0) > 1e-12) return 6;
+                    return 0;
+                }
+                """))
+        subprocess.run(
+            [
+                "g++", "-std=c++17", "-DUSE_CUSTOM_MATRIX",
+                f"-I{ROOT}/include", f"-I{tmpdir}", source, "-o", exe
+            ],
+            check=True,
+        )
+        subprocess.run([exe], check=True)
+
+
 def test_generated_terminal_stage_uses_x_only_projection():
     model = OptimalControlModel("TerminalProjectionModel")
     x = model.state("x")
@@ -294,4 +514,9 @@ if __name__ == "__main__":
     test_quad_boundary_projection_generates_soc_override()
     test_quad_boundary_projection_splits_qp_and_true_residuals()
     test_quad_constraint_domain_guards()
+    test_add_residual_generates_true_gauss_newton_hessian()
+    test_add_residual_mixes_general_objective_and_vector_weights()
+    test_add_residual_terminal_stage_projects_controls()
+    test_add_residual_validates_weights()
+    test_add_residual_accepts_parameter_vector_weight()
     test_generated_terminal_stage_uses_x_only_projection()

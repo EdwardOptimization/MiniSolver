@@ -18,7 +18,7 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
 ### ⚡ Blazing Fast Performance
 * **Riccati Recursion**: Utilizes a specialized block-tridiagonal linear solver ($O(N)$ complexity) tailored for optimal control structures.
 * **SQP-RTI Support**: Real-Time Iteration (SQP-RTI) mode allows for **>1 kHz** control loops by performing a single quadratic programming sub-step per control tick.
-* **Analytical Derivatives**: Uses SymPy to generate flattened, algebraically simplified C++ code for Jacobians and Hessians at compile-time, eliminating runtime overhead.
+* **Analytical Derivatives**: Uses SymPy to generate flattened, algebraically simplified C++ code for Jacobians and Hessians at compile-time, including true Gauss-Newton Hessians for explicit least-squares residuals.
 * **🔥 Fused Riccati Kernels**: Unlike solvers that use generic matrix libraries, MiniSolver uses Python (SymPy) to symbolically fuse the Riccati backward pass (`Q + A'PA`) into a single, flattened C++ function. This eliminates all loop overhead and explicitly bypasses multiplication by zero, achieving **perfect sparsity exploitation** for small-to-medium systems ($N_x < 20$).
 
 ### 🛡️ Embedded Safety & Robustness
@@ -77,9 +77,9 @@ model.set_dynamics(px, vx) # ... assume vx defined
 model.set_dynamics(py, vy)
 model.set_dynamics(vz, thrust - 9.81)
 
-# 3. Objective (Least Squares)
-model.minimize( 10.0 * (px - 0.0)**2 ) # Target x=0
-model.minimize( 0.1 * thrust**2 )      # Regularization
+# 3. Objective
+model.add_residual(px - 0.0, weight=20.0) # 0.5 * 20 * (px - 0)^2
+model.add_residual(thrust, weight=0.2)    # 0.5 * 0.2 * thrust^2
 
 # 4. Constraints
 model.subject_to( thrust <= 20.0 )     # Hard Constraint

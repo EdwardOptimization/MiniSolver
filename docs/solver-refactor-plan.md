@@ -244,6 +244,59 @@ Current codegen status:
 - Full constraint packet objects are intentionally deferred. The current
   first-stage split is field-level: `g_true` vs `g_val/C/D`.
 
+## Hessian Approximation Contract
+
+MiniSolver's current Hessian modes are NMPC-oriented approximations, not a full
+generic NLP Hessian stack.
+
+The complete OCP Lagrangian Hessian would contain:
+
+```text
+objective Hessian
++ path-constraint Hessians weighted by constraint duals
++ dynamics-defect Hessians weighted by dynamics multipliers
+```
+
+The current generated model and Riccati path intentionally use the following
+contract:
+
+| Mode | Cost Hessian | Path constraint Hessian | Dynamics Hessian |
+| --- | --- | --- | --- |
+| `OBJECTIVE_HESSIAN_ONLY` | exact Hessian for `minimize()` terms plus `Jᵀ W J` for `add_residual()` terms | ignored | ignored |
+| `EXACT` | exact Hessian of `minimize() + 0.5 * sum(w_i * r_i²)` | included as `sum(lambda_i * Hessian(g_i))` | ignored |
+
+MiniModel exposes the least-squares structure explicitly through:
+
+```python
+model.add_residual(residual, weight=1.0)
+```
+
+The method accepts a scalar residual or a list/tuple/SymPy vector of residuals.
+A scalar weight is broadcast to all residuals; a list/tuple/vector weight is
+treated as a diagonal weight and must match the residual length. Dense weight
+matrices are intentionally not part of the first API. Existing `minimize(expr)`
+continues to mean a general scalar objective term and is not auto-detected as a
+least-squares residual.
+
+Dynamics still uses exact first-order information: generated or runtime
+integrator code computes `f_resid`, `A = df/dx`, and `B = df/du`. Those
+Jacobians are used by the Riccati recursion. The second-order dynamics term
+`pi^T * d²f/dz²` is not currently generated or assembled.
+
+This is deliberate for the near-term MiniSolver target:
+
+- realtime NMPC and SQP-RTI commonly prioritize accurate dynamics Jacobians
+  over full dynamics curvature;
+- dropping dynamics Hessians keeps the Riccati path smaller, more predictable,
+  and less likely to introduce indefinite curvature;
+- path-constraint Hessians are optional via `EXACT`, but the default remains
+  `OBJECTIVE_HESSIAN_ONLY` for speed and robustness.
+
+If full OCP exact Hessians are added later, they should be introduced as a
+separate, explicitly named mode and protected by reference tests and benchmark
+comparisons. Do not silently reinterpret the current `EXACT` mode as including
+dynamics Hessians.
+
 ## Current State After Solver Build-State Pass
 
 Completed after the kernel pass:

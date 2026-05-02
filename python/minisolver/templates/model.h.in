@@ -150,7 +150,7 @@ struct {{MODEL_NAME}} {
         compute_dynamics(kp, type, dt);
         compute_qp_constraints(kp);
         compute_true_constraints(kp);
-        compute_cost(kp); // Default GN
+        compute_cost(kp); // Default exact Hessian for backward compatibility.
     }
 
     template<typename T>
