@@ -857,29 +857,13 @@ private:
     }
 
     bool should_stop_after_line_search_(
-        const TrajArray& traj, double alpha, double max_dual_inf) const
+        const TrajArray& /*traj*/, double /*alpha*/, double /*max_dual_inf*/) const
     {
-        const double current_prim_inf = compute_max_violation(traj);
-        bool is_feasible = (current_prim_inf < config.tol_con);
-        bool is_dual_feasible = (max_dual_inf < config.tol_dual);
-
-        if (context_.solve.mu > config.mu_final || alpha <= 1e-5) {
-            return false;
-        }
-
-        double max_dx = 0.0;
-        for (int k = 0; k <= N; ++k) {
-            // Use MatOps::norm_inf to support both Eigen and MiniMatrix.
-            double dx_norm = MatOps::norm_inf(traj[k].dx);
-            if (dx_norm > max_dx) {
-                max_dx = dx_norm;
-            }
-        }
-
-        // Use unscaled Newton step (max_dx) to check stationarity.
-        // Using (alpha * max_dx) is dangerous because small alpha (blocked step)
-        // can look like convergence.
-        return max_dx < config.tol_grad && is_feasible && is_dual_feasible;
+        // After line search, primal data belongs to the accepted trajectory, while the dual
+        // infeasibility metric still belongs to the pre-line-search Riccati solve. Do not combine
+        // those snapshots to certify OPTIMAL. The next iteration or postsolve() will evaluate
+        // fresh residuals on a single consistent iterate.
+        return false;
     }
 
     void update_metrics_after_globalization_(double max_dual_inf)
@@ -1439,24 +1423,7 @@ private:
                 }
 
                 if (type == 1 && w > 1e-6) {
-                    // Keep the L1 dual box non-empty before projecting lam. If s is too small,
-                    // saved_mu / s can exceed any valid lam < w; raise s first so both
-                    // complementarity and w-lam > 0 can hold.
-                    const double barrier_floor = std::max(
-                        config.min_barrier_slack, std::numeric_limits<double>::epsilon());
-                    const double soft_dual_floor = std::min(2.0 * barrier_floor, 0.5 * w);
-                    const double lam_max = w - soft_dual_floor;
-                    const double min_s_for_box = saved_mu / lam_max;
-                    if (traj[k].s(i) < min_s_for_box) {
-                        traj[k].s(i) = min_s_for_box;
-                    }
-
-                    const double lam_min = saved_mu / traj[k].s(i);
-                    traj[k].lam(i) = std::clamp(traj[k].lam(i), lam_min, lam_max);
-
-                    // Rebuild the soft slack on the central path for the restored mu.
-                    const double soft_dual = std::max(soft_dual_floor, w - traj[k].lam(i));
-                    traj[k].soft_s(i) = std::max(config.min_barrier_slack, saved_mu / soft_dual);
+                    (void)project_l1_soft_pair_to_central_path_(traj[k], i, saved_mu, w);
                 } else {
                     // Preserve dual info from restoration if valuable, but ensure complementarity
                     // lower bound.
@@ -1477,6 +1444,32 @@ private:
         return success && MatOps::is_finite_scalar(violation_after)
             && (violation_after <= feasible_bound
                 || violation_after < violation_before - improvement_tol);
+    }
+
+    bool project_l1_soft_pair_to_central_path_(Knot& kp, int i, double mu, double w) const
+    {
+        const double barrier_floor
+            = std::max(config.min_barrier_slack, std::numeric_limits<double>::epsilon());
+        const double soft_dual_floor = std::min(2.0 * barrier_floor, 0.5 * w);
+        const double lam_max = w - soft_dual_floor;
+        if (!MatOps::is_finite_scalar(lam_max) || lam_max <= barrier_floor) {
+            return false;
+        }
+
+        const double min_s_for_box = mu / lam_max;
+        if (kp.s(i) < min_s_for_box) {
+            kp.s(i) = min_s_for_box;
+        }
+
+        const double lam_min = mu / kp.s(i);
+        kp.lam(i) = std::clamp(kp.lam(i), lam_min, lam_max);
+
+        const double soft_dual = std::max(soft_dual_floor, w - kp.lam(i));
+        kp.soft_s(i) = std::max(config.min_barrier_slack, mu / soft_dual);
+
+        return MatOps::is_finite_scalar(kp.s(i)) && MatOps::is_finite_scalar(kp.lam(i))
+            && MatOps::is_finite_scalar(kp.soft_s(i)) && kp.s(i) > 0.0 && kp.lam(i) > 0.0
+            && (w - kp.lam(i)) > config.min_barrier_slack;
     }
 
 public:
@@ -1831,17 +1824,7 @@ private:
                         }
                     }
                     if (type == 1 && w > 1e-6) {
-                        double lam_max = w - config.min_barrier_slack;
-                        if (lam_max < config.min_barrier_slack) {
-                            lam_max = config.min_barrier_slack;
-                        }
-                        if (kp.lam(i) > lam_max) {
-                            kp.lam(i) = lam_max;
-                        }
-                        // Keep soft slack on the central path so barrier terms remain
-                        // well-defined.
-                        kp.soft_s(i) = std::max(
-                            config.min_barrier_slack, context_.solve.mu / (w - kp.lam(i)));
+                        (void)project_l1_soft_pair_to_central_path_(kp, i, context_.solve.mu, w);
                     }
                 }
             }

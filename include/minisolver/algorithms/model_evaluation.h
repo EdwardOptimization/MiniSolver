@@ -162,7 +162,14 @@ namespace detail {
             }
         }
 
-        detail::dispatch_compute_dynamics<Model>(kp, config.integrator, dt, config.newton_config);
+        if (is_terminal) {
+            kp.f_resid.setZero();
+            kp.A.setZero();
+            kp.B.setZero();
+        } else {
+            detail::dispatch_compute_dynamics<Model>(
+                kp, config.integrator, dt, config.newton_config);
+        }
         evaluate_qp_constraints<Model>(kp, is_terminal);
 
         evaluate_true_constraints<Model>(kp, is_terminal);

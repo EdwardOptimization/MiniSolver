@@ -123,6 +123,56 @@ struct ExplicitOnlyDispatchModel {
     }
 };
 
+struct TerminalDynamicsCounterModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static inline int dynamics_calls = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + u(0) * dt;
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        ++dynamics_calls;
+        kp.f_resid = integrate(kp.x, kp.u, kp.p, dt, type);
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>&) { }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0);
+        kp.q(0) = 2.0 * kp.x(0);
+        kp.Q(0, 0) = 2.0;
+        kp.r(0) = 0.0;
+        kp.R(0, 0) = 0.0;
+        kp.H(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
 TEST(ImplicitIntegratorTest, DispatchRejectsImplicitWithoutContinuousDynamics)
 {
     KnotPoint<double, ExplicitOnlyDispatchModel::NX, ExplicitOnlyDispatchModel::NU,
@@ -803,14 +853,37 @@ TEST(ImplicitIntegratorTest, TerminalImplicitEvaluationAtZeroDtIsFinite)
     EXPECT_TRUE(kp.f_resid.allFinite());
     EXPECT_TRUE(kp.A.allFinite());
     EXPECT_TRUE(kp.B.allFinite());
-    EXPECT_NEAR(kp.f_resid(0), kp.x(0), 1e-12);
-    EXPECT_NEAR(kp.f_resid(1), kp.x(1), 1e-12);
-    EXPECT_NEAR(kp.A(0, 0), 1.0, 1e-12);
+    EXPECT_NEAR(kp.f_resid(0), 0.0, 1e-12);
+    EXPECT_NEAR(kp.f_resid(1), 0.0, 1e-12);
+    EXPECT_NEAR(kp.A(0, 0), 0.0, 1e-12);
     EXPECT_NEAR(kp.A(0, 1), 0.0, 1e-12);
     EXPECT_NEAR(kp.A(1, 0), 0.0, 1e-12);
-    EXPECT_NEAR(kp.A(1, 1), 1.0, 1e-12);
+    EXPECT_NEAR(kp.A(1, 1), 0.0, 1e-12);
     EXPECT_NEAR(kp.B(0, 0), 0.0, 1e-12);
     EXPECT_NEAR(kp.B(1, 0), 0.0, 1e-12);
+}
+
+TEST(ImplicitIntegratorTest, TerminalEvaluateModelStageSkipsDynamics)
+{
+    using Model = TerminalDynamicsCounterModel;
+    using Knot = KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>;
+
+    SolverConfig config;
+    config.integrator = IntegratorType::RK4_EXPLICIT;
+
+    Knot kp;
+    kp.set_zero();
+    kp.x(0) = 2.0;
+    kp.u(0) = 3.0;
+
+    Model::dynamics_calls = 0;
+    detail::evaluate_model_stage<Model>(kp, config, 0.0, true);
+
+    EXPECT_EQ(Model::dynamics_calls, 0)
+        << "terminal evaluation must not run dynamics/integrator work";
+    EXPECT_DOUBLE_EQ(MatOps::norm_inf(kp.f_resid), 0.0);
+    EXPECT_DOUBLE_EQ(MatOps::norm_inf(kp.A), 0.0);
+    EXPECT_DOUBLE_EQ(MatOps::norm_inf(kp.B), 0.0);
 }
 
 // --- Gauss-Legendre (RK4 Implicit) accuracy: O(dt^4) for linear ---

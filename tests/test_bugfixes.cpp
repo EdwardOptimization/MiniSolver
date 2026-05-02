@@ -212,6 +212,72 @@ struct L1TestModel {
     }
 };
 
+struct TinyWeightL1ResetModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 1e-3 };
+    static constexpr std::array<int, NC> constraint_types = { 1 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + u(0) * dt;
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = kp.x(0);
+        kp.C(0, 0) = 1.0;
+        kp.D(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0) + kp.u(0) * kp.u(0);
+        kp.q(0) = 2.0 * kp.x(0);
+        kp.r(0) = 2.0 * kp.u(0);
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2.0;
+        kp.H(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
+    }
+};
+
 // =============================================================================
 // Bug 1 Test: compute_max_violation must include dynamics defects
 // =============================================================================
@@ -1541,6 +1607,46 @@ TEST(BugfixTest, L1RestorationRebuildKeepsDualInsideBoxWhenSlackIsTiny)
     }
 }
 
+TEST(BugfixTest, L1SlackResetKeepsDualInsideBoxAndCentralPathWhenWeightIsSmall)
+{
+    SolverConfig config;
+    config.mu_init = 1e-4;
+    config.min_barrier_slack = 1e-8;
+
+    using Solver = MiniSolver<TinyWeightL1ResetModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<TinyWeightL1ResetModel, 10>;
+
+    Solver solver(1, Backend::CPU_SERIAL, config);
+    Access::mu(solver) = config.mu_init;
+
+    typename Solver::TrajArray traj;
+    for (int k = 0; k <= 1; ++k) {
+        traj[k].set_zero();
+        traj[k].g_val(0) = 0.0;
+        traj[k].s(0) = 1e-12;
+        traj[k].lam(0) = 1e-12;
+        traj[k].soft_s(0) = 1.0;
+    }
+
+    Access::apply_slack_reset(solver, traj);
+
+    constexpr double w = TinyWeightL1ResetModel::constraint_weights[0];
+    for (int k = 0; k <= 1; ++k) {
+        const double soft_dual = w - traj[k].lam(0);
+        EXPECT_TRUE(MatOps::is_finite_scalar(traj[k].s(0)));
+        EXPECT_TRUE(MatOps::is_finite_scalar(traj[k].lam(0)));
+        EXPECT_TRUE(MatOps::is_finite_scalar(traj[k].soft_s(0)));
+        EXPECT_GT(traj[k].s(0), 0.0);
+        EXPECT_GT(traj[k].lam(0), 0.0);
+        EXPECT_GT(soft_dual, config.min_barrier_slack)
+            << "slack_reset must keep L1 dual strictly inside the box";
+        EXPECT_NEAR(traj[k].s(0) * traj[k].lam(0), config.mu_init, 1e-10)
+            << "slack_reset must preserve hard slack complementarity after L1 box clamp";
+        EXPECT_NEAR(traj[k].soft_s(0) * soft_dual, config.mu_init, 1e-10)
+            << "slack_reset must preserve L1 soft complementarity";
+    }
+}
+
 TEST(BugfixTest, PostLineSearchStopRejectsStaleFeasibilitySnapshot)
 {
     SolverConfig config;
@@ -1568,6 +1674,35 @@ TEST(BugfixTest, PostLineSearchStopRejectsStaleFeasibilitySnapshot)
     EXPECT_FALSE(Access::should_stop_after_line_search(solver, traj, 1.0, /*max_dual_inf=*/0.0))
         << "post-line-search early stop must not trust a stale pre-line-search feasibility "
            "snapshot when the accepted trajectory is infeasible";
+}
+
+TEST(BugfixTest, PostLineSearchStopDoesNotUseStaleDualShortcut)
+{
+    SolverConfig config;
+    config.mu_final = 1e-6;
+    config.tol_con = 1e-8;
+    config.tol_dual = 1e-8;
+    config.tol_grad = 1e-8;
+
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    Solver solver(1, Backend::CPU_SERIAL, config);
+    Access::mu(solver) = 1e-8;
+
+    auto& traj = Access::get_trajectory(solver);
+    for (int k = 0; k <= 1; ++k) {
+        traj[k].dx.setZero();
+        traj[k].du.setZero();
+        traj[k].g_val(0) = -1.0;
+        traj[k].s(0) = 1.0;
+    }
+    traj[0].f_resid(0) = 0.0;
+    traj[1].x(0) = 0.0;
+
+    EXPECT_FALSE(Access::should_stop_after_line_search(solver, traj, 1.0, 0.0))
+        << "post-line-search early OPTIMAL would combine the accepted primal trajectory "
+           "with stale pre-line-search dual residuals";
 }
 
 namespace {
