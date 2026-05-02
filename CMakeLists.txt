@@ -35,8 +35,17 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+option(MINISOLVER_ENABLE_FAST_MATH "Enable -ffast-math for benchmark builds" OFF)
+option(MINISOLVER_ENABLE_NATIVE_ARCH "Enable -march=native for local benchmark builds" OFF)
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-O3 -march=native -ffast-math -Wall -Wextra)
+    add_compile_options(-O3 -Wall -Wextra)
+    if(MINISOLVER_ENABLE_FAST_MATH)
+        add_compile_options(-ffast-math)
+    endif()
+    if(MINISOLVER_ENABLE_NATIVE_ARCH)
+        add_compile_options(-march=native)
+    endif()
 endif()
 
 # =============================================================
