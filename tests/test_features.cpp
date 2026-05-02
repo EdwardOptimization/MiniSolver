@@ -133,7 +133,7 @@ TEST(FeaturesTest, GPUBackendUnsupportedFailsExplicitly)
 
     SolverStatus status = solver.solve();
 
-    EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR)
+    EXPECT_EQ(status, SolverStatus::INVALID_INPUT)
         << "GPU backend is not implemented; it must not silently benchmark as CPU";
 }
 

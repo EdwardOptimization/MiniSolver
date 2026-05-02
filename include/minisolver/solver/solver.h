@@ -954,7 +954,7 @@ private:
                 if (config.print_level >= PrintLevel::INFO) {
                     MLOG_INFO("Line search stagnated at optimal point (PrimInf: "
                         << max_prim_inf << ", DualInf: " << max_dual_inf
-                        << "). Terminating as SOLVED.");
+                        << "). Terminating as OPTIMAL.");
                 }
                 timer.stop();
                 result.status = SolverStatus::OPTIMAL;
@@ -976,7 +976,9 @@ private:
                 // Both Slack Reset and Feasibility Restoration failed (or were disabled).
                 timer.stop();
                 print_iteration_log(result.alpha);
-                result.status = SolverStatus::INFEASIBLE;
+                result.status = config.enable_feasibility_restoration
+                    ? SolverStatus::RESTORATION_FAILED
+                    : SolverStatus::STEP_TOO_SMALL;
                 return result;
             }
         }
@@ -1041,13 +1043,18 @@ private:
         return solve_linear_system_with_retries_(traj, context_.solve.mu, nullptr, true);
     }
 
+    bool is_unsupported_backend_requested_() const
+    {
+        return config.backend == Backend::GPU_MPX || config.backend == Backend::GPU_PCR;
+    }
+
     DirectionResult validate_search_direction_(const TrajArray& traj, bool solve_success)
     {
         DirectionResult result;
         result.solve_success = solve_success;
 
         if (!solve_success) {
-            result.status = SolverStatus::NUMERICAL_ERROR;
+            result.status = SolverStatus::LINEAR_SOLVE_FAILED;
             return result;
         }
 
@@ -1070,6 +1077,17 @@ private:
 
     DirectionResult compute_search_direction_(TrajArray& traj)
     {
+        if (is_unsupported_backend_requested_()) {
+#ifdef USE_CUDA
+            MLOG_ERROR("GPU backend is not implemented yet.");
+#else
+            MLOG_ERROR("CUDA not enabled; GPU backend is unsupported.");
+#endif
+            DirectionResult result;
+            result.status = SolverStatus::INVALID_INPUT;
+            return result;
+        }
+
         timer.start("Linear Solve");
         prepare_direction_workspace_();
 
@@ -1522,10 +1540,15 @@ private:
             return decision;
         }
 
-        // Numerical errors stop immediately.
-        if (step_stat == SolverStatus::NUMERICAL_ERROR) {
+        // Terminal failures stop immediately.
+        if (step_stat == SolverStatus::NUMERICAL_ERROR
+            || step_stat == SolverStatus::LINEAR_SOLVE_FAILED
+            || step_stat == SolverStatus::STEP_TOO_SMALL
+            || step_stat == SolverStatus::INSUFFICIENT_PROGRESS
+            || step_stat == SolverStatus::RESTORATION_FAILED
+            || step_stat == SolverStatus::INVALID_INPUT) {
             decision.should_exit = true;
-            decision.status = SolverStatus::NUMERICAL_ERROR;
+            decision.status = step_stat;
             return decision;
         }
 
@@ -1546,9 +1569,10 @@ private:
             if (config.print_level >= PrintLevel::INFO) {
                 MLOG_INFO("Cost Stagnation detected. Stopping early.");
             }
-            // Mark as UNSOLVED: this is not natural convergence, so postsolve will decide
-            // whether the final iterate is feasible or optimal.
+            // Preserve the termination reason; postsolve can still upgrade to OPTIMAL/FEASIBLE
+            // if fresh residuals justify it.
             decision.should_exit = true;
+            decision.status = SolverStatus::INSUFFICIENT_PROGRESS;
             decision.cost_stagnated = true;
             return decision;
         }
@@ -1560,7 +1584,7 @@ private:
 
     SolverStatus run_solve_loop_()
     {
-        SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
+        SolverStatus loop_exit_status = SolverStatus::MAX_ITER;
         double last_cost = 1e30;
         double last_mu = context_.solve.mu;
 
@@ -1586,6 +1610,7 @@ private:
             }
         }
 
+        context_.termination.loop_exit_status = loop_exit_status;
         return loop_exit_status;
     }
 
@@ -1752,9 +1777,9 @@ private:
         }
     }
 
-    SolverStatus classify_postsolve_result_(const PostsolveResiduals& residuals)
+    SolverStatus classify_postsolve_solution_quality_(const PostsolveResiduals& residuals)
     {
-        // Level 1: SOLVED (Optimal)
+        // Level 1: OPTIMAL.
         // Even if the loop exited due to stagnation, return OPTIMAL when the fresh postsolve
         // residuals satisfy the full convergence criteria.
         if (residuals.linear_ok && check_convergence(residuals)) {
@@ -1769,22 +1794,50 @@ private:
             }
             return SolverStatus::FEASIBLE;
         }
-        // Level 3: INFEASIBLE (Failed)
-        if (config.print_level >= PrintLevel::WARN) {
-            MLOG_WARN("Result: INFEASIBLE (Viol: " << residuals.max_primal_inf << " > "
-                                                   << feasible_bound << ")");
+        return SolverStatus::UNSOLVED;
+    }
+
+    SolverStatus classify_postsolve_failure_(SolverStatus loop_status) const
+    {
+        switch (loop_status) {
+        case SolverStatus::MAX_ITER:
+        case SolverStatus::STEP_TOO_SMALL:
+        case SolverStatus::INSUFFICIENT_PROGRESS:
+        case SolverStatus::RESTORATION_FAILED:
+        case SolverStatus::INVALID_INPUT:
+            return loop_status;
+        case SolverStatus::UNSOLVED:
+            return SolverStatus::MAX_ITER;
+        case SolverStatus::OPTIMAL:
+        case SolverStatus::FEASIBLE:
+            // A success-like loop verdict contradicted by fresh primal residuals means the
+            // returned iterate is infeasible. This is not used for plain budget exhaustion.
+            return SolverStatus::INFEASIBLE;
+        case SolverStatus::INFEASIBLE:
+        case SolverStatus::LINEAR_SOLVE_FAILED:
+        case SolverStatus::NUMERICAL_ERROR:
+            return loop_status;
+        default:
+            return SolverStatus::NUMERICAL_ERROR;
         }
-        return SolverStatus::INFEASIBLE;
     }
 
     SolverStatus postsolve(SolverStatus loop_status)
     {
-        if (loop_status == SolverStatus::NUMERICAL_ERROR) {
-            return SolverStatus::NUMERICAL_ERROR;
+        if (loop_status == SolverStatus::NUMERICAL_ERROR
+            || loop_status == SolverStatus::LINEAR_SOLVE_FAILED
+            || loop_status == SolverStatus::INVALID_INPUT) {
+            return loop_status;
         }
         if (config.print_level >= PrintLevel::INFO) {
-            if (loop_status == SolverStatus::UNSOLVED) {
-                MLOG_INFO("Max iterations or stagnation.");
+            if (loop_status == SolverStatus::MAX_ITER || loop_status == SolverStatus::UNSOLVED) {
+                MLOG_INFO("Max iterations reached.");
+            } else if (loop_status == SolverStatus::INSUFFICIENT_PROGRESS) {
+                MLOG_INFO("Insufficient progress.");
+            } else if (loop_status == SolverStatus::RESTORATION_FAILED) {
+                MLOG_INFO("Feasibility restoration failed.");
+            } else if (loop_status == SolverStatus::STEP_TOO_SMALL) {
+                MLOG_INFO("Step size became too small.");
             }
         }
         // Always refresh residuals before the final verdict. This keeps loop-level shortcuts,
@@ -1797,8 +1850,18 @@ private:
 
         evaluate_postsolve_dual_residual_(residuals);
 
-        // Final classification.
-        return classify_postsolve_result_(residuals);
+        SolverStatus quality_status = classify_postsolve_solution_quality_(residuals);
+        if (quality_status == SolverStatus::OPTIMAL || quality_status == SolverStatus::FEASIBLE) {
+            return quality_status;
+        }
+
+        const SolverStatus final_status = classify_postsolve_failure_(loop_status);
+        if (config.print_level >= PrintLevel::WARN) {
+            const double feasible_bound = config.tol_con * config.feasible_tol_scale;
+            MLOG_WARN("Result: " << status_to_string(final_status) << " (Viol: "
+                                 << residuals.max_primal_inf << " > " << feasible_bound << ")");
+        }
+        return final_status;
     }
 
 private:

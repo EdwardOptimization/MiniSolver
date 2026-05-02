@@ -13,6 +13,8 @@ evidence logs, and design decisions separate so each file has a clear role.
 - [Solver Capability Adoption Plan](architecture/solver-capability-adoption-plan.md):
   which mature-solver ideas MiniSolver should absorb, and which are explicitly
   out of scope.
+- [Solver Status Semantics](architecture/solver-status-semantics.md): terminal
+  status layering and postsolve precedence.
 
 ## Directories
 

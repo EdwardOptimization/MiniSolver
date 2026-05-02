@@ -312,10 +312,10 @@ TEST(BugfixTest, DynamicsDefectCountedInViolation)
 
     SolverStatus status = solver.solve();
 
-    // With 0 iterations, postsolve should evaluate the trajectory as-is.
-    // The dynamics defect of 100 should cause INFEASIBLE (not FEASIBLE/OPTIMAL).
-    EXPECT_EQ(status, SolverStatus::INFEASIBLE)
-        << "Solver should detect large dynamics defect and return INFEASIBLE";
+    // With 0 iterations, postsolve should evaluate the trajectory as-is and preserve
+    // the true termination reason: budget exhaustion, not a mathematical infeasibility claim.
+    EXPECT_EQ(status, SolverStatus::MAX_ITER)
+        << "Solver should detect large dynamics defect without reporting infeasibility";
 }
 
 // =============================================================================
@@ -1762,6 +1762,31 @@ public:
         return calls == 1; // affine predictor succeeds; corrector fails.
     }
 };
+
+template <typename TrajArray>
+class TinyStepThenFailRecoverySolver : public RiccatiSolver<TrajArray, BugTestModel> {
+public:
+    int calls = 0;
+
+    bool solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/, InertiaStrategy /*strategy*/,
+        const SolverConfig& /*config*/, const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        ++calls;
+        if (calls > 1) {
+            return false; // restoration attempt fails
+        }
+
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx.setZero();
+            traj[k].du.setZero();
+            traj[k].ds.setConstant(-1.0e12); // force fraction-to-boundary alpha collapse
+            traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
+            traj[k].r_bar.setZero();
+        }
+        return true;
+    }
+};
 }
 
 TEST(BugfixTest, MehrotraRestorationBuildsFeasibilityPenalty)
@@ -1845,10 +1870,44 @@ TEST(BugfixTest, MehrotraDoesNotUpdateMuWhenCorrectorSolveFails)
 
     const SolverStatus status = solver.solve();
 
-    EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_EQ(status, SolverStatus::LINEAR_SOLVE_FAILED);
     EXPECT_EQ(fake_solver_ptr->calls, 2);
     EXPECT_DOUBLE_EQ(Access::mu(solver), config.mu_init)
         << "Failed Mehrotra corrector solve must not advance the barrier parameter";
+}
+
+TEST(BugfixTest, TinyStepRecoveryFailureReturnsRestorationFailed)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = TinyStepThenFailRecoverySolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 1;
+    config.inertia_max_retries = 1;
+    config.line_search_type = LineSearchType::NONE;
+    config.enable_slack_reset = false;
+    config.enable_feasibility_restoration = true;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+    solver.set_control_guess(0, 0, 10.0);
+    for (int k = 0; k <= N; ++k) {
+        solver.set_slack_guess(k, 0, 1.0e-3);
+        solver.set_dual_guess(k, 0, 1.0);
+    }
+
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::RESTORATION_FAILED)
+        << "Tiny-step recovery failure should not be collapsed into INFEASIBLE.";
+    EXPECT_EQ(fake_solver_ptr->calls, 2);
 }
 
 TEST(BugfixTest, NanJacobianReturnsNumericalError)

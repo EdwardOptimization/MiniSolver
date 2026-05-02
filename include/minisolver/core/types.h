@@ -6,15 +6,21 @@ namespace minisolver {
 
 enum class SolverStatus {
     // Initial / intermediate status.
-    UNSOLVED,
+    UNSOLVED = 0,
 
     // Successful statuses.
-    OPTIMAL, // Fully converged: KKT conditions and constraint violation meet tolerances.
-    FEASIBLE, // Acceptable but suboptimal: violation is within the configured bound.
+    OPTIMAL = 1, // Fully converged: KKT conditions and constraint violation meet tolerances.
+    FEASIBLE = 2, // Acceptable but suboptimal: violation is within the configured bound.
 
     // Failure statuses.
-    INFEASIBLE, // Not acceptable: iteration ended with excessive violation.
-    NUMERICAL_ERROR // Numerical failure: singular matrix, NaN, or invalid arithmetic.
+    INFEASIBLE = 3, // Final iterate is primal-infeasible after a success-like loop verdict.
+    MAX_ITER = 4, // Iteration budget exhausted before reaching an acceptable solution.
+    STEP_TOO_SMALL = 5, // Globalization collapsed to a tiny step with no recovery path.
+    INSUFFICIENT_PROGRESS = 6, // Cost/progress stagnated before convergence.
+    LINEAR_SOLVE_FAILED = 7, // Riccati/KKT direction solve failed after retries.
+    RESTORATION_FAILED = 8, // Feasibility restoration was attempted but did not recover.
+    INVALID_INPUT = 9, // Reserved for config/model input validation failures.
+    NUMERICAL_ERROR = 10 // Invalid arithmetic, NaN/Inf, or invalid search direction.
 };
 
 inline const char* status_to_string(SolverStatus status)
@@ -23,11 +29,23 @@ inline const char* status_to_string(SolverStatus status)
     case SolverStatus::UNSOLVED:
         return "UNSOLVED";
     case SolverStatus::OPTIMAL:
-        return "SOLVED";
+        return "OPTIMAL";
     case SolverStatus::FEASIBLE:
         return "FEASIBLE";
     case SolverStatus::INFEASIBLE:
         return "INFEASIBLE";
+    case SolverStatus::MAX_ITER:
+        return "MAX_ITER";
+    case SolverStatus::STEP_TOO_SMALL:
+        return "STEP_TOO_SMALL";
+    case SolverStatus::INSUFFICIENT_PROGRESS:
+        return "INSUFFICIENT_PROGRESS";
+    case SolverStatus::LINEAR_SOLVE_FAILED:
+        return "LINEAR_SOLVE_FAILED";
+    case SolverStatus::RESTORATION_FAILED:
+        return "RESTORATION_FAILED";
+    case SolverStatus::INVALID_INPUT:
+        return "INVALID_INPUT";
     case SolverStatus::NUMERICAL_ERROR:
         return "NUMERICAL_ERROR";
     default:
