@@ -81,19 +81,21 @@ add_definitions(-DMINISOLVER_LOG_LEVEL=4)
       * High `Reg` (e.g., $10^9$): Hessian is singular. Check if your cost function is convex or if the system is uncontrollable.
       * Tiny `Alpha` ($< 10^{-4}$): The line search is blocked by a constraint boundary (Step size too small).
 
-### 2\. The Replay Tool (Serializer)
+### 2\. The Replay Tool (Snapshot)
 
-If the solver crashes in production, capture the state using the Serializer.
+If the solver crashes in production, capture the pre-solve state using a snapshot.
 
 ```cpp
 // In your application code, before solve():
-SolverSerializer<CarModel, 100>::save_case("crash_dump.dat", solver);
+auto pre_solve = SolverSnapshotIO<CarModel, 100>::capture_snapshot(solver);
+SolverStatus status = solver.solve();
+SolverSnapshotIO<CarModel, 100>::save_failure_snapshot("crash_dump.msnap", pre_solve, status);
 ```
 
 Then, debug locally using the replay tool:
 
 ```bash
-./build/replay_solver crash_dump.dat
+./build/replay_solver crash_dump.msnap
 ```
 
 This loads the exact configuration, trajectory guess, and parameters from the crash site.

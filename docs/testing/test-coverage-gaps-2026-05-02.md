@@ -24,7 +24,7 @@ current behavior failures.
 | `test_mini_matrix.cpp` | 13 | Cholesky, LDLT, LU, block views, dot, symmetrize, finite checks |
 | `tests/minimodel/*` | 5 CTest entries | Identifiers, implicit patterns, constraint packet and SOC, residual costs, terminal projection |
 | `test_memory.cpp` | 6 | Zero-malloc coverage across 6 configuration combinations |
-| `test_serializer.cpp` | 7 | Round trip, `soft_s`, config fields, invalid format rejection, atomicity |
+| `test_solver_snapshot.cpp` | 14 | Round trip, `soft_s`, config fields, backend policy, model fingerprint, invalid format rejection, atomicity, failure capture |
 | `test_soft_constraints.cpp` | 6 | L1/L2 convergence, invalid dual warm start, tiny L1 weight initialization |
 | `test_features.cpp` | 4 | Basic features |
 | `test_advanced.cpp` | 4 | Advanced scenarios |
@@ -38,7 +38,7 @@ Well-covered areas:
 - NaN propagation: Jacobian, dynamics, and soft slack paths.
 - Mehrotra logic: mu gating and L1 soft-pair `mu_aff`.
 - Zero-malloc solve path across line-search and integrator combinations.
-- Serializer round trip and invalid-format rejection.
+- Snapshot round trip and invalid-format rejection.
 
 ---
 
@@ -124,12 +124,12 @@ Well-covered areas:
 - **Original missing test:** Compare restoration behavior across differently scaled infeasible constraints.
 - **Current conclusion:** Keep as an algorithm and strategy issue. It needs a multi-scale infeasible benchmark before changing the fixed penalty.
 
-#### GAP-11: Serializer Stats Field Consistency
+#### GAP-11: Snapshot Stats Field Consistency
 
-- **Related issue:** Medium-priority review finding that serializer stats used raw `out.write` while config used helper functions.
-- **Coverage:** Existing round-trip tests cover the overall serializer, but not individual stat fields.
+- **Related issue:** Medium-priority review finding that snapshot stats used raw `out.write` while config used helper functions.
+- **Coverage:** Existing round-trip tests cover the overall snapshot, but not individual stat fields.
 - **Original missing test:** Assert exact `iterations`, `total_cost`, and `mu` values after capture, save, and load.
-- **Current conclusion:** Deferred. Serializer is a snapshot/replay mechanism, not just solver logging, and should be refactored separately with a clear format policy.
+- **Current conclusion:** Deferred. Snapshot/replay is not solver logging and should keep a clear format policy.
 
 #### GAP-12: Merit Backtracking Failure-Path Assertion
 
@@ -172,5 +172,5 @@ Residual-cost codegen is covered separately by `tests/minimodel/test_residual_co
 ## Remaining Recommendations
 
 1. **GAP-6, Armijo cancellation:** Do not add a brittle synthetic test yet. Wait for a real merit/Armijo anomaly or benchmark reproducer.
-2. **Serializer stats:** Keep deferred until the serializer format, semantics, and compatibility policy are redesigned together.
+2. **Snapshot stats:** Keep deferred until the snapshot format, semantics, and compatibility policy are redesigned together.
 3. **Restoration rho scale:** Keep as a strategy problem until multi-scale infeasible benchmarks exist.

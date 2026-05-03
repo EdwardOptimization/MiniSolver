@@ -21,14 +21,14 @@ These are not core algorithm bugs, but they weaken the solver contract:
 - invalid user input can be missed;
 - embedded users cannot redirect or compile out output cleanly;
 - future diagnostics would keep adding ad-hoc warning paths;
-- serializer I/O and solver runtime logging remain conceptually mixed unless
+- snapshot I/O and solver runtime logging remain conceptually mixed unless
   the boundary is explicit.
 
 ## Non-Goals
 
 - Do not add a public OOP plugin framework.
 - Do not expose logger or strategy objects as solver hot-path extension points.
-- Do not refactor serializer in this pass. Serializer remains a separate module
+- Do not refactor snapshot in this pass. Snapshot remains a separate module
   that needs its own format and I/O cleanup.
 - Do not change solver numerical behavior while changing API error reporting.
 - Do not add exceptions to hot solve paths.
@@ -96,7 +96,7 @@ public output framework to MiniSolver.
    streams directly.
 5. Logging and profiling are observability features. They must have documented
    zero-malloc boundaries.
-6. Serializer I/O is out of scope. Do not use serializer as the logging model.
+6. Snapshot I/O is out of scope. Do not use snapshot as the logging model.
 
 ## API Error Contract
 
@@ -270,7 +270,7 @@ Required tests:
 
 - a test callback captures a warning without writing to stdout/stderr;
 - `MINISOLVER_LOG_LEVEL=0` compiles log calls out for the tested path;
-- serializer direct I/O remains unchanged and documented as deferred.
+- snapshot direct I/O remains unchanged and documented as deferred.
 
 ### Phase 4: Release Documentation
 
@@ -279,7 +279,7 @@ Update README and testing matrix:
 - state that solver behavior is configured through `SolverConfig`;
 - state that API setters return `ApiStatus`;
 - document logger/zero-malloc boundary;
-- keep serializer as a known separate cleanup item.
+- keep snapshot as a known separate cleanup item.
 
 ## Architecture Review
 

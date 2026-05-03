@@ -6,7 +6,7 @@ namespace minisolver {
 
 // SolverContext will grow into the boundary between the canonical solve loop
 // and strategy kernels. Start with scalar metrics only; keep runtime state
-// (mu/reg/iteration) in MiniSolver until serializer and tests move over.
+// (mu/reg/iteration) in MiniSolver until snapshot I/O and tests move over.
 struct SolverMetrics {
     double last_prim_inf = 0.0;
     double last_dual_inf = 0.0;

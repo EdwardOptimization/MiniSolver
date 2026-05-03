@@ -216,9 +216,9 @@ Today the loop hits `max_iters`, `loop_status = UNSOLVED`, `postsolve` re-checks
 
 #### N-CONV-2 (P1) — `tol_grad` is a dead config field
 
-`tol_grad = 1e-4` is declared in [`solver_options.h`](../../include/minisolver/core/solver_options.h) line 151, serialized in [`serializer.h`](../../include/minisolver/core/serializer.h) lines 128, 199, and set by 6 test/tool files. But [`termination.h`](../../include/minisolver/algorithms/termination.h) does not reference it — convergence uses only `tol_con` (primal feasibility), `tol_dual` (dual feasibility = stationarity), `tol_mu`, and `mu_final`. The user can call `config.tol_grad = 1e-12` and it has no effect on solver behavior.
+`tol_grad = 1e-4` is declared in [`solver_options.h`](../../include/minisolver/core/solver_options.h) line 151 and set by 6 test/tool files. But [`termination.h`](../../include/minisolver/algorithms/termination.h) does not reference it — convergence uses only `tol_con` (primal feasibility), `tol_dual` (dual feasibility = stationarity), `tol_mu`, and `mu_final`. The user can call `config.tol_grad = 1e-12` and it has no effect on solver behavior.
 
-Resolution options: (a) remove the field and update serializer; (b) connect to a separate `max_grad_norm` check in `TerminationKernel` if there is a stationarity-only check distinct from `tol_dual`.
+Resolution options: (a) remove the field and update snapshot; (b) connect to a separate `max_grad_norm` check in `TerminationKernel` if there is a stationarity-only check distinct from `tol_dual`.
 
 #### N-CONV-3 (P1) — `OPTIMAL` requires `mu <= mu_final`, breaking standard IPM semantics
 
@@ -253,7 +253,7 @@ inline const char* status_to_string(SolverStatus status)
     ...
 ```
 
-Code paths with `status_to_string` in logs or save files report `"SOLVED"` while user-side `if (status == SolverStatus::OPTIMAL)` matches the enum. Inconsistent semantics; serializer round-trip fine (uses enum) but log + serialized text don't match.
+Code paths with `status_to_string` in logs or save files report `"SOLVED"` while user-side `if (status == SolverStatus::OPTIMAL)` matches the enum. Inconsistent semantics; snapshot round-trip fine (uses enum) but log and saved text don't match.
 
 #### N-CONV-5 (note) — External benchmark root-cause tracking is out of scope here
 
@@ -448,7 +448,7 @@ Concrete blockers:
 
 | Issue | Location | Impact |
 | --- | --- | --- |
-| `#include <iostream>` in 11 headers | `solver.h, trajectory.h, serializer.h, line_search.h, riccati.h, matrix_defs.h, implicit_integrator.h, line_search_utils.h, mini_matrix.h, logger.h, backend_interface.h` | Many embedded toolchains (STM32CubeIDE size-optimized, IAR EWARM nano profile) do not provide iostream |
+| `#include <iostream>` in 11 headers | `solver.h, trajectory.h, solver_snapshot.h, line_search.h, riccati.h, matrix_defs.h, implicit_integrator.h, line_search_utils.h, mini_matrix.h, logger.h, backend_interface.h` | Many embedded toolchains (STM32CubeIDE size-optimized, IAR EWARM nano profile) do not provide iostream |
 | `throw std::invalid_argument` (4 sites) | [`implicit_integrator.h`](../../include/minisolver/integrator/implicit_integrator.h) lines 76, 150, 418, 434 | `-fno-exceptions` build fails to compile |
 | `std::unordered_map<std::string, int>` for name maps | [`solver.h`](../../include/minisolver/solver/solver.h) lines 1954-1956 | Heap allocation in constructor; `<unordered_map>` not always available |
 | No ARM cross-compile job | `.github/workflows/ci.yml` matrix is `ubuntu-latest` only | Embedded claim never CI-validated |

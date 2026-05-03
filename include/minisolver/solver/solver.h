@@ -2484,7 +2484,7 @@ private:
     LineSearchStrategy<Model, MAX_N>* line_search = nullptr;
 
     // Per-solve line-search α trace (cleared at solve() entry, appended after
-    // each step's line search). Purely diagnostic — not serialized.
+    // each step's line search). Purely diagnostic — not captured by snapshots.
     std::vector<double> alpha_log_;
 
     SolverContext context_;

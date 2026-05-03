@@ -148,7 +148,7 @@ Required unit tests:
   `soft_s*(w-lam)`.
 - Invalid primal-dual guesses fall back to model-based initialization and
   `mu_init`.
-- Regularization reset/reuse/decay modes are explicit and serialized.
+- Regularization reset/reuse/decay modes are explicit and captured in snapshots.
 
 Required benchmark:
 
@@ -192,5 +192,5 @@ barrier_strategy = ADAPTIVE;
 ```
 
 This preset is as fast as previous-`mu` reuse in the benchmark, but it is safer
-when application code edits slacks/duals or restores a serialized iterate because
+when application code edits slacks/duals or restores a snapshot iterate because
 `mu` is recomputed from the actual complementarity state.

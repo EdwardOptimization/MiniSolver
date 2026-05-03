@@ -676,8 +676,8 @@ Scope:
 
 - Move scalar iteration state behind internal context accessors where it reduces
   argument passing.
-- Keep serializer compatibility explicit. Do not move serialized fields without
-  updating serializer tests.
+- Keep snapshot compatibility explicit. Do not move snapshot fields without
+  updating snapshot tests.
 - Keep public API unchanged.
 
 Likely first moves:
@@ -688,7 +688,7 @@ Likely first moves:
 
 Validation:
 
-- serializer tests
+- snapshot tests
 - `test_bugfixes`
 - full Eigen and MiniMatrix ctest
 

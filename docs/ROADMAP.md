@@ -22,7 +22,7 @@ This file tracks **milestones** (not daily progress). The goal is to keep the pr
 
 - KnotPoint / Trajectory refactor stabilized with regression coverage.
 - Solver public API surface tightened; configuration is centralized in `SolverConfig` via `set_config()` / `get_config()`.
-- Snapshot/serializer moved away from raw `sizeof(SolverConfig)` dumps; format is explicit and includes soft-constraint state where required.
+- Snapshot/replay I/O moved away from raw `sizeof(SolverConfig)` dumps; format is explicit and includes soft-constraint state where required.
 - Matrix backend selection wired end-to-end (`USE_EIGEN` vs `USE_CUSTOM_MATRIX`), with CI/test coverage on both.
 - Zero-malloc discipline strengthened: SOC path and line-search filter avoid heap allocation, with tests and ASan-friendly hooks.
 - Numerical robustness fixes landed (e.g., `fast_inverse()` guarded by SPD checks) and a microbenchmark added to quantify overhead.

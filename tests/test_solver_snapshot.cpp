@@ -130,7 +130,7 @@ template <typename SnapshotIO> void ExpectConfigEq(const SolverConfig& a, const 
     EXPECT_TRUE(SnapshotIO::config_equal(a, b));
 }
 
-// A minimal L1 soft-constraint model to verify that snapshots serialize soft_s correctly.
+// A minimal L1 soft-constraint model to verify that snapshots preserve soft_s correctly.
 struct L1SoftModel {
     static constexpr int NX = 1;
     static constexpr int NU = 1;
@@ -212,7 +212,7 @@ struct L1SoftModelAltNames : L1SoftModel {
 };
 } // namespace
 
-TEST(SerializerTest, CaptureAndSaveAndLoad)
+TEST(SolverSnapshotTest, CaptureAndSaveAndLoad)
 {
     int N = 20;
     SolverConfig config;
@@ -313,7 +313,7 @@ TEST(SerializerTest, CaptureAndSaveAndLoad)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, SnapshotSerializesSoftS_L1)
+TEST(SolverSnapshotTest, SnapshotPreservesSoftS_L1)
 {
     L1SoftModel::constraint_types[0] = 1; // L1
     L1SoftModel::constraint_weights[0] = 1.0; // w=1
@@ -352,7 +352,7 @@ TEST(SerializerTest, SnapshotSerializesSoftS_L1)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, SnapshotSerializesAllConfigFields)
+TEST(SolverSnapshotTest, SnapshotPreservesAllConfigFields)
 {
     SolverConfig config = MakeNonDefaultConfig();
 
@@ -376,7 +376,7 @@ TEST(SerializerTest, SnapshotSerializesAllConfigFields)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, LoadRejectsInvalidSerializedConfigAtomically)
+TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotConfigAtomically)
 {
     MiniSolver<CarModel, 10> solverA(2, Backend::CPU_SERIAL);
     using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
@@ -398,7 +398,7 @@ TEST(SerializerTest, LoadRejectsInvalidSerializedConfigAtomically)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, LoadKeepsConstructedBackendByDefault)
+TEST(SolverSnapshotTest, LoadKeepsConstructedBackendByDefault)
 {
     SolverConfig config = MakeNonDefaultConfig();
     MiniSolver<CarModel, 10> solverA(2, Backend::GPU_PCR, config);
@@ -415,7 +415,7 @@ TEST(SerializerTest, LoadKeepsConstructedBackendByDefault)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, LoadCanOverrideBackendExplicitly)
+TEST(SolverSnapshotTest, LoadCanOverrideBackendExplicitly)
 {
     MiniSolver<CarModel, 10> solverA(2, Backend::CPU_SERIAL);
 
@@ -433,7 +433,7 @@ TEST(SerializerTest, LoadCanOverrideBackendExplicitly)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, SaveFailureSnapshotIsNoOpForSuccessfulStatuses)
+TEST(SolverSnapshotTest, SaveFailureSnapshotIsNoOpForSuccessfulStatuses)
 {
     MiniSolver<CarModel, 10> solver(2, Backend::CPU_SERIAL);
     using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
@@ -454,7 +454,7 @@ TEST(SerializerTest, SaveFailureSnapshotIsNoOpForSuccessfulStatuses)
     EXPECT_FALSE(FileExists(feasible_file));
 }
 
-TEST(SerializerTest, SaveFailureSnapshotWritesPreSolveStateOnFailure)
+TEST(SolverSnapshotTest, SaveFailureSnapshotWritesPreSolveStateOnFailure)
 {
     MiniSolver<CarModel, 10> solver(2, Backend::CPU_SERIAL);
     solver.set_initial_state("x", 1.25);
@@ -476,7 +476,7 @@ TEST(SerializerTest, SaveFailureSnapshotWritesPreSolveStateOnFailure)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, LoadRejectsSameDimensionDifferentModelFingerprint)
+TEST(SolverSnapshotTest, LoadRejectsSameDimensionDifferentModelFingerprint)
 {
     L1SoftModel::constraint_types[0] = 0;
     L1SoftModel::constraint_weights[0] = 0.0;
@@ -493,7 +493,7 @@ TEST(SerializerTest, LoadRejectsSameDimensionDifferentModelFingerprint)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, RejectsOldFormatMagic)
+TEST(SolverSnapshotTest, RejectsOldFormatMagic)
 {
     const std::string filename = MakeUniqueTestFilename("test_old_magic", ".bin");
     {
@@ -508,7 +508,7 @@ TEST(SerializerTest, RejectsOldFormatMagic)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, FullRoundTrip)
+TEST(SolverSnapshotTest, FullRoundTrip)
 {
     int N = 5;
     SolverConfig config;
@@ -525,11 +525,11 @@ TEST(SerializerTest, FullRoundTrip)
     solverA.set_config(cfgA);
     solverA.solve();
 
-    // 2. Serialize to File
+    // 2. Save snapshot to file
     std::string filename = MakeUniqueTestFilename("test_roundtrip", ".bin");
     minisolver::SolverSnapshotIO<CarModel, 10>::save_case(filename, solverA);
 
-    // 3. Deserialize to Solver B
+    // 3. Load snapshot into Solver B
     MiniSolver<CarModel, 10> solverB(N, Backend::CPU_SERIAL, config);
     SnapshotResult load_ok
         = minisolver::SolverSnapshotIO<CarModel, 10>::load_case(filename, solverB);
@@ -567,7 +567,7 @@ TEST(SerializerTest, FullRoundTrip)
     }
 }
 
-TEST(SerializerTest, TruncatedFileRejected)
+TEST(SolverSnapshotTest, TruncatedFileRejected)
 {
     int N = 3;
     MiniSolver<CarModel, 10> solver(N, Backend::CPU_SERIAL);
@@ -609,7 +609,7 @@ TEST(SerializerTest, TruncatedFileRejected)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, TrailingBytesRejectedByDefault)
+TEST(SolverSnapshotTest, TrailingBytesRejectedByDefault)
 {
     MiniSolver<CarModel, 10> solver(3, Backend::CPU_SERIAL);
     solver.set_dt(0.1);
@@ -638,7 +638,7 @@ TEST(SerializerTest, TrailingBytesRejectedByDefault)
     std::remove(filename.c_str());
 }
 
-TEST(SerializerTest, OversizeHorizonRejected)
+TEST(SolverSnapshotTest, OversizeHorizonRejected)
 {
     // Save with MAX_N=50 and N=20, then attempt to load with MAX_N=10.
     // The loader should refuse to truncate.
