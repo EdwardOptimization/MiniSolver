@@ -1,5 +1,6 @@
 #pragma once
 
+#include "minisolver/core/constraint_semantics.h"
 #include "minisolver/core/solver_options.h"
 #include <algorithm>
 #include <cmath>
@@ -18,7 +19,8 @@ struct InitializationKernel {
     }
 
     template <typename Model, typename Knot>
-    static void initialize_constraint_primal_dual(Knot& kp, int i, double mu)
+    static void initialize_constraint_primal_dual(
+        Knot& kp, int i, double mu, const SolverConfig& config = SolverConfig())
     {
         double g = kp.g_val(i);
         double w = 0.0;
@@ -30,7 +32,7 @@ struct InitializationKernel {
             }
         }
 
-        if (type == 1 && w > 1e-6) { // L1 Soft Constraint
+        if (is_l1_soft_constraint(type, w, config)) {
             // Central Path:
             // 1) g + s - soft_s = 0
             // 2) s * lam = mu
@@ -41,7 +43,7 @@ struct InitializationKernel {
             double c = -mu * w;
 
             double lam_val;
-            if (std::abs(a) < 1e-9) {
+            if (std::abs(a) < coefficient_degeneracy_floor()) {
                 lam_val = w / 2.0;
             } else {
                 double delta = b * b - 4 * a * c;
@@ -51,12 +53,13 @@ struct InitializationKernel {
                 lam_val = (-b + std::sqrt(delta)) / (2 * a);
             }
 
-            lam_val = std::max(1e-8, std::min(w - 1e-8, lam_val));
+            const double soft_dual_floor = l1_soft_dual_floor(w, config);
+            lam_val = std::max(soft_dual_floor, std::min(w - soft_dual_floor, lam_val));
 
             kp.lam(i) = lam_val;
             kp.s(i) = mu / lam_val;
             kp.soft_s(i) = mu / (w - lam_val);
-        } else if (type == 2 && w > 1e-6) { // L2 Soft Constraint
+        } else if (is_l2_soft_constraint(type, w)) {
             // Central Path:
             // 1) g + s - lam/w = 0
             // 2) s * lam = mu
@@ -66,10 +69,10 @@ struct InitializationKernel {
             double delta = b * b - 4 * c;
             double lam_val = (-b + std::sqrt(delta)) / 2.0;
 
-            kp.lam(i) = std::max(1e-8, lam_val);
+            kp.lam(i) = std::max(barrier_floor(config), lam_val);
             kp.s(i) = mu / kp.lam(i);
         } else { // Hard Constraint
-            double s_val = std::max(1e-6, -g);
+            double s_val = std::max(initial_slack_floor(config), -g);
             kp.s(i) = s_val;
             kp.lam(i) = mu / s_val;
         }
@@ -102,7 +105,7 @@ struct WarmStartKernel {
                         w = Model::constraint_weights[i];
                     }
                 }
-                if (type == 1 && w > 1e-6) {
+                if (is_l1_soft_constraint(type, w, config)) {
                     const double soft_s = kp.soft_s(i);
                     const double soft_dual = w - lam;
                     if (std::isfinite(soft_s) && std::isfinite(soft_dual) && soft_s > 0.0

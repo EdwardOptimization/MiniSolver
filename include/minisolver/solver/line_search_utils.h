@@ -1,4 +1,5 @@
 #pragma once
+#include "minisolver/core/constraint_semantics.h"
 #include "minisolver/core/types.h"
 #include <algorithm>
 #include <cmath>
@@ -9,7 +10,8 @@ namespace minisolver {
 // Fraction-to-Boundary Rule for Interior Point Methods
 // Updated to accept any container type and active horizon N
 template <typename TrajVector, typename ModelType>
-double fraction_to_boundary_rule(const TrajVector& traj, int N, double tau = 0.995)
+double fraction_to_boundary_rule(
+    const TrajVector& traj, int N, double tau = 0.995, const SolverConfig& config = SolverConfig())
 {
     using Knot = typename TrajVector::value_type;
     double alpha_s = 1.0;
@@ -46,7 +48,7 @@ double fraction_to_boundary_rule(const TrajVector& traj, int N, double tau = 0.9
             }
 
             // For L1, we explicitly track soft_s and soft_dual
-            if (type == 1 && w > 1e-6) {
+            if (detail::is_l1_soft_constraint(type, w, config)) {
                 double ss = kp.soft_s(i);
                 double dss = kp.dsoft_s(i);
                 // soft_s >= 0
@@ -60,8 +62,9 @@ double fraction_to_boundary_rule(const TrajVector& traj, int N, double tau = 0.9
                 // If dlam > 0, alpha <= (w - lam) / dlam.
                 if (dlam > 0) {
                     double gap = w - lam;
-                    if (gap < 1e-9) {
-                        gap = 1e-9;
+                    const double soft_dual_floor = detail::l1_soft_dual_floor(w, config);
+                    if (gap < soft_dual_floor) {
+                        gap = soft_dual_floor;
                     }
                     alpha_lam = std::min(alpha_lam, tau * gap / dlam);
                 }

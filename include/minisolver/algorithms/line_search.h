@@ -58,8 +58,8 @@ public:
         const auto& active = trajectory.active();
 
         // Keep s/lam (and soft vars for L1) inside the interior.
-        const double alpha
-            = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
+        const double alpha = fraction_to_boundary_rule<TrajArray, Model>(
+            active, N, config.line_search_tau, config);
         if (alpha <= 1e-8) {
             return LineSearchResult(0.0);
         }
@@ -191,11 +191,11 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 const double g_dir = constraint_direction(kp, i);
                 const double g_true = detail::true_constraint_value<Model>(kp, i);
 
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     if (kp.soft_s(i) > config.min_barrier_slack) {
                         dphi -= mu * kp.dsoft_s(i) / kp.soft_s(i);
                     }
-                    if (w - kp.lam(i) > 1e-9) {
+                    if (w - kp.lam(i) > detail::l1_soft_dual_floor(w, config)) {
                         dphi += mu * kp.dlam(i) / (w - kp.lam(i));
                     }
                     dphi += w * kp.dsoft_s(i);
@@ -203,7 +203,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                     const double residual = g_true + kp.s(i) - kp.soft_s(i);
                     const double residual_dir = g_dir - kp.dsoft_s(i);
                     dphi += merit_nu * abs_directional_derivative(residual, residual_dir);
-                } else if (type == 2 && w > 1e-6) {
+                } else if (detail::is_l2_soft_constraint(type, w)) {
                     const double penalty_residual = g_true + kp.s(i);
                     dphi += w * penalty_residual * g_dir;
 
@@ -263,7 +263,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
 
                 // L1 Soft Constraint: Dual Barrier + Linear Penalty
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     // 1. Barrier terms
                     if (kp.soft_s(i) > config.min_barrier_slack) {
                         total_merit -= mu * std::log(kp.soft_s(i));
@@ -271,7 +271,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                         total_merit += config.barrier_inf_cost;
                     }
 
-                    if (w - kp.lam(i) > 1e-9) {
+                    if (w - kp.lam(i) > detail::l1_soft_dual_floor(w, config)) {
                         total_merit -= mu * std::log(w - kp.lam(i));
                     } else {
                         total_merit += config.barrier_inf_cost;
@@ -282,7 +282,7 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
 
                 // L2 Soft Constraint: Quadratic Penalty
-                else if (type == 2 && w > 1e-6) {
+                else if (detail::is_l2_soft_constraint(type, w)) {
                     // L2 Quadratic Penalty: 0.5 * w * (g + s)^2
                     double viol = detail::true_constraint_value<Model>(kp, i) + kp.s(i);
                     total_merit += 0.5 * w * viol * viol;
@@ -300,11 +300,11 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                     }
                 }
 
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     total_merit += merit_nu
                         * std::abs(
                             detail::true_constraint_value<Model>(kp, i) + kp.s(i) - kp.soft_s(i));
-                } else if (type == 2 && w > 1e-6) {
+                } else if (detail::is_l2_soft_constraint(type, w)) {
                     total_merit += merit_nu
                         * std::abs(
                             detail::true_constraint_value<Model>(kp, i) + kp.s(i) - kp.lam(i) / w);
@@ -408,8 +408,8 @@ public:
         double phi_0 = compute_merit(active, N, mu, config);
 
         // 3. Calc max alpha
-        double alpha
-            = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
+        double alpha = fraction_to_boundary_rule<TrajArray, Model>(
+            active, N, config.line_search_tau, config);
 
         trajectory.prepare_candidate();
         auto& candidate = trajectory.candidate();
@@ -533,7 +533,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
 
                 // L1 Soft Constraint
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     // Barrier terms
                     if (kp.soft_s(i) > config.min_barrier_slack) {
                         phi -= mu * std::log(kp.soft_s(i));
@@ -541,7 +541,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                         phi += config.barrier_inf_cost;
                     }
 
-                    if (w - kp.lam(i) > 1e-9) {
+                    if (w - kp.lam(i) > detail::l1_soft_dual_floor(w, config)) {
                         phi -= mu * std::log(w - kp.lam(i));
                     } else {
                         phi += config.barrier_inf_cost;
@@ -552,7 +552,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 }
 
                 // L2 Soft Constraint
-                else if (type == 2 && w > 1e-6) {
+                else if (detail::is_l2_soft_constraint(type, w)) {
                     // L2 Quadratic Penalty: 0.5 * w * (g + s)^2
                     double viol = detail::true_constraint_value<Model>(kp, i) + kp.s(i);
                     phi += 0.5 * w * viol * viol;
@@ -571,11 +571,11 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                     }
                 }
 
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     // L1: Check extended system residual
                     theta += std::abs(
                         detail::true_constraint_value<Model>(kp, i) + kp.s(i) - kp.soft_s(i));
-                } else if (type == 2 && w > 1e-6) {
+                } else if (detail::is_l2_soft_constraint(type, w)) {
                     // L2 soft constraints use the primal-dual residual
                     // g_true + s - lam/w = 0. Keep filter theta consistent with
                     // compute_max_violation() on the true nonlinear constraint.
@@ -641,7 +641,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                     }
                 }
 
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     if (kp.soft_s(i) > config.min_barrier_slack) {
                         dphi -= mu * kp.dsoft_s(i) / kp.soft_s(i);
                     }
@@ -650,7 +650,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                         dphi += mu * kp.dlam(i) / soft_dual;
                     }
                     dphi += w * kp.dsoft_s(i);
-                } else if (type == 2 && w > 1e-6) {
+                } else if (detail::is_l2_soft_constraint(type, w)) {
                     const double residual = detail::true_constraint_value<Model>(kp, i) + kp.s(i);
                     dphi += w * residual * g_dir;
                 }
@@ -771,8 +771,8 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
             return false;
         }
 
-        const double beta_soc
-            = fraction_to_boundary_rule<TrajArray, Model>(soc_data, N, config.line_search_tau);
+        const double beta_soc = fraction_to_boundary_rule<TrajArray, Model>(
+            soc_data, N, config.line_search_tau, config);
         if (beta_soc <= 1e-8) {
             return false;
         }
@@ -835,8 +835,8 @@ public:
         const double dphi = compute_phi_directional_derivative(active, N, mu, config);
 
         // Fraction to Boundary
-        double alpha
-            = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
+        double alpha = fraction_to_boundary_rule<TrajArray, Model>(
+            active, N, config.line_search_tau, config);
 
         trajectory.prepare_candidate();
         auto& candidate = trajectory.candidate();

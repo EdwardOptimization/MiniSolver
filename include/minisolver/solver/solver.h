@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "minisolver/core/config_validation.h"
+#include "minisolver/core/constraint_semantics.h"
 #include "minisolver/core/logger.h"
 #include "minisolver/core/model_traits.h"
 #include "minisolver/core/solver_context.h"
@@ -888,7 +889,7 @@ private:
                         w = Model::constraint_weights[i];
                     }
                 }
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - lam);
                     const double soft_gap = soft_s * soft_dual;
@@ -1048,7 +1049,7 @@ private:
                         w = Model::constraint_weights[i];
                     }
                 }
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     double soft_s = direction_traj[k].soft_s(i);
                     double dsoft_s = direction_traj[k].dsoft_s(i);
                     if (dsoft_s < 0) {
@@ -1083,10 +1084,10 @@ private:
                 double s_new = base_traj[k].s(i) + alpha_primal_aff * affine_traj[k].ds(i);
                 double lam_new = base_traj[k].lam(i) + alpha_dual_aff * affine_traj[k].dlam(i);
                 if (s_new < 0) {
-                    s_new = 1e-8; // Should not happen with fraction_to_boundary.
+                    s_new = detail::barrier_floor(config);
                 }
                 if (lam_new < 0) {
-                    lam_new = 1e-8;
+                    lam_new = detail::barrier_floor(config);
                 }
                 total_comp += s_new * lam_new;
                 total_dim++;
@@ -1100,15 +1101,15 @@ private:
                         w = Model::constraint_weights[i];
                     }
                 }
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     double soft_s_new
                         = base_traj[k].soft_s(i) + alpha_primal_aff * affine_traj[k].dsoft_s(i);
                     double soft_dual_new = w - lam_new;
                     if (soft_s_new < 0) {
-                        soft_s_new = 1e-8;
+                        soft_s_new = detail::barrier_floor(config);
                     }
                     if (soft_dual_new < 0) {
-                        soft_dual_new = 1e-8;
+                        soft_dual_new = detail::l1_soft_dual_floor(w, config);
                     }
                     total_comp += soft_s_new * soft_dual_new;
                     total_dim++;
@@ -1576,7 +1577,7 @@ private:
                     }
                 }
 
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     if (!MatOps::is_finite_scalar(kp.soft_s(i)) || kp.soft_s(i) <= 0.0) {
                         return false;
                     }
@@ -1691,7 +1692,7 @@ private:
                             w = Model::constraint_weights[i];
                         }
                     }
-                    if (type == 1 && w > 1e-6) {
+                    if (detail::is_l1_soft_constraint(type, w, config)) {
                         const double soft_s = traj[k].soft_s(i);
                         const double dsoft_s = traj[k].dsoft_s(i);
                         if (dsoft_s < 0) {
@@ -1733,8 +1734,8 @@ private:
         for (int k = 0; k <= N; ++k) {
             for (int i = 0; i < NC; ++i) {
                 // Ensure s is positive
-                if (traj[k].s(i) < 1e-9) {
-                    traj[k].s(i) = 1e-9;
+                if (traj[k].s(i) < detail::barrier_floor(config)) {
+                    traj[k].s(i) = detail::barrier_floor(config);
                 }
 
                 double w = 0.0;
@@ -1746,7 +1747,7 @@ private:
                     }
                 }
 
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     (void)project_l1_soft_pair_to_central_path_(traj[k], i, saved_mu, w);
                 } else {
                     // Preserve dual info from restoration if valuable, but ensure complementarity
@@ -1778,7 +1779,7 @@ private:
     {
         const double barrier_floor
             = std::max(config.min_barrier_slack, std::numeric_limits<double>::epsilon());
-        const double soft_dual_floor = std::min(2.0 * barrier_floor, 0.5 * w);
+        const double soft_dual_floor = detail::l1_soft_dual_floor(w, config);
         const double lam_max = w - soft_dual_floor;
         if (!MatOps::is_finite_scalar(lam_max) || lam_max <= barrier_floor) {
             return false;
@@ -2020,7 +2021,7 @@ private:
 
             for (int i = 0; i < NC; ++i) {
                 detail::InitializationKernel::initialize_constraint_primal_dual<Model>(
-                    traj[k], i, context_.solve.mu);
+                    traj[k], i, context_.solve.mu, config);
             }
         }
     }
@@ -2084,7 +2085,7 @@ private:
                     }
                 }
 
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - traj[k].lam(i));
                     const double soft_gap = soft_s * soft_dual;
@@ -2259,7 +2260,7 @@ private:
                             w = Model::constraint_weights[i];
                         }
                     }
-                    if (type == 1 && w > 1e-6) {
+                    if (detail::is_l1_soft_constraint(type, w, config)) {
                         (void)project_l1_soft_pair_to_central_path_(kp, i, context_.solve.mu, w);
                     }
                 }
@@ -2288,9 +2289,9 @@ private:
                     }
                 }
                 const double g_true = detail::true_constraint_value<Model>(kp, i);
-                if (type == 1 && w > 1e-6) { // L1
+                if (detail::is_l1_soft_constraint(type, w, config)) { // L1
                     viol = std::abs(g_true + kp.s(i) - kp.soft_s(i));
-                } else if (type == 2 && w > 1e-6) { // L2
+                } else if (detail::is_l2_soft_constraint(type, w)) { // L2
                     viol = std::abs(g_true + kp.s(i) - kp.lam(i) / w);
                 } else { // Hard
                     viol = std::abs(g_true + kp.s(i));
@@ -2338,9 +2339,9 @@ private:
 
                 const double g_raw = detail::unscaled_true_constraint_value<Model>(kp, i, config);
                 double viol = 0.0;
-                if (type == 1 && w > 1e-6) {
+                if (detail::is_l1_soft_constraint(type, w, config)) {
                     viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.soft_s(i) * inv_scale);
-                } else if (type == 2 && w > 1e-6) {
+                } else if (detail::is_l2_soft_constraint(type, w)) {
                     viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.lam(i) / w);
                 } else {
                     viol = std::abs(g_raw + kp.s(i) * inv_scale);

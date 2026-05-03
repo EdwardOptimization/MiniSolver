@@ -163,18 +163,25 @@ TEST(SoftConstraintTest, L1InvalidDualWarmStartFallsBackSafely)
 TEST(SoftConstraintTest, L1TinyWeightInitializationStaysFinite)
 {
     SoftModel::constraint_types[0] = 1;
-    SoftModel::constraint_weights[0] = 1e-10;
+    SoftModel::constraint_weights[0] = 1e-7;
 
     KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP> kp;
+    kp.set_zero();
     kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-10;
 
-    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, 1e-5);
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu);
 
     EXPECT_TRUE(std::isfinite(kp.s(0)));
     EXPECT_TRUE(std::isfinite(kp.lam(0)));
     EXPECT_TRUE(std::isfinite(kp.soft_s(0)));
     EXPECT_GT(kp.s(0), 0.0);
     EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_LT(kp.lam(0), SoftModel::constraint_weights[0]);
+    EXPECT_GT(kp.soft_s(0), 0.0);
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-14);
+    EXPECT_NEAR(kp.soft_s(0) * (SoftModel::constraint_weights[0] - kp.lam(0)), mu, 1e-14);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.soft_s(0), 0.0, 1e-8);
 }
 
 TEST(SoftConstraintTest, L2_Convergence)

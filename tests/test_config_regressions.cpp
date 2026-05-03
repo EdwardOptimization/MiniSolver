@@ -226,6 +226,16 @@ TEST(ConfigRegressionTest, SetConfigRejectsInvalidConfigWithoutMutation)
     invalid.constraint_row_scale_min = 0.0;
     EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
     EXPECT_EQ(solver.get_config().constraint_scaling, ConstraintScalingMethod::NONE);
+
+    invalid = solver.get_config();
+    invalid.restoration_sufficient_decrease_factor = 1.0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_LT(solver.get_config().restoration_sufficient_decrease_factor, 1.0);
+
+    invalid = solver.get_config();
+    invalid.warm_start_slack_init = 0.0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GT(solver.get_config().warm_start_slack_init, 0.0);
 }
 
 TEST(ConfigRegressionTest, ConstructorRejectsInvalidConfig)

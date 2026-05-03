@@ -118,6 +118,10 @@ namespace detail {
         if (status != ApiStatus::OK) {
             return status;
         }
+        status = validate_positive_finite_config_value(conf.warm_start_slack_init);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
         status = validate_unit_interval_config_value(conf.line_search_tau);
         if (status != ApiStatus::OK) {
             return status;
