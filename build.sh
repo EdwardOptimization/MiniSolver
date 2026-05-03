@@ -9,6 +9,20 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}>> [MiniSolver] One-click build started...${NC}"
 
+BUILD_DIR="${BUILD_DIR:-build}"
+CMAKE_EXTRA_ARGS=()
+
+if [[ "${ASAN:-0}" == "1" || "${UBSAN:-0}" == "1" || "${SANITIZE:-0}" == "1" ]]; then
+    SANITIZER_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+    echo -e "${BLUE}>> Sanitizer mode enabled: ${SANITIZER_FLAGS}${NC}"
+    CMAKE_EXTRA_ARGS+=(
+        "-DCMAKE_BUILD_TYPE=Debug"
+        "-DCMAKE_CXX_FLAGS=${SANITIZER_FLAGS}"
+        "-DCMAKE_C_FLAGS=${SANITIZER_FLAGS}"
+        "-DCMAKE_EXE_LINKER_FLAGS=${SANITIZER_FLAGS}"
+    )
+fi
+
 # ==========================================
 # 1. Simple Environment Check
 # ==========================================
@@ -45,8 +59,8 @@ python3 examples/02_advanced_bicycle/generate_advanced_model.py
 # 4. Configure & Build
 # ==========================================
 echo -e "${GREEN}>> [4/5] CMake configuration and compilation...${NC}"
-rm -rf build && mkdir build && cd build
-cmake ..
+rm -rf "${BUILD_DIR}" && mkdir "${BUILD_DIR}" && cd "${BUILD_DIR}"
+cmake .. "${CMAKE_EXTRA_ARGS[@]}"
 # Use nproc (Linux) or sysctl (Mac) to determine core count, default to 4
 make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
