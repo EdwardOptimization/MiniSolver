@@ -821,7 +821,7 @@ TEST(LineSearchTest, FilterFTypeUsesArmijoAndDoesNotAugmentFilter)
     config.print_level = PrintLevel::NONE;
     config.line_search_type = LineSearchType::FILTER;
     config.line_search_max_iters = 3;
-    config.line_search_tau = 1.0;
+    config.line_search_tau = 0.999;
     config.line_search_backtrack_factor = 0.5;
     config.enable_soc = false;
     config.eta_suff_descent = 1e-4;
@@ -859,7 +859,7 @@ TEST(LineSearchTest, FilterHTypeAcceptanceStillAugmentsFilter)
     config.print_level = PrintLevel::NONE;
     config.line_search_type = LineSearchType::FILTER;
     config.line_search_max_iters = 1;
-    config.line_search_tau = 1.0;
+    config.line_search_tau = 0.999;
     config.enable_soc = false;
 
     using Model = FilterSwitchingModel;

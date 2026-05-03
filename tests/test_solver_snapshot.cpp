@@ -398,6 +398,28 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotConfigAtomically)
     std::remove(filename.c_str());
 }
 
+TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotConfigEnumAtomically)
+{
+    MiniSolver<CarModel, 10> solverA(2, Backend::CPU_SERIAL);
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    auto snapshot = SnapshotIO::capture_snapshot(solverA);
+    snapshot.config.line_search_type = static_cast<LineSearchType>(99);
+
+    std::string filename = MakeUniqueTestFilename("test_invalid_enum_config_snapshot", ".bin");
+    ASSERT_EQ(SnapshotIO::save_snapshot(filename, snapshot).status, SnapshotStatus::OK);
+
+    SolverConfig preserved;
+    preserved.mu_init = 0.321;
+    MiniSolver<CarModel, 10> solverB(1, Backend::CPU_SERIAL, preserved);
+    SnapshotResult load_result = SnapshotIO::load_case(filename, solverB);
+    EXPECT_EQ(load_result.status, SnapshotStatus::InvalidConfig);
+    EXPECT_EQ(solverB.get_horizon(), 1);
+    EXPECT_DOUBLE_EQ(solverB.get_config().mu_init, 0.321);
+    EXPECT_EQ(solverB.get_config().line_search_type, preserved.line_search_type);
+
+    std::remove(filename.c_str());
+}
+
 TEST(SolverSnapshotTest, LoadKeepsConstructedBackendByDefault)
 {
     SolverConfig config = MakeNonDefaultConfig();

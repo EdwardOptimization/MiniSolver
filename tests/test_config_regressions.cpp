@@ -253,6 +253,115 @@ TEST(ConfigRegressionTest, SetConfigRejectsInvalidConfigWithoutMutation)
     EXPECT_GT(solver.get_config().reg_scale_down, 1.0);
 }
 
+TEST(ConfigRegressionTest, SetConfigRejectsInvalidEnumValues)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+    MiniSolver<BugTestModel, 10> solver(3, Backend::CPU_SERIAL, conf);
+
+    auto expect_invalid = [&](const SolverConfig& invalid) {
+        const SolverConfig before = solver.get_config();
+        EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+        EXPECT_EQ(solver.get_config().initialization, before.initialization);
+        EXPECT_EQ(solver.get_config().line_search_type, before.line_search_type);
+        EXPECT_EQ(solver.get_config().integrator, before.integrator);
+    };
+
+    SolverConfig invalid = solver.get_config();
+    invalid.initialization = static_cast<InitializationMode>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.warm_start_barrier = static_cast<WarmStartBarrierMode>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.warm_start_regularization = static_cast<WarmStartRegularizationMode>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.termination_profile = static_cast<TerminationProfile>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.constraint_scaling = static_cast<ConstraintScalingMethod>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.objective_scaling = static_cast<ObjectiveScalingMethod>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.problem_scaling = static_cast<ProblemScalingMethod>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.integrator = static_cast<IntegratorType>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.barrier_strategy = static_cast<BarrierStrategy>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.inertia_strategy = static_cast<InertiaStrategy>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.line_search_type = static_cast<LineSearchType>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.print_level = static_cast<PrintLevel>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.hessian_approximation = static_cast<HessianApproximation>(99);
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.direction_refinement = static_cast<DirectionRefinementMode>(99);
+    expect_invalid(invalid);
+
+    EXPECT_THROW(
+        (MiniSolver<BugTestModel, 10>(3, static_cast<Backend>(99), conf)), std::invalid_argument);
+}
+
+TEST(ConfigRegressionTest, SetConfigRejectsInvalidLineSearchBoundaryParameters)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+    MiniSolver<BugTestModel, 10> solver(3, Backend::CPU_SERIAL, conf);
+
+    SolverConfig invalid = solver.get_config();
+    invalid.line_search_tau = 1.0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_LT(solver.get_config().line_search_tau, 1.0);
+
+    invalid = solver.get_config();
+    invalid.line_search_tau = 0.0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GT(solver.get_config().line_search_tau, 0.0);
+
+    invalid = solver.get_config();
+    invalid.line_search_type = LineSearchType::MERIT;
+    invalid.line_search_max_iters = 0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GT(solver.get_config().line_search_max_iters, 0);
+
+    invalid = solver.get_config();
+    invalid.line_search_type = LineSearchType::FILTER;
+    invalid.line_search_max_iters = 0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GT(solver.get_config().line_search_max_iters, 0);
+
+    SolverConfig no_line_search = solver.get_config();
+    no_line_search.line_search_type = LineSearchType::NONE;
+    no_line_search.line_search_max_iters = 0;
+    EXPECT_EQ(solver.set_config(no_line_search), ApiStatus::OK);
+    EXPECT_EQ(solver.get_config().line_search_max_iters, 0);
+}
+
 TEST(ConfigRegressionTest, ConstructorRejectsInvalidConfig)
 {
     SolverConfig config;

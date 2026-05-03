@@ -53,10 +53,213 @@ namespace detail {
         return (value > 0.0 && value < 1.0) ? ApiStatus::OK : ApiStatus::InvalidArgument;
     }
 
+    inline bool valid_backend(Backend value)
+    {
+        switch (value) {
+        case Backend::CPU_SERIAL:
+        case Backend::GPU_MPX:
+        case Backend::GPU_PCR:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_initialization_mode(InitializationMode value)
+    {
+        switch (value) {
+        case InitializationMode::COLD_START:
+        case InitializationMode::REUSE_PRIMAL:
+        case InitializationMode::REUSE_PRIMAL_DUAL:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_warm_start_barrier_mode(WarmStartBarrierMode value)
+    {
+        switch (value) {
+        case WarmStartBarrierMode::RESET_TO_MU_INIT:
+        case WarmStartBarrierMode::REUSE_PREVIOUS_MU:
+        case WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_warm_start_regularization_mode(WarmStartRegularizationMode value)
+    {
+        switch (value) {
+        case WarmStartRegularizationMode::RESET_TO_REG_INIT:
+        case WarmStartRegularizationMode::REUSE_PREVIOUS_REG:
+        case WarmStartRegularizationMode::DECAY_PREVIOUS_REG:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_termination_profile(TerminationProfile value)
+    {
+        switch (value) {
+        case TerminationProfile::STRICT_KKT:
+        case TerminationProfile::ACCEPTABLE_NMPC:
+        case TerminationProfile::RTI_FIXED_ITERATION:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_constraint_scaling_method(ConstraintScalingMethod value)
+    {
+        switch (value) {
+        case ConstraintScalingMethod::NONE:
+        case ConstraintScalingMethod::ROW_INF_NORM:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_objective_scaling_method(ObjectiveScalingMethod value)
+    {
+        switch (value) {
+        case ObjectiveScalingMethod::NONE:
+        case ObjectiveScalingMethod::HESSIAN_GERSHGORIN:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_problem_scaling_method(ProblemScalingMethod value)
+    {
+        switch (value) {
+        case ProblemScalingMethod::NONE:
+        case ProblemScalingMethod::RUIZ_EQUILIBRATION:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_integrator_type(IntegratorType value)
+    {
+        switch (value) {
+        case IntegratorType::EULER_EXPLICIT:
+        case IntegratorType::EULER_IMPLICIT:
+        case IntegratorType::RK2_EXPLICIT:
+        case IntegratorType::RK2_IMPLICIT:
+        case IntegratorType::RK4_EXPLICIT:
+        case IntegratorType::RK4_IMPLICIT:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_barrier_strategy(BarrierStrategy value)
+    {
+        switch (value) {
+        case BarrierStrategy::MONOTONE:
+        case BarrierStrategy::ADAPTIVE:
+        case BarrierStrategy::MEHROTRA:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_inertia_strategy(InertiaStrategy value)
+    {
+        switch (value) {
+        case InertiaStrategy::REGULARIZATION:
+        case InertiaStrategy::SATURATION:
+        case InertiaStrategy::IGNORE_SINGULAR:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_line_search_type(LineSearchType value)
+    {
+        switch (value) {
+        case LineSearchType::MERIT:
+        case LineSearchType::FILTER:
+        case LineSearchType::NONE:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_print_level(PrintLevel value)
+    {
+        switch (value) {
+        case PrintLevel::NONE:
+        case PrintLevel::WARN:
+        case PrintLevel::INFO:
+        case PrintLevel::ITER:
+        case PrintLevel::DEBUG:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_hessian_approximation(HessianApproximation value)
+    {
+        switch (value) {
+        case HessianApproximation::EXACT:
+        case HessianApproximation::OBJECTIVE_HESSIAN_ONLY:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool valid_direction_refinement_mode(DirectionRefinementMode value)
+    {
+        switch (value) {
+        case DirectionRefinementMode::NONE:
+        case DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    inline bool validate_config_enums(const SolverConfig& conf)
+    {
+        return valid_backend(conf.backend) && valid_initialization_mode(conf.initialization)
+            && valid_warm_start_barrier_mode(conf.warm_start_barrier)
+            && valid_warm_start_regularization_mode(conf.warm_start_regularization)
+            && valid_termination_profile(conf.termination_profile)
+            && valid_constraint_scaling_method(conf.constraint_scaling)
+            && valid_objective_scaling_method(conf.objective_scaling)
+            && valid_problem_scaling_method(conf.problem_scaling)
+            && valid_integrator_type(conf.integrator)
+            && valid_barrier_strategy(conf.barrier_strategy)
+            && valid_inertia_strategy(conf.inertia_strategy)
+            && valid_line_search_type(conf.line_search_type) && valid_print_level(conf.print_level)
+            && valid_hessian_approximation(conf.hessian_approximation)
+            && valid_direction_refinement_mode(conf.direction_refinement);
+    }
+
     inline ApiStatus validate_solver_config(const SolverConfig& conf)
     {
+        if (!validate_config_enums(conf)) {
+            return ApiStatus::InvalidArgument;
+        }
         if (conf.max_iters < 0 || conf.line_search_max_iters < 0 || conf.max_restoration_iters < 0
             || conf.inertia_max_retries < 0 || conf.newton_config.max_iters < 0) {
+            return ApiStatus::InvalidArgument;
+        }
+        if (conf.line_search_type != LineSearchType::NONE && conf.line_search_max_iters <= 0) {
             return ApiStatus::InvalidArgument;
         }
 
@@ -136,7 +339,7 @@ namespace detail {
         if (status != ApiStatus::OK) {
             return status;
         }
-        status = validate_unit_interval_config_value(conf.line_search_tau);
+        status = validate_open_unit_interval_config_value(conf.line_search_tau);
         if (status != ApiStatus::OK) {
             return status;
         }
