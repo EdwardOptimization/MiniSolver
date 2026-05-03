@@ -233,6 +233,35 @@ for cross-module changes, even when all tests pass.
 
 ## MiniSolver-Specific Gates
 
+### Status Re-Anchor Gate
+
+Use this gate before answering or acting on questions such as "what is still
+open?", "is this already implemented?", "what remains to fix?", or "does this
+feature have a default strategy?".
+
+Do not rely on session memory or an old review ledger alone. Re-anchor the
+answer against current artifacts:
+
+1. inspect the owning config/API declarations;
+2. inspect the implementation path;
+3. inspect targeted tests and benchmark evidence;
+4. inspect docs or review ledgers only after code and tests.
+
+Classify each item explicitly:
+
+- `implemented`: the core mechanism exists;
+- `tested`: behavior is covered by regression, allocation, or benchmark
+  evidence;
+- `documented`: the intended contract is written down;
+- `default-config`: the behavior is enabled by the default `SolverConfig`;
+- `optional-profile`: the behavior exists but requires user configuration;
+- `api-ergonomics`: only helper/profile/setter convenience is missing.
+
+Do not call an item "missing" when only `default-config` or `api-ergonomics` is
+absent. For example, the warm-start kernel and recommended MPC warm-start
+configuration exist; the remaining question is whether to expose a helper
+profile or more granular setters, not whether warm start itself is unimplemented.
+
 ### Evidence Gate
 
 For any bug, review finding, numerical change, or high-risk refactor:
