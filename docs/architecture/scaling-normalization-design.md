@@ -2,7 +2,7 @@
 
 Date: 2026-05-03
 
-Status: Stage 0 and Stage 1A implemented
+Status: Stage 0 through Stage 4 implemented; coordinate scaling deferred
 
 Related:
 
@@ -69,6 +69,32 @@ The implementation is staged:
    scaling without transforming user variables or Riccati dynamics coordinates.
 6. Extend to state/control/parameter coordinate scaling only after these
    conservative kernels are proven.
+
+## Default Policy
+
+The default `SolverConfig` keeps all scaling methods disabled:
+
+```cpp
+constraint_scaling = ConstraintScalingMethod::NONE;
+objective_scaling = ObjectiveScalingMethod::NONE;
+problem_scaling = ProblemScalingMethod::NONE;
+```
+
+This is deliberate. Scaling changes internal residual units, objective
+curvature magnitude, merit/filter comparisons, and termination interpretation.
+Keeping `NONE` as the default preserves compatibility and keeps the reference
+path easy to reason about.
+
+The recommended robust configuration for badly scaled NMPC problems is:
+
+```cpp
+config.problem_scaling = ProblemScalingMethod::RUIZ_EQUILIBRATION;
+```
+
+This is a config profile, not a public strategy/plugin. It composes the current
+bounded row and objective kernels and leaves user variables in physical units.
+If later benchmark coverage shows no regressions across ordinary well-scaled
+models, this profile can become part of a future `Robust` preset.
 
 ## Ownership Boundary
 
@@ -140,6 +166,34 @@ requires a clearer convention:
   active scaling plan.
 - Diagnostics should expose both scaled and unscaled worst rows so a user can
   tell whether scaling is helping or hiding a modeling problem.
+
+## Tolerance Semantics
+
+`tol_con`, `tol_dual`, and `tol_mu` are interpreted in the solver's internal
+units:
+
+- With scaling disabled, internal constraint residual units equal user model
+  units.
+- With constraint or problem scaling enabled, `tol_con` applies to the scaled
+  constraint residual and unscaled dynamics defects. `SolverInfo::primal_inf`
+  reports this internal metric.
+- `SolverInfo::unscaled_primal_inf` reports the raw model constraint residual
+  plus slacks transformed back to user units where row scaling is active.
+- `tol_dual` applies to stationarity residuals built from the active internal
+  cost and constraint packets. Objective scaling can therefore change the
+  stationarity residual magnitude by design.
+- `tol_mu` applies to the primal-dual complementarity quantities in the active
+  internal slack/dual units.
+
+User-facing state, control, parameter values, and `get_stage_cost()` remain
+unscaled. A final report should always inspect both `primal_inf` and
+`unscaled_primal_inf` when scaling is enabled: the former explains solver
+termination, while the latter explains physical feasibility.
+
+Current limitation: dynamics defects are not coordinate-scaled. Full
+state/control/parameter scaling is a later stage because it must transform
+`dx/du`, dynamics Jacobians, Riccati feedback gains, warm starts, SOC
+corrections, and diagnostics consistently.
 
 ## Stage 0: Badly-Scaled Case And Metrics
 
@@ -283,6 +337,41 @@ coordinate equilibration. That choice is deliberate: full variable scaling would
 change `dx/du`, dynamics defects, Riccati feedback gains, SOC corrections,
 restoration, warm-start deltas, and unscaled diagnostics in one patch. That is
 too much semantic surface without a dedicated benchmark proving the need.
+
+Manual benchmark evidence from 2026-05-03:
+
+```text
+cmake -S . -B .build
+cmake --build .build --target scaling_bench -j2
+./.build/scaling_bench 50 5
+
+Eigen backend, CarModel obstacle, N=50:
+NONE                  success 100%, 1.605 ms, 87 iters, primal 1.78e-15, raw 1.78e-15, dual 6.81e-04
+ROW_INF_NORM          success 100%, 1.656 ms, 87 iters, primal 8.88e-16, raw 1.78e-15, dual 1.23e-03
+HESSIAN_GERSHGORIN    success 100%, 0.507 ms, 24 iters, primal 1.78e-15, raw 1.78e-15, dual 7.27e-05
+RUIZ_EQUILIBRATION    success 100%, 0.527 ms, 24 iters, primal 8.88e-16, raw 1.78e-15, dual 7.27e-05
+
+cmake -S . -B .build_custom -DUSE_EIGEN=OFF -DUSE_CUSTOM_MATRIX=ON
+cmake --build .build_custom --target scaling_bench -j2
+./.build_custom/scaling_bench 50 5
+
+Custom MiniMatrix backend, same case:
+NONE                  success 100%, 1.915 ms, 87 iters, primal 1.78e-15, raw 1.78e-15, dual 1.22e-03
+ROW_INF_NORM          success 100%, 1.943 ms, 87 iters, primal 8.88e-16, raw 1.78e-15, dual 6.78e-04
+HESSIAN_GERSHGORIN    success 100%, 0.591 ms, 24 iters, primal 8.88e-16, raw 8.88e-16, dual 7.27e-05
+RUIZ_EQUILIBRATION    success 100%, 0.610 ms, 24 iters, primal 8.88e-16, raw 1.78e-15, dual 7.27e-05
+```
+
+Conclusion from this benchmark:
+
+- Objective scaling is the dominant improvement in this mixed-weight CarModel
+  case.
+- Row scaling is neutral on this particular case because the constraint rows are
+  already similarly scaled.
+- `RUIZ_EQUILIBRATION` matches the objective-scaling iteration improvement while
+  also enabling row scaling for badly scaled constraints.
+- The default remains `NONE` until ordinary and pathological benchmark coverage
+  is broader; `RUIZ_EQUILIBRATION` is the recommended robust opt-in.
 
 ## Stage 5: State, Control, And Parameter Coordinate Scaling
 

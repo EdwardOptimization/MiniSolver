@@ -392,6 +392,8 @@ add_minisolver_bench(merit_armijo_bench tools/merit_armijo_bench.cpp)
 
 add_minisolver_bench(warm_start_bench tools/warm_start_bench.cpp)
 
+add_minisolver_bench(scaling_bench tools/scaling_bench.cpp)
+
 add_executable(test_asset_regressions
     tests/test_asset_regressions.cpp
     ${KINEMATIC_BICYCLE_TEST_MODEL}
