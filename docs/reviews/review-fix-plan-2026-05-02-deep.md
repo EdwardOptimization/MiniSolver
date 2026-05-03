@@ -60,7 +60,7 @@ Validation recorded before opening this ledger:
 | **N-DEG-1** Riccati small-NU freeze produces silent zero-control direction; user receives "OPTIMAL" status with frozen `du[i] = 0`. | fixed | [`linear_solve_result.h`](../../include/minisolver/algorithms/linear_solve_result.h), [`riccati.h`](../../include/minisolver/solver/riccati.h), [`riccati_solver.h`](../../include/minisolver/algorithms/riccati_solver.h), [`solver.h`](../../include/minisolver/solver/solver.h), [`test_riccati.cpp`](../../tests/test_riccati.cpp), [`test_status.cpp`](../../tests/test_status.cpp). | Fixed by surfacing the freeze fallback through `LinearSolveResult` and `SolverInfo::degraded_step`, avoiding the earlier `last_solve_degraded()` side channel. A focused Riccati test and end-to-end `SolverInfo` test cover the diagnostic. Broader SOC/restoration/factorization counters remain part of the diagnostics backlog under N-OBS-1. |
 | **N-THEORY-1** Filter line search missing three Wächter-Biegler 2006 §2.3 mechanisms; ADR 0002 only documents one (switching condition). Also missing: `θ_max` filter sentinel (Eqn 21), f-type acceptance must NOT augment filter. | deferred-design | [`line_search.h:577-586`](../../include/minisolver/algorithms/line_search.h) `reset()` clears entries with no sentinel; lines 681-687 augment filter on every accepted step. [`globalization-mehrotra-theory-plan.md`](../architecture/globalization-mehrotra-theory-plan.md) records the source survey and staged implementation order. | Implement in sub-steps after red tests: `theta_max` gate first, then f-type/h-type filter augmentation semantics, then switching condition once the merit/model derivative machinery exists. |
 | **N-THEORY-2** Filter ring buffer overwrites oldest entries after 1024 accepted steps, breaking "monotone over all history" certificate property. | deferred-design | [`line_search.h:377, 681-687`](../../include/minisolver/algorithms/line_search.h). Test `LineSearchTest.FilterHistoryWrapsAtFixedCapacity` documents but does not assert certificate preservation. [`globalization-mehrotra-theory-plan.md`](../architecture/globalization-mehrotra-theory-plan.md) explains why Pareto frontier should wait until N-THEORY-1 stabilizes. | Defer code until filter f-type/h-type semantics are stable; then switch to fixed-capacity Pareto pruning with a focused over-capacity regression. |
-| **N-THEORY-3** Mehrotra `α_aff` is a single primal+dual fraction-to-boundary, not split into `α_aff_p` / `α_aff_d`. Produces conservative `μ_aff` and slower barrier reduction. | confirmed | [`solver.h:1005`](../../include/minisolver/solver/solver.h) `compute_fraction_to_boundary_(affine_traj)` returns scalar. Standard Mehrotra requires separate primal and dual fractions; acados/HPIPM stats also expose `alpha_prim_aff` and `alpha_dual_aff` separately. | Next code item: add a red test for split affine primal/dual steps, then introduce an internal `FractionToBoundaryResult` and use separate alphas in `compute_affine_barrier_mu_`. |
+| **N-THEORY-3** Mehrotra `α_aff` is a single primal+dual fraction-to-boundary, not split into `α_aff_p` / `α_aff_d`. Produces conservative `μ_aff` and slower barrier reduction. | fixed | [`solver.h`](../../include/minisolver/solver/solver.h), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). Red baseline: `BugfixTest.MehrotraAffineMuUsesSeparatePrimalAndDualStepLengths` failed with `mu_aff=0.1875` instead of the split-step value near zero. | Fixed by adding an internal `FractionToBoundaryResult`, splitting affine primal/dual step lengths, and evaluating `mu_aff` with primal slack steps and dual multiplier steps separately. |
 
 ## P2: Cleanup And Hardening
 
@@ -99,13 +99,14 @@ This ledger's recommended sequence (also in main review, repeated here for ease 
 6. **N-API-1** (silent setter cleanup, paired with new logger).
 7. **N-EMBED-1** (embedded profile + ARM CI).
 8. **N-MOD-2** (problem scaling).
-9. Bundle theory: **N-THEORY-1 + N-THEORY-2 + N-THEORY-3 + N-THEORY-6**
+9. Bundle remaining theory: **N-THEORY-1 + N-THEORY-2 + N-THEORY-6**
    (filter + Mehrotra + analytic merit dphi).
 10. **N-THEORY-4** (inertia detection — defer until benchmark evidence demands).
 
 Already resolved after this ledger was opened: **N-THEORY-5**, **N-CONV-1**,
 **N-NUM-2**, **N-CONV-3**, **N-CONV-4**, **N-RT-1**, **N-EMBED-2**,
 **N-OBS-3**. **N-NUM-1** was reclassified as an invalid-invariant /
-over-defensive-code correction.
+over-defensive-code correction. **N-THEORY-3** was resolved with split affine
+primal/dual step lengths.
 
 Items not on this critical path are deferred-design candidates: **N-PREC-1**, **N-API-2**, **N-MOD-1**.

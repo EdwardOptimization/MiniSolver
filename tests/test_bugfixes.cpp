@@ -21,6 +21,21 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     }
     static double last_mu_aff(const Solver& s) { return s.context_.metrics.last_mu_aff; }
     static double last_alpha_aff(const Solver& s) { return s.context_.metrics.last_alpha_aff; }
+    static double compute_fraction_to_boundary_primal(
+        Solver& s, const typename Solver::TrajArray& traj)
+    {
+        return s.compute_fraction_to_boundary_(traj).primal;
+    }
+    static double compute_fraction_to_boundary_dual(
+        Solver& s, const typename Solver::TrajArray& traj)
+    {
+        return s.compute_fraction_to_boundary_(traj).dual;
+    }
+    static double compute_affine_barrier_mu(Solver& s, const typename Solver::TrajArray& base,
+        const typename Solver::TrajArray& aff, double alpha_primal_aff, double alpha_dual_aff)
+    {
+        return s.compute_affine_barrier_mu_(base, aff, alpha_primal_aff, alpha_dual_aff);
+    }
     static double soft_s(const Solver& s, int stage, int idx)
     {
         return s.trajectory[stage].soft_s(idx);
@@ -142,6 +157,84 @@ struct BugTestModel {
         compute_dynamics(kp, type, dt);
         compute_constraints(kp);
         compute_cost(kp);
+    }
+};
+
+struct MehrotraTwoConstraintModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 2;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0, 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0, 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, T)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T>
+    static T compute_cost(const MSVec<T, NX>&, const MSVec<T, NU>&, const MSVec<T, NP>&)
+    {
+        return T(0);
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T>
+    static MSVec<T, NC> compute_constraints(
+        const MSVec<T, NX>&, const MSVec<T, NU>&, const MSVec<T, NP>&)
+    {
+        MSVec<T, NC> g;
+        g.setZero();
+        return g;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val.setZero();
+        kp.C.setZero();
+        kp.D.setZero();
+    }
+
+    template <typename T> static void compute_derivatives(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.A.setZero();
+        kp.B.setZero();
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.H.setZero();
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.C.setZero();
+        kp.D.setZero();
     }
 };
 
@@ -807,69 +900,76 @@ static void initialize_riccati_smoke_traj(
 // parameter. The fraction-to-boundary also misses soft_s / dsoft_s and
 // (w - lam) / (-dlam).
 //
-// RED test: run one Mehrotra solve on L1TestModel, then recompute the true
-// mu_aff from the post-step trajectory INCLUDING the L1 soft pair. If the
-// solver's mu_aff matches only the hard pair (bug), it will be smaller than
-// the true value that also counts soft_s * (w - lam).
+// RED test: compute mu_aff on a hand-built L1-soft knot. If the solver counts
+// only the hard pair (s * lam), it returns 6.0 instead of the true average that
+// also includes soft_s * (w - lam).
 // =============================================================================
 TEST(BugfixTest, MehrotraMuAffIncludesL1SoftPair)
 {
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
-    config.max_iters = 1; // just one step to capture mu_aff
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
-    config.mu_init = 1.0;
-    config.mu_final = 1e-8;
-    config.integrator = IntegratorType::EULER_EXPLICIT;
 
-    constexpr int N = 1;
-    MiniSolver<L1TestModel, 10> solver(N, Backend::CPU_SERIAL, config);
-    solver.set_dt(1.0);
-    solver.set_initial_state("x", 0.0);
-    solver.set_control_guess(0, 0, 5.0); // x_next = 0 + 5*1 = 5
-    solver.rollout_dynamics();
+    constexpr int N = 0;
+    MiniSolver<L1TestModel, 1> solver(N, Backend::CPU_SERIAL, config);
+    using Solver = MiniSolver<L1TestModel, 1>;
+    using Access = minisolver::test::SolverInternalAccess<L1TestModel, 1>;
 
-    using Access = minisolver::test::SolverInternalAccess<L1TestModel, 10>;
+    Solver::TrajArray base;
+    Solver::TrajArray affine;
+    base[0].set_zero();
+    affine[0].set_zero();
 
-    solver.solve();
+    base[0].s(0) = 2.0;
+    base[0].lam(0) = 3.0;
+    base[0].soft_s(0) = 5.0;
 
-    const double mu_aff_solver = Access::last_mu_aff(solver);
-
-    // Recompute true mu_aff from the post-step trajectory, including BOTH
-    // the hard pair (s * lam) and the L1 soft pair (soft_s * (w - lam)).
-    double true_total_comp = 0.0;
-    int true_total_dim = 0;
     constexpr double w = L1TestModel::constraint_weights[0]; // 100.0
+    const double expected_mu_aff = (2.0 * 3.0 + 5.0 * (w - 3.0)) / 2.0;
 
+    const double mu_aff = Access::compute_affine_barrier_mu(solver, base, affine, 1.0, 1.0);
+
+    EXPECT_NEAR(mu_aff, expected_mu_aff, 1.0e-12)
+        << "mu_aff must average both hard and L1 soft complementarity pairs.";
+}
+
+TEST(BugfixTest, MehrotraAffineMuUsesSeparatePrimalAndDualStepLengths)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    constexpr int N = 0;
+    MiniSolver<MehrotraTwoConstraintModel, 1> solver(N, Backend::CPU_SERIAL, config);
+    using Solver = MiniSolver<MehrotraTwoConstraintModel, 1>;
+    using Access = minisolver::test::SolverInternalAccess<MehrotraTwoConstraintModel, 1>;
+
+    Solver::TrajArray base;
+    Solver::TrajArray affine;
     for (int k = 0; k <= N; ++k) {
-        const double s_k = solver.get_slack(k, 0);
-        const double lam_k = solver.get_dual(k, 0);
-        const double soft_s_k = Access::soft_s(solver, k, 0);
-
-        true_total_comp += s_k * lam_k; // hard pair
-        true_total_comp += soft_s_k * (w - lam_k); // L1 soft pair
-        true_total_dim += 2; // count both pairs
+        base[k].set_zero();
+        affine[k].set_zero();
     }
-    double true_mu_aff = true_total_comp / std::max(1, true_total_dim);
 
-    // After fix: solver's mu_aff should be close to true_mu_aff.
-    // Before fix: solver's mu_aff only counts hard pairs, so it will be
-    // systematically smaller than true_mu_aff when the soft pair is
-    // significant (which it is with w=100 and mu_init=1.0).
-    //
-    // Allow 10% tolerance for float arithmetic differences between the
-    // solver's internal computation (which uses alpha_aff-scaled step) and
-    // our post-hoc recompute from the accepted trajectory.
-    EXPECT_GT(mu_aff_solver, 0.0) << "mu_aff must be positive after one step";
+    base[0].s(0) = 1.0;
+    base[0].lam(0) = 1.0;
+    affine[0].ds(0) = -2.0; // primal affine step is limited to alpha_p = 0.5
+    affine[0].dlam(0) = 0.0;
 
-    // The soft pair is large (w=100, soft_s~O(0.01), w-lam~O(100)).
-    // If solver ignores it, mu_aff will be < 50% of the true value.
-    // Tolerate up to 50% difference (the recompute uses post-step values,
-    // not the exact affine-step values the solver uses internally).
-    EXPECT_GT(mu_aff_solver, true_mu_aff * 0.5)
-        << "mu_aff is much smaller than true value — L1 soft pair likely "
-           "omitted. solver="
-        << mu_aff_solver << " true=" << true_mu_aff;
+    base[0].s(1) = 1.0;
+    base[0].lam(1) = 1.0;
+    affine[0].ds(1) = 0.0;
+    affine[0].dlam(1) = -1.25; // dual affine step is limited to alpha_d = 0.8
+
+    const double alpha_primal = Access::compute_fraction_to_boundary_primal(solver, affine);
+    const double alpha_dual = Access::compute_fraction_to_boundary_dual(solver, affine);
+    const double mu_aff
+        = Access::compute_affine_barrier_mu(solver, base, affine, alpha_primal, alpha_dual);
+
+    EXPECT_NEAR(alpha_primal, 0.5, 1.0e-12);
+    EXPECT_NEAR(alpha_dual, 0.8, 1.0e-12);
+    EXPECT_LT(mu_aff, 1.0e-9)
+        << "Mehrotra mu_aff must use alpha_p for primal slacks and alpha_d for duals; "
+           "using one combined alpha leaves non-limiting dual complementarity artificially high.";
 }
 
 TEST(BugfixTest, SlackResetUsesCurrentMuNotMuInit)

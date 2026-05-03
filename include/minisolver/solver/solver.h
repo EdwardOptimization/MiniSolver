@@ -829,9 +829,16 @@ private:
         }
     }
 
-    double compute_fraction_to_boundary_(const TrajArray& direction_traj) const
+    struct FractionToBoundaryResult {
+        double primal = 1.0;
+        double dual = 1.0;
+
+        double combined() const { return std::min(primal, dual); }
+    };
+
+    FractionToBoundaryResult compute_fraction_to_boundary_(const TrajArray& direction_traj) const
     {
-        double alpha = 1.0;
+        FractionToBoundaryResult alpha;
         for (int k = 0; k <= N; ++k) {
             for (int i = 0; i < NC; ++i) {
                 double s = direction_traj[k].s(i);
@@ -841,14 +848,14 @@ private:
 
                 if (ds < 0) {
                     double a = -s / ds;
-                    if (a < alpha) {
-                        alpha = a;
+                    if (a < alpha.primal) {
+                        alpha.primal = a;
                     }
                 }
                 if (dlam < 0) {
                     double a = -lam / dlam;
-                    if (a < alpha) {
-                        alpha = a;
+                    if (a < alpha.dual) {
+                        alpha.dual = a;
                     }
                 }
 
@@ -866,8 +873,8 @@ private:
                     double dsoft_s = direction_traj[k].dsoft_s(i);
                     if (dsoft_s < 0) {
                         double a = -soft_s / dsoft_s;
-                        if (a < alpha) {
-                            alpha = a;
+                        if (a < alpha.primal) {
+                            alpha.primal = a;
                         }
                     }
                     // soft dual: (w - lam) with direction -dlam.
@@ -875,8 +882,8 @@ private:
                     double dsoft_dual = -dlam; // d(w-lam)/dalpha = -dlam
                     if (dsoft_dual < 0) {
                         double a = -soft_dual / dsoft_dual;
-                        if (a < alpha) {
-                            alpha = a;
+                        if (a < alpha.dual) {
+                            alpha.dual = a;
                         }
                     }
                 }
@@ -885,16 +892,16 @@ private:
         return alpha;
     }
 
-    double compute_affine_barrier_mu_(
-        const TrajArray& base_traj, const TrajArray& affine_traj, double alpha_aff) const
+    double compute_affine_barrier_mu_(const TrajArray& base_traj, const TrajArray& affine_traj,
+        double alpha_primal_aff, double alpha_dual_aff) const
     {
         double total_comp = 0.0;
         int total_dim = 0;
 
         for (int k = 0; k <= N; ++k) {
             for (int i = 0; i < NC; ++i) {
-                double s_new = base_traj[k].s(i) + alpha_aff * affine_traj[k].ds(i);
-                double lam_new = base_traj[k].lam(i) + alpha_aff * affine_traj[k].dlam(i);
+                double s_new = base_traj[k].s(i) + alpha_primal_aff * affine_traj[k].ds(i);
+                double lam_new = base_traj[k].lam(i) + alpha_dual_aff * affine_traj[k].dlam(i);
                 if (s_new < 0) {
                     s_new = 1e-8; // Should not happen with fraction_to_boundary.
                 }
@@ -915,7 +922,7 @@ private:
                 }
                 if (type == 1 && w > 1e-6) {
                     double soft_s_new
-                        = base_traj[k].soft_s(i) + alpha_aff * affine_traj[k].dsoft_s(i);
+                        = base_traj[k].soft_s(i) + alpha_primal_aff * affine_traj[k].dsoft_s(i);
                     double soft_dual_new = w - lam_new;
                     if (soft_s_new < 0) {
                         soft_s_new = 1e-8;
@@ -1105,20 +1112,21 @@ private:
 
         // Calc max step for affine direction.
         // Must cover hard slack (s, lam) AND L1 soft variables (soft_s, w-lam).
-        double alpha_aff = compute_fraction_to_boundary_(affine_traj);
+        FractionToBoundaryResult alpha_aff = compute_fraction_to_boundary_(affine_traj);
 
         double mu_curr = context_.solve.mu;
-        double mu_aff = compute_affine_barrier_mu_(traj, affine_traj, alpha_aff);
+        double mu_aff
+            = compute_affine_barrier_mu_(traj, affine_traj, alpha_aff.primal, alpha_aff.dual);
         context_.metrics.last_mu_aff = mu_aff;
-        context_.metrics.last_alpha_aff = alpha_aff;
+        context_.metrics.last_alpha_aff = alpha_aff.combined();
 
         if (config.print_level >= PrintLevel::DEBUG) {
             MLOG_INFO("Mehrotra Debug: mu_curr=" << mu_curr << ", mu_aff=" << mu_aff
-                                                 << ", alpha_aff=" << alpha_aff);
+                                                 << ", alpha_aff=" << alpha_aff.combined());
         }
 
-        double mu_target
-            = detail::BarrierUpdateKernel::mehrotra_target_mu(config, mu_curr, mu_aff, alpha_aff);
+        double mu_target = detail::BarrierUpdateKernel::mehrotra_target_mu(
+            config, mu_curr, mu_aff, alpha_aff.combined());
 
         // 2. Corrector Step
         // Solve with mu_target and affine correction term.
