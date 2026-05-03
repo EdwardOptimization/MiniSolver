@@ -196,11 +196,11 @@ public:
         return -1;
     }
 
-    void resize_horizon(int new_n)
+    ApiStatus resize_horizon(int new_n)
     {
         if (new_n < 0 || new_n > MAX_N) {
             MLOG_ERROR("new_n outside valid range [0, MAX_N]");
-            return;
+            return ApiStatus::InvalidHorizon;
         }
         int old_n = N;
         N = new_n;
@@ -211,11 +211,12 @@ public:
                 dt_traj[k] = config.default_dt;
             }
         }
+        return ApiStatus::OK;
     }
 
     int get_horizon() const { return N; }
 
-    void set_config(const SolverConfig& conf)
+    ApiStatus set_config(const SolverConfig& conf)
     {
         // Backend is fixed at construction time (see ctor note: "explicit
         // backend argument; keep it as the source of truth"). Preserve it
@@ -228,6 +229,7 @@ public:
             alpha_log_.reserve(static_cast<size_t>(config.max_iters));
         }
         build_state_.dirty = true;
+        return ApiStatus::OK;
     }
 
     const SolverConfig& get_config() const { return config; }
@@ -245,66 +247,87 @@ public:
     // --- High-Level API ---
 
     // 1. Initial State
-    void set_initial_state(const std::vector<double>& x0)
+    ApiStatus set_initial_state(const std::vector<double>& x0)
     {
         if (x0.size() != NX) {
-            return;
+            return ApiStatus::SizeMismatch;
+        }
+        for (double value : x0) {
+            if (!std::isfinite(value)) {
+                return ApiStatus::NonFiniteValue;
+            }
         }
         auto& kp = trajectory[0];
         for (int i = 0; i < NX; ++i) {
             kp.x(i) = x0[i];
         }
+        return ApiStatus::OK;
     }
 
-    void set_initial_state(const std::string& name, double value)
+    ApiStatus set_initial_state(const std::string& name, double value)
     {
+        if (!std::isfinite(value)) {
+            return ApiStatus::NonFiniteValue;
+        }
         int idx = get_state_idx(name);
         if (idx != -1) {
             trajectory[0].x(idx) = value;
+            return ApiStatus::OK;
         } else {
             MLOG_WARN("Unknown state " << name);
+            return ApiStatus::UnknownName;
         }
     }
 
     // 2. Parameters
-    void set_parameter(int stage, int idx, double value)
+    ApiStatus set_parameter(int stage, int idx, double value)
     {
         if (stage > N || stage < 0) {
-            return;
+            return ApiStatus::InvalidStage;
         }
         if (idx >= NP || idx < 0) {
-            return;
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value)) {
+            return ApiStatus::NonFiniteValue;
         }
         trajectory[stage].p(idx) = value;
+        return ApiStatus::OK;
     }
 
-    void set_parameter(int stage, const std::string& name, double value)
+    ApiStatus set_parameter(int stage, const std::string& name, double value)
     {
         int idx = get_param_idx(name);
         if (idx != -1) {
-            set_parameter(stage, idx, value);
+            return set_parameter(stage, idx, value);
         } else {
             MLOG_WARN("Unknown param " << name);
+            return ApiStatus::UnknownName;
         }
     }
 
-    void set_global_parameter(int idx, double value)
+    ApiStatus set_global_parameter(int idx, double value)
     {
         if (idx >= NP || idx < 0) {
-            return;
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value)) {
+            return ApiStatus::NonFiniteValue;
         }
         for (int k = 0; k <= N; ++k) {
             trajectory[k].p(idx) = value;
         }
+        return ApiStatus::OK;
     }
 
-    void set_global_parameter(const std::string& name, double value)
+    ApiStatus set_global_parameter(const std::string& name, double value)
     {
         int idx = get_param_idx(name);
         if (idx != -1) {
-            set_global_parameter(idx, value);
+            return set_global_parameter(idx, value);
         } else {
             MLOG_WARN("Unknown param " << name);
+            return ApiStatus::UnknownName;
         }
     }
 
@@ -339,32 +362,48 @@ public:
     }
 
     // 3. State Access
-    void set_state_guess(int stage, int idx, double value)
+    ApiStatus set_state_guess(int stage, int idx, double value)
     {
-        if (stage > N || stage < 0 || idx >= NX || idx < 0) {
-            return;
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NX || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value)) {
+            return ApiStatus::NonFiniteValue;
         }
         trajectory[stage].x(idx) = value;
+        return ApiStatus::OK;
     }
 
-    void set_state_guess(int stage, const std::string& name, double value)
+    ApiStatus set_state_guess(int stage, const std::string& name, double value)
     {
         int idx = get_state_idx(name);
         if (idx != -1) {
-            set_state_guess(stage, idx, value);
+            return set_state_guess(stage, idx, value);
         }
+        MLOG_WARN("Unknown state " << name);
+        return ApiStatus::UnknownName;
     }
 
-    void set_state_guess_traj(const std::string& name, const std::vector<double>& values)
+    ApiStatus set_state_guess_traj(const std::string& name, const std::vector<double>& values)
     {
         int idx = get_state_idx(name);
         if (idx == -1) {
-            return;
+            MLOG_WARN("Unknown state " << name);
+            return ApiStatus::UnknownName;
         }
         int count = std::min((int)values.size(), N + 1);
         for (int k = 0; k < count; ++k) {
+            if (!std::isfinite(values[k])) {
+                return ApiStatus::NonFiniteValue;
+            }
+        }
+        for (int k = 0; k < count; ++k) {
             trajectory[k].x(idx) = values[k];
         }
+        return ApiStatus::OK;
     }
 
     std::vector<double> get_state_traj(const std::string& name) const
@@ -403,32 +442,51 @@ public:
     }
 
     // 4. Control Access
-    void set_control_guess(int stage, int idx, double value)
+    ApiStatus set_control_guess(int stage, int idx, double value)
     {
-        if (stage >= N || stage < 0 || idx >= NU || idx < 0) {
-            return;
+        if (stage == N) {
+            return ApiStatus::TerminalControl;
+        }
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NU || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value)) {
+            return ApiStatus::NonFiniteValue;
         }
         trajectory[stage].u(idx) = value;
+        return ApiStatus::OK;
     }
 
-    void set_control_guess(int stage, const std::string& name, double value)
+    ApiStatus set_control_guess(int stage, const std::string& name, double value)
     {
         int idx = get_control_idx(name);
         if (idx != -1) {
-            set_control_guess(stage, idx, value);
+            return set_control_guess(stage, idx, value);
         }
+        MLOG_WARN("Unknown control " << name);
+        return ApiStatus::UnknownName;
     }
 
-    void set_control_guess_traj(const std::string& name, const std::vector<double>& values)
+    ApiStatus set_control_guess_traj(const std::string& name, const std::vector<double>& values)
     {
         int idx = get_control_idx(name);
         if (idx == -1) {
-            return;
+            MLOG_WARN("Unknown control " << name);
+            return ApiStatus::UnknownName;
         }
         int count = std::min((int)values.size(), N);
         for (int k = 0; k < count; ++k) {
+            if (!std::isfinite(values[k])) {
+                return ApiStatus::NonFiniteValue;
+            }
+        }
+        for (int k = 0; k < count; ++k) {
             trajectory[k].u(idx) = values[k];
         }
+        return ApiStatus::OK;
     }
 
     std::vector<double> get_control_traj(const std::string& name) const
@@ -467,20 +525,34 @@ public:
     }
 
     // 5. Slack / Dual Access
-    void set_slack_guess(int stage, int idx, double value)
+    ApiStatus set_slack_guess(int stage, int idx, double value)
     {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0) {
-            return;
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NC || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value)) {
+            return ApiStatus::NonFiniteValue;
         }
         trajectory[stage].s(idx) = value;
+        return ApiStatus::OK;
     }
 
-    void set_dual_guess(int stage, int idx, double value)
+    ApiStatus set_dual_guess(int stage, int idx, double value)
     {
-        if (stage > N || stage < 0 || idx >= NC || idx < 0) {
-            return;
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NC || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value)) {
+            return ApiStatus::NonFiniteValue;
         }
         trajectory[stage].lam(idx) = value;
+        return ApiStatus::OK;
     }
 
     std::vector<double> get_slack(int stage) const
@@ -548,10 +620,16 @@ public:
         return detail::true_constraint_value<Model>(trajectory[stage], idx);
     }
 
-    void set_dt(const std::vector<double>& dts)
+    ApiStatus set_dt(const std::vector<double>& dts)
     {
         if (dts.size() > MAX_N) {
             MLOG_WARN("DT vector too large.");
+            return ApiStatus::SizeMismatch;
+        }
+        for (double dt : dts) {
+            if (!std::isfinite(dt)) {
+                return ApiStatus::NonFiniteValue;
+            }
         }
         int count = std::min((int)dts.size(), N);
         for (int i = 0; i < count; ++i) {
@@ -563,9 +641,17 @@ public:
         for (int i = count; i < MAX_N; ++i) {
             dt_traj[i] = fill_val;
         }
+        return ApiStatus::OK;
     }
 
-    void set_dt(double dt) { dt_traj.fill(dt); }
+    ApiStatus set_dt(double dt)
+    {
+        if (!std::isfinite(dt)) {
+            return ApiStatus::NonFiniteValue;
+        }
+        dt_traj.fill(dt);
+        return ApiStatus::OK;
+    }
 
     void rollout_dynamics()
     {

@@ -189,6 +189,14 @@ TEST(StatusTest, StatusToStringUsesEnumNameForOptimal)
     EXPECT_STREQ(status_to_string(SolverStatus::OPTIMAL), "OPTIMAL");
 }
 
+TEST(StatusTest, ApiStatusHelpersExposeStableNames)
+{
+    EXPECT_TRUE(api_status_ok(ApiStatus::OK));
+    EXPECT_FALSE(api_status_ok(ApiStatus::UnknownName));
+    EXPECT_STREQ(api_status_to_string(ApiStatus::TerminalControl), "TerminalControl");
+    EXPECT_STREQ(api_status_to_string(ApiStatus::NonFiniteValue), "NonFiniteValue");
+}
+
 TEST(StatusTest, IterationBudgetExhaustionIsNotInfeasibility)
 {
     SolverConfig config;

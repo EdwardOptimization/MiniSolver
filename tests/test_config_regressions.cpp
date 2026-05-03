@@ -38,6 +38,107 @@ TEST(ConfigRegressionTest, NegativeConstraintQueryReturnsZero)
     EXPECT_DOUBLE_EQ(solver.get_constraint_val(0, -1), 0.0);
 }
 
+struct ApiStatusTestModel {
+    static const int NX = 2;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 1;
+
+    static constexpr std::array<const char*, NX> state_names = { "x", "y" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = { "p" };
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& p, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + dt * u(0);
+        xn(1) = x(1) + dt * p(0);
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + dt * kp.u(0);
+        kp.f_resid(1) = kp.x(1) + dt * kp.p(0);
+        kp.A.setIdentity();
+        kp.B.setZero();
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = kp.u(0) - 1.0;
+        kp.C.setZero();
+        kp.D.setZero();
+        kp.D(0, 0) = 1.0;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0) + kp.x(1) * kp.x(1) + kp.u(0) * kp.u(0);
+        kp.q(0) = 2.0 * kp.x(0);
+        kp.q(1) = 2.0 * kp.x(1);
+        kp.r(0) = 2.0 * kp.u(0);
+        kp.Q.setZero();
+        kp.Q(0, 0) = 2.0;
+        kp.Q(1, 1) = 2.0;
+        kp.R(0, 0) = 2.0;
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+TEST(ConfigRegressionTest, ApiSettersReturnExplicitStatusAndDoNotMutate)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    MiniSolver<ApiStatusTestModel, 3> solver(2, Backend::CPU_SERIAL, config);
+
+    EXPECT_EQ(solver.resize_horizon(4), ApiStatus::InvalidHorizon);
+    EXPECT_EQ(solver.get_horizon(), 2);
+
+    EXPECT_EQ(solver.set_initial_state(std::vector<double> { 1.0 }), ApiStatus::SizeMismatch);
+    EXPECT_DOUBLE_EQ(solver.get_state(0, 0), 0.0);
+
+    EXPECT_EQ(solver.set_initial_state("missing", 1.0), ApiStatus::UnknownName);
+    EXPECT_EQ(solver.set_initial_state("x", std::numeric_limits<double>::infinity()),
+        ApiStatus::NonFiniteValue);
+    EXPECT_DOUBLE_EQ(solver.get_state(0, 0), 0.0);
+
+    EXPECT_EQ(solver.set_parameter(3, 0, 1.0), ApiStatus::InvalidStage);
+    EXPECT_EQ(solver.set_parameter(0, 2, 1.0), ApiStatus::InvalidIndex);
+    EXPECT_EQ(solver.set_parameter(0, "missing", 1.0), ApiStatus::UnknownName);
+    EXPECT_DOUBLE_EQ(solver.get_parameter(0, 0), 0.0);
+
+    EXPECT_EQ(solver.set_state_guess(-1, 0, 2.0), ApiStatus::InvalidStage);
+    EXPECT_EQ(solver.set_state_guess(0, 2, 2.0), ApiStatus::InvalidIndex);
+    EXPECT_EQ(solver.set_state_guess(0, "missing", 2.0), ApiStatus::UnknownName);
+    EXPECT_DOUBLE_EQ(solver.get_state(0, 0), 0.0);
+
+    EXPECT_EQ(solver.set_control_guess(2, 0, 3.0), ApiStatus::TerminalControl);
+    EXPECT_EQ(solver.set_control_guess(0, 1, 3.0), ApiStatus::InvalidIndex);
+    EXPECT_EQ(solver.set_control_guess(0, "missing", 3.0), ApiStatus::UnknownName);
+    EXPECT_DOUBLE_EQ(solver.get_control(0, 0), 0.0);
+
+    EXPECT_EQ(solver.set_slack_guess(3, 0, 4.0), ApiStatus::InvalidStage);
+    EXPECT_EQ(solver.set_dual_guess(0, 1, 4.0), ApiStatus::InvalidIndex);
+    EXPECT_DOUBLE_EQ(solver.get_slack(0, 0), 1.0);
+    EXPECT_DOUBLE_EQ(solver.get_dual(0, 0), 1.0);
+
+    EXPECT_EQ(solver.set_dt(std::numeric_limits<double>::quiet_NaN()), ApiStatus::NonFiniteValue);
+}
+
 TEST(ConfigRegressionTest, SetConfigPreservesBackendInvariant)
 {
     SolverConfig conf;

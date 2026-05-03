@@ -38,6 +38,18 @@ enum class TerminationReason {
     POSTSOLVE_INFEASIBLE = 11
 };
 
+enum class ApiStatus {
+    OK = 0,
+    InvalidHorizon = 1,
+    InvalidStage = 2,
+    InvalidIndex = 3,
+    UnknownName = 4,
+    SizeMismatch = 5,
+    NonFiniteValue = 6,
+    TerminalControl = 7,
+    InvalidArgument = 8
+};
+
 inline const char* status_to_string(SolverStatus status)
 {
     switch (status) {
@@ -66,6 +78,37 @@ inline const char* status_to_string(SolverStatus status)
     default:
         return "UNKNOWN";
     }
+}
+
+inline const char* api_status_to_string(ApiStatus status)
+{
+    switch (status) {
+    case ApiStatus::OK:
+        return "OK";
+    case ApiStatus::InvalidHorizon:
+        return "InvalidHorizon";
+    case ApiStatus::InvalidStage:
+        return "InvalidStage";
+    case ApiStatus::InvalidIndex:
+        return "InvalidIndex";
+    case ApiStatus::UnknownName:
+        return "UnknownName";
+    case ApiStatus::SizeMismatch:
+        return "SizeMismatch";
+    case ApiStatus::NonFiniteValue:
+        return "NonFiniteValue";
+    case ApiStatus::TerminalControl:
+        return "TerminalControl";
+    case ApiStatus::InvalidArgument:
+        return "InvalidArgument";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+inline bool api_status_ok(ApiStatus status)
+{
+    return status == ApiStatus::OK;
 }
 
 inline const char* termination_reason_to_string(TerminationReason reason)

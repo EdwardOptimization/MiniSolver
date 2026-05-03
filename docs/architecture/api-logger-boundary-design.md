@@ -1,6 +1,7 @@
 # API Error And Logger Boundary Design
 
-Status: design accepted for a future cleanup pass.
+Status: API setter status phase implemented; checked getters and logger backend
+remain to be implemented.
 
 Owner: MiniSolver public API and observability boundary.
 
@@ -299,6 +300,18 @@ Chosen route:
 
 ## Status
 
-This document is a design contract. It does not implement N-API-1 or N-OBS-2.
+This document is both the design contract and implementation ledger.
+
+Implemented:
+
+- Phase 1 setter status returns: `ApiStatus` is available, high-level setters
+  return explicit status, and invalid setter inputs do not mutate solver state.
+
+Still deferred:
+
+- Phase 2 checked scalar getters.
+- Phase 3 central logger backend and logger-capture tests.
+- Phase 4 release documentation update after the API/logger behavior stabilizes.
+
 Future implementation must follow the evidence-driven workflow: red tests first,
 one behavior group per commit, full CTest before push.
