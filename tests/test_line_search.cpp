@@ -234,6 +234,56 @@ struct MeritAnalyticDphiModel {
     template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>&) { }
 };
 
+struct FilterThetaMaxModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, double, IntegratorType)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = (kp.x(0) < T(0)) ? T(100) : T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = kp.x(0);
+        kp.C(0, 0) = 1.0;
+        kp.D.setZero();
+    }
+};
+
 struct L2ResidualFilterModel {
     static const int NX = 1;
     static const int NU = 1;
@@ -669,6 +719,39 @@ TEST(LineSearchTest, FilterAcceptanceUsesTrueResidualNotQpResidual)
     EXPECT_GT(alpha, 0.0)
         << "Filter globalization should evaluate true nonlinear residuals, not the QP/IPM "
            "linearization residual packet.";
+}
+
+TEST(LineSearchTest, FilterRejectsTrialAboveThetaMax)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.line_search_tau = 0.9;
+    config.enable_soc = false;
+
+    using Model = FilterThetaMaxModel;
+    FilterLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = -1.0;
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    active[0].dx(0) = 20000.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_EQ(alpha, 0.0)
+        << "Filter must reject trials whose violation exceeds theta_max even if phi decreases.";
 }
 
 TEST(LineSearchTest, MeritAcceptanceUsesTrueResidualNotQpResidual)

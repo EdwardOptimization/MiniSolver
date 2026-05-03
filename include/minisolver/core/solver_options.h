@@ -183,6 +183,7 @@ struct SolverConfig {
     // Filter Method Parameters
     double filter_gamma_theta = 1e-5;
     double filter_gamma_phi = 1e-5;
+    double filter_theta_max_factor = 1e4;
 
     // Merit Line Search: Armijo sufficient decrease constant.
     // Step accepted only if phi(alpha) <= phi(0) + c1 * alpha * dphi.

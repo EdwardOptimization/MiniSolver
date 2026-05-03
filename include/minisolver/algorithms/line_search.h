@@ -585,6 +585,11 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     bool is_acceptable(
         double theta, double phi, double theta_0, double phi_0, const SolverConfig& config)
     {
+        const double theta_max = config.filter_theta_max_factor * std::max(1.0, theta_0);
+        if (theta > theta_max) {
+            return false;
+        }
+
         // Check against current point (Sufficient Decrease)
         // Condition: theta <= (1-gamma)*theta_0 OR phi <= phi_0 - gamma*theta_0
         bool sufficient_decrease = (theta <= (1.0 - config.filter_gamma_theta) * theta_0)
