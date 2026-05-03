@@ -236,6 +236,21 @@ TEST(ConfigRegressionTest, SetConfigRejectsInvalidConfigWithoutMutation)
     invalid.warm_start_slack_init = 0.0;
     EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
     EXPECT_GT(solver.get_config().warm_start_slack_init, 0.0);
+
+    invalid = solver.get_config();
+    invalid.line_search_backtrack_factor = 1.0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_LT(solver.get_config().line_search_backtrack_factor, 1.0);
+
+    invalid = solver.get_config();
+    invalid.reg_scale_up = 1.0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GT(solver.get_config().reg_scale_up, 1.0);
+
+    invalid = solver.get_config();
+    invalid.reg_scale_down = 1.0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GT(solver.get_config().reg_scale_down, 1.0);
 }
 
 TEST(ConfigRegressionTest, ConstructorRejectsInvalidConfig)

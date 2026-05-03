@@ -45,6 +45,14 @@ namespace detail {
         return (value >= 0.0 && value < 1.0) ? ApiStatus::OK : ApiStatus::InvalidArgument;
     }
 
+    inline ApiStatus validate_open_unit_interval_config_value(double value)
+    {
+        if (!finite_config_value(value)) {
+            return ApiStatus::NonFiniteValue;
+        }
+        return (value > 0.0 && value < 1.0) ? ApiStatus::OK : ApiStatus::InvalidArgument;
+    }
+
     inline ApiStatus validate_solver_config(const SolverConfig& conf)
     {
         if (conf.max_iters < 0 || conf.line_search_max_iters < 0 || conf.max_restoration_iters < 0
@@ -110,9 +118,15 @@ namespace detail {
         if (status != ApiStatus::OK) {
             return status;
         }
+        if (conf.reg_scale_up <= 1.0) {
+            return ApiStatus::InvalidArgument;
+        }
         status = validate_positive_finite_config_value(conf.reg_scale_down);
         if (status != ApiStatus::OK) {
             return status;
+        }
+        if (conf.reg_scale_down <= 1.0) {
+            return ApiStatus::InvalidArgument;
         }
         status = validate_positive_finite_config_value(conf.min_barrier_slack);
         if (status != ApiStatus::OK) {
@@ -126,7 +140,7 @@ namespace detail {
         if (status != ApiStatus::OK) {
             return status;
         }
-        status = validate_unit_interval_config_value(conf.line_search_backtrack_factor);
+        status = validate_open_unit_interval_config_value(conf.line_search_backtrack_factor);
         if (status != ApiStatus::OK) {
             return status;
         }
