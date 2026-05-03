@@ -53,207 +53,141 @@ namespace detail {
         return (value > 0.0 && value < 1.0) ? ApiStatus::OK : ApiStatus::InvalidArgument;
     }
 
-    inline bool valid_backend(Backend value)
+    template <typename Enum, Enum... Values> inline bool enum_is_one_of(Enum value)
     {
-        switch (value) {
-        case Backend::CPU_SERIAL:
-        case Backend::GPU_MPX:
-        case Backend::GPU_PCR:
-            return true;
-        default:
-            return false;
-        }
+        return ((value == Values) || ...);
     }
 
-    inline bool valid_initialization_mode(InitializationMode value)
+    inline bool valid_enum(Backend value)
     {
-        switch (value) {
-        case InitializationMode::COLD_START:
-        case InitializationMode::REUSE_PRIMAL:
-        case InitializationMode::REUSE_PRIMAL_DUAL:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<Backend, Backend::CPU_SERIAL, Backend::GPU_MPX, Backend::GPU_PCR>(
+            value);
     }
 
-    inline bool valid_warm_start_barrier_mode(WarmStartBarrierMode value)
+    inline bool valid_enum(InitializationMode value)
     {
-        switch (value) {
-        case WarmStartBarrierMode::RESET_TO_MU_INIT:
-        case WarmStartBarrierMode::REUSE_PREVIOUS_MU:
-        case WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<InitializationMode, InitializationMode::COLD_START,
+            InitializationMode::REUSE_PRIMAL, InitializationMode::REUSE_PRIMAL_DUAL>(value);
     }
 
-    inline bool valid_warm_start_regularization_mode(WarmStartRegularizationMode value)
+    inline bool valid_enum(WarmStartBarrierMode value)
     {
-        switch (value) {
-        case WarmStartRegularizationMode::RESET_TO_REG_INIT:
-        case WarmStartRegularizationMode::REUSE_PREVIOUS_REG:
-        case WarmStartRegularizationMode::DECAY_PREVIOUS_REG:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<WarmStartBarrierMode, WarmStartBarrierMode::RESET_TO_MU_INIT,
+            WarmStartBarrierMode::REUSE_PREVIOUS_MU,
+            WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP>(value);
     }
 
-    inline bool valid_termination_profile(TerminationProfile value)
+    inline bool valid_enum(WarmStartRegularizationMode value)
     {
-        switch (value) {
-        case TerminationProfile::STRICT_KKT:
-        case TerminationProfile::ACCEPTABLE_NMPC:
-        case TerminationProfile::RTI_FIXED_ITERATION:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<WarmStartRegularizationMode,
+            WarmStartRegularizationMode::RESET_TO_REG_INIT,
+            WarmStartRegularizationMode::REUSE_PREVIOUS_REG,
+            WarmStartRegularizationMode::DECAY_PREVIOUS_REG>(value);
     }
 
-    inline bool valid_constraint_scaling_method(ConstraintScalingMethod value)
+    inline bool valid_enum(TerminationProfile value)
     {
-        switch (value) {
-        case ConstraintScalingMethod::NONE:
-        case ConstraintScalingMethod::ROW_INF_NORM:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<TerminationProfile, TerminationProfile::STRICT_KKT,
+            TerminationProfile::ACCEPTABLE_NMPC, TerminationProfile::RTI_FIXED_ITERATION>(value);
     }
 
-    inline bool valid_objective_scaling_method(ObjectiveScalingMethod value)
+    inline bool valid_enum(ConstraintScalingMethod value)
     {
-        switch (value) {
-        case ObjectiveScalingMethod::NONE:
-        case ObjectiveScalingMethod::HESSIAN_GERSHGORIN:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<ConstraintScalingMethod, ConstraintScalingMethod::NONE,
+            ConstraintScalingMethod::ROW_INF_NORM>(value);
     }
 
-    inline bool valid_problem_scaling_method(ProblemScalingMethod value)
+    inline bool valid_enum(ObjectiveScalingMethod value)
     {
-        switch (value) {
-        case ProblemScalingMethod::NONE:
-        case ProblemScalingMethod::RUIZ_EQUILIBRATION:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<ObjectiveScalingMethod, ObjectiveScalingMethod::NONE,
+            ObjectiveScalingMethod::HESSIAN_GERSHGORIN>(value);
     }
 
-    inline bool valid_integrator_type(IntegratorType value)
+    inline bool valid_enum(ProblemScalingMethod value)
     {
-        switch (value) {
-        case IntegratorType::EULER_EXPLICIT:
-        case IntegratorType::EULER_IMPLICIT:
-        case IntegratorType::RK2_EXPLICIT:
-        case IntegratorType::RK2_IMPLICIT:
-        case IntegratorType::RK4_EXPLICIT:
-        case IntegratorType::RK4_IMPLICIT:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<ProblemScalingMethod, ProblemScalingMethod::NONE,
+            ProblemScalingMethod::RUIZ_EQUILIBRATION>(value);
     }
 
-    inline bool valid_barrier_strategy(BarrierStrategy value)
+    inline bool valid_enum(IntegratorType value)
     {
-        switch (value) {
-        case BarrierStrategy::MONOTONE:
-        case BarrierStrategy::ADAPTIVE:
-        case BarrierStrategy::MEHROTRA:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<IntegratorType, IntegratorType::EULER_EXPLICIT,
+            IntegratorType::EULER_IMPLICIT, IntegratorType::RK2_EXPLICIT,
+            IntegratorType::RK2_IMPLICIT, IntegratorType::RK4_EXPLICIT,
+            IntegratorType::RK4_IMPLICIT>(value);
     }
 
-    inline bool valid_inertia_strategy(InertiaStrategy value)
+    inline bool valid_enum(BarrierStrategy value)
     {
-        switch (value) {
-        case InertiaStrategy::REGULARIZATION:
-        case InertiaStrategy::SATURATION:
-        case InertiaStrategy::IGNORE_SINGULAR:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<BarrierStrategy, BarrierStrategy::MONOTONE, BarrierStrategy::ADAPTIVE,
+            BarrierStrategy::MEHROTRA>(value);
     }
 
-    inline bool valid_line_search_type(LineSearchType value)
+    inline bool valid_enum(InertiaStrategy value)
     {
-        switch (value) {
-        case LineSearchType::MERIT:
-        case LineSearchType::FILTER:
-        case LineSearchType::NONE:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<InertiaStrategy, InertiaStrategy::REGULARIZATION,
+            InertiaStrategy::SATURATION, InertiaStrategy::IGNORE_SINGULAR>(value);
     }
 
-    inline bool valid_print_level(PrintLevel value)
+    inline bool valid_enum(LineSearchType value)
     {
-        switch (value) {
-        case PrintLevel::NONE:
-        case PrintLevel::WARN:
-        case PrintLevel::INFO:
-        case PrintLevel::ITER:
-        case PrintLevel::DEBUG:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<LineSearchType, LineSearchType::MERIT, LineSearchType::FILTER,
+            LineSearchType::NONE>(value);
     }
 
-    inline bool valid_hessian_approximation(HessianApproximation value)
+    inline bool valid_enum(PrintLevel value)
     {
-        switch (value) {
-        case HessianApproximation::EXACT:
-        case HessianApproximation::OBJECTIVE_HESSIAN_ONLY:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<PrintLevel, PrintLevel::NONE, PrintLevel::WARN, PrintLevel::INFO,
+            PrintLevel::ITER, PrintLevel::DEBUG>(value);
     }
 
-    inline bool valid_direction_refinement_mode(DirectionRefinementMode value)
+    inline bool valid_enum(HessianApproximation value)
     {
-        switch (value) {
-        case DirectionRefinementMode::NONE:
-        case DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT:
-            return true;
-        default:
-            return false;
-        }
+        return enum_is_one_of<HessianApproximation, HessianApproximation::EXACT,
+            HessianApproximation::OBJECTIVE_HESSIAN_ONLY>(value);
     }
 
-    inline bool validate_config_enums(const SolverConfig& conf)
+    inline bool valid_enum(DirectionRefinementMode value)
     {
-        return valid_backend(conf.backend) && valid_initialization_mode(conf.initialization)
-            && valid_warm_start_barrier_mode(conf.warm_start_barrier)
-            && valid_warm_start_regularization_mode(conf.warm_start_regularization)
-            && valid_termination_profile(conf.termination_profile)
-            && valid_constraint_scaling_method(conf.constraint_scaling)
-            && valid_objective_scaling_method(conf.objective_scaling)
-            && valid_problem_scaling_method(conf.problem_scaling)
-            && valid_integrator_type(conf.integrator)
-            && valid_barrier_strategy(conf.barrier_strategy)
-            && valid_inertia_strategy(conf.inertia_strategy)
-            && valid_line_search_type(conf.line_search_type) && valid_print_level(conf.print_level)
-            && valid_hessian_approximation(conf.hessian_approximation)
-            && valid_direction_refinement_mode(conf.direction_refinement);
+        return enum_is_one_of<DirectionRefinementMode, DirectionRefinementMode::NONE,
+            DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT>(value);
+    }
+
+#define MINISOLVER_CONFIG_ENUM_FIELDS(X)                                                           \
+    X(backend)                                                                                     \
+    X(initialization)                                                                              \
+    X(warm_start_barrier)                                                                          \
+    X(warm_start_regularization)                                                                   \
+    X(termination_profile)                                                                         \
+    X(constraint_scaling)                                                                          \
+    X(objective_scaling)                                                                           \
+    X(problem_scaling)                                                                             \
+    X(integrator)                                                                                  \
+    X(barrier_strategy)                                                                            \
+    X(inertia_strategy)                                                                            \
+    X(line_search_type)                                                                            \
+    X(print_level)                                                                                 \
+    X(hessian_approximation)                                                                       \
+    X(direction_refinement)
+
+    inline ApiStatus validate_config_enums(const SolverConfig& conf)
+    {
+#define MS_VALIDATE_CONFIG_ENUM(field)                                                             \
+    if (!valid_enum(conf.field)) {                                                                 \
+        return ApiStatus::InvalidArgument;                                                         \
+    }
+
+        MINISOLVER_CONFIG_ENUM_FIELDS(MS_VALIDATE_CONFIG_ENUM)
+
+#undef MS_VALIDATE_CONFIG_ENUM
+        return ApiStatus::OK;
     }
 
     inline ApiStatus validate_solver_config(const SolverConfig& conf)
     {
-        if (!validate_config_enums(conf)) {
-            return ApiStatus::InvalidArgument;
+        ApiStatus status = validate_config_enums(conf);
+        if (status != ApiStatus::OK) {
+            return status;
         }
         if (conf.max_iters < 0 || conf.line_search_max_iters < 0 || conf.max_restoration_iters < 0
             || conf.inertia_max_retries < 0 || conf.newton_config.max_iters < 0) {
@@ -282,7 +216,7 @@ namespace detail {
             }
         }
 
-        ApiStatus status = validate_positive_finite_config_value(conf.mu_init);
+        status = validate_positive_finite_config_value(conf.mu_init);
         if (status != ApiStatus::OK) {
             return status;
         }
@@ -374,3 +308,5 @@ namespace detail {
 
 } // namespace detail
 } // namespace minisolver
+
+#undef MINISOLVER_CONFIG_ENUM_FIELDS
