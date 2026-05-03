@@ -643,7 +643,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
             soc_data[k].soft_s = candidate[k].soft_s;
         }
         for (int k = 0; k <= N; ++k) {
-            detail::evaluate_soc_constraints<Model>(active[k], candidate[k]);
+            detail::evaluate_soc_constraints<Model>(active[k], candidate[k], config);
         }
 
         // solve_soc uses the candidate as nonlinear residual source and writes the correction step

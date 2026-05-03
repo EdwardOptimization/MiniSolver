@@ -107,6 +107,7 @@ struct SolverInfo {
 
     int iterations = 0;
     double primal_inf = 0.0;
+    double unscaled_primal_inf = 0.0;
     double dual_inf = 0.0;
     double complementarity_inf = 0.0;
     double barrier_centrality_inf = 0.0;
@@ -124,6 +125,9 @@ struct SolverInfo {
     int soc_reject_count = 0;
     int restoration_attempt_count = 0;
     int restoration_success_count = 0;
+    bool constraint_scaling_active = false;
+    bool objective_scaling_active = false;
+    bool problem_scaling_active = false;
 
     void reset()
     {
@@ -132,6 +136,7 @@ struct SolverInfo {
         termination_reason = TerminationReason::NONE;
         iterations = 0;
         primal_inf = 0.0;
+        unscaled_primal_inf = 0.0;
         dual_inf = 0.0;
         complementarity_inf = 0.0;
         barrier_centrality_inf = 0.0;
@@ -148,6 +153,9 @@ struct SolverInfo {
         soc_reject_count = 0;
         restoration_attempt_count = 0;
         restoration_success_count = 0;
+        constraint_scaling_active = false;
+        objective_scaling_active = false;
+        problem_scaling_active = false;
     }
 };
 
@@ -194,8 +202,12 @@ template <typename T, int _NX, int _NU, int _NC, int _NP> struct KnotState {
 
     // --- Evaluation Results ---
     T cost; // Scalar cost value
+    T cost_unscaled; // Raw objective value before optional objective/problem scaling
+    T objective_scale; // Active objective scale used by cost/q/r/Q/R/H
     MSVec<T, _NC> g_val; // QP/IPM constraint residual packet used with C/D
-    MSVec<T, _NC> g_true; // True nonlinear constraint residual for reporting/globalization
+    MSVec<T, _NC> g_true; // True nonlinear constraint residual used by internal metrics
+    MSVec<T, _NC> g_unscaled; // Raw true residual before optional row scaling
+    MSVec<T, _NC> constraint_row_scale; // Active scale used by g_val/g_true/C/D
     MSVec<T, _NX> f_resid; // Predicted next state f(x, u)
 
     // --- Cost Gradients ---
@@ -298,8 +310,12 @@ struct KnotPoint : KnotState<T, _NX, _NU, _NC, _NP>, KnotMatrices<T, _NX, _NU, _
         this->soft_s.setOnes();
 
         this->cost = 0;
+        this->cost_unscaled = 0;
+        this->objective_scale = 1;
         MatOps::setZero(this->g_val);
         MatOps::setZero(this->g_true);
+        MatOps::setZero(this->g_unscaled);
+        this->constraint_row_scale.setOnes();
         MatOps::setZero(this->f_resid);
         MatOps::setZero(this->q);
         MatOps::setZero(this->r);
@@ -331,6 +347,8 @@ struct KnotPoint : KnotState<T, _NX, _NU, _NC, _NP>, KnotMatrices<T, _NX, _NU, _
         this->s.fill(1.0);
         this->lam.fill(1.0);
         this->soft_s.fill(1.0);
+        this->constraint_row_scale.fill(1.0);
+        this->objective_scale = 1.0;
     }
 
     // =========================================================================

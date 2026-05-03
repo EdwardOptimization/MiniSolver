@@ -140,8 +140,54 @@ def test_quad_constraint_domain_guards():
     expect_value_error(non_psd_q, "PSD")
 
 
+def test_generated_model_uses_automatic_constraint_row_scaling():
+    model = OptimalControlModel("GeneratedScaleModel")
+    x = model.state("x")
+    u = model.control("u")
+    model.set_dynamics(x, 0)
+    model.subject_to(x - 1.0 <= 0)
+    model.subject_to(1000.0 * (x - 1.0) <= 0)
+    model.minimize(x**2 + u**2)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        compile_and_run(
+            tmpdir,
+            "generated_scale_check.cpp",
+            "generated_scale_check",
+            """
+            #include "generatedscalemodel.h"
+            #include "minisolver/solver/solver.h"
+            #include <cmath>
+
+            int main() {
+                using Model = minisolver::GeneratedScaleModel;
+                static_assert(Model::NC == 2, "expected two constraint rows");
+
+                minisolver::SolverConfig config;
+                config.print_level = minisolver::PrintLevel::NONE;
+                config.max_iters = 0;
+                config.integrator = minisolver::IntegratorType::EULER_EXPLICIT;
+                config.constraint_scaling = minisolver::ConstraintScalingMethod::ROW_INF_NORM;
+
+                minisolver::MiniSolver<Model, 1> solver(0, minisolver::Backend::CPU_SERIAL, config);
+                solver.set_initial_state("x", 2.0);
+                const minisolver::SolverStatus status = solver.solve();
+                const minisolver::SolverInfo& info = solver.get_info();
+
+                if (status != minisolver::SolverStatus::MAX_ITER) return 1;
+                if (!info.constraint_scaling_active) return 2;
+                if (std::abs(info.primal_inf - 1.0) > 1e-5) return 3;
+                if (std::abs(info.unscaled_primal_inf - 1000.0) > 1e-2) return 4;
+                return 0;
+            }
+            """,
+        )
+
+
 if __name__ == "__main__":
     test_quad_boundary_projection_codegen_uses_unique_temps()
     test_quad_boundary_projection_generates_soc_override()
     test_quad_boundary_projection_splits_qp_and_true_residuals()
     test_quad_constraint_domain_guards()
+    test_generated_model_uses_automatic_constraint_row_scaling()

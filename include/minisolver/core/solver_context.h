@@ -33,6 +33,7 @@ struct StepResidualSummary {
     double max_barrier_complementarity_residual = 0.0;
     double max_complementarity_gap = 0.0;
     double max_primal_inf = 0.0;
+    double max_unscaled_primal_inf = 0.0;
     double avg_complementarity_gap = 0.0;
 };
 
@@ -56,6 +57,7 @@ struct ResidualState {
     double max_barrier_complementarity_residual = 0.0;
     double max_complementarity_gap = 0.0;
     double max_primal_inf = 0.0;
+    double max_unscaled_primal_inf = 0.0;
     double max_dual_inf = 0.0;
     double avg_complementarity_gap = 0.0;
     double objective_cost = 0.0;
@@ -66,6 +68,7 @@ struct ResidualState {
         max_barrier_complementarity_residual = 0.0;
         max_complementarity_gap = 0.0;
         max_primal_inf = 0.0;
+        max_unscaled_primal_inf = 0.0;
         max_dual_inf = 0.0;
         avg_complementarity_gap = 0.0;
         objective_cost = 0.0;
@@ -133,6 +136,7 @@ struct PostsolveResiduals {
     bool linear_ok = false;
     double barrier_mu = 0.0;
     double max_primal_inf = 0.0;
+    double max_unscaled_primal_inf = 0.0;
     double max_dual_inf = 0.0;
     double max_barrier_complementarity_residual = 0.0;
     double max_complementarity_gap = 0.0;

@@ -531,7 +531,7 @@ public:
         if (stage > N || stage < 0) {
             return 0.0;
         }
-        return trajectory[stage].cost;
+        return trajectory[stage].cost_unscaled;
     }
 
     // Per-solve line-search α trace. Appended once per accepted/rejected
@@ -611,12 +611,16 @@ private:
     {
         context_.info.iterations = context_.solve.current_iter;
         context_.info.primal_inf = residuals.max_primal_inf;
+        context_.info.unscaled_primal_inf = residuals.max_unscaled_primal_inf;
         context_.info.dual_inf = max_dual;
         context_.info.complementarity_inf = residuals.max_complementarity_gap;
         context_.info.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
         context_.info.mu = residuals.barrier_mu;
         context_.info.alpha = context_.metrics.last_alpha;
         context_.info.linear_ok = true;
+        context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
+        context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
+        context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
     }
 
     void record_postsolve_info_(SolverStatus final_status, SolverStatus loop_status,
@@ -627,12 +631,16 @@ private:
         context_.info.termination_reason = reason;
         context_.info.iterations = context_.solve.current_iter;
         context_.info.primal_inf = residuals.max_primal_inf;
+        context_.info.unscaled_primal_inf = residuals.max_unscaled_primal_inf;
         context_.info.dual_inf = residuals.max_dual_inf;
         context_.info.complementarity_inf = residuals.max_complementarity_gap;
         context_.info.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
         context_.info.mu = residuals.barrier_mu;
         context_.info.alpha = context_.metrics.last_alpha;
         context_.info.linear_ok = residuals.linear_ok;
+        context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
+        context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
+        context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
     }
 
     void record_terminal_info_(SolverStatus final_status, SolverStatus loop_status)
@@ -644,6 +652,9 @@ private:
         context_.info.mu = context_.solve.mu;
         context_.info.alpha = context_.metrics.last_alpha;
         context_.info.linear_ok = false;
+        context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
+        context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
+        context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
     }
 
     bool check_convergence(const StepResidualSummary& residuals, double max_dual)
@@ -674,7 +685,7 @@ private:
     {
         double total_cost = 0.0;
         for (int k = 0; k <= N; ++k) {
-            total_cost += traj[k].cost;
+            total_cost += traj[k].cost_unscaled;
         }
         return total_cost;
     }
@@ -743,6 +754,7 @@ private:
         }
 
         summary.max_primal_inf = compute_max_violation(traj);
+        summary.max_unscaled_primal_inf = compute_unscaled_max_violation(traj);
         summary.avg_complementarity_gap = (total_gap_dim > 0) ? (total_gap / total_gap_dim) : 0.0;
         return summary;
     }
@@ -1290,7 +1302,7 @@ private:
 
         for (int k = 0; k <= N; ++k) {
             const auto& kp = traj[k];
-            total_cost += kp.cost;
+            total_cost += kp.cost_unscaled;
             for (int i = 0; i < NC; ++i) {
                 if (kp.s(i) < min_slack) {
                     min_slack = kp.s(i);
@@ -1342,6 +1354,10 @@ private:
                 return true;
             }
             if (!MatOps::is_finite_scalar(kp.cost)) {
+                return true;
+            }
+            if (!MatOps::is_finite_scalar(kp.cost_unscaled)
+                || !MatOps::is_finite_scalar(kp.objective_scale)) {
                 return true;
             }
             // Model outputs — invalid numbers here propagate into barrier/Riccati.
@@ -1634,7 +1650,9 @@ private:
 public:
     SolverStatus solve()
     {
-        begin_solve_();
+        if (!begin_solve_()) {
+            return SolverStatus::INVALID_INPUT;
+        }
         SolverStatus loop_exit_status = run_solve_loop_();
 
         // 3. Postsolve: refresh residuals and produce the final verdict.
@@ -1642,17 +1660,25 @@ public:
     }
 
 private:
-    void begin_solve_()
+    bool begin_solve_()
     {
         rebuild_solver_components_if_dirty_();
-        // 1. Presolve: prepare data, handle initialization, and reset runtime state.
-        presolve();
-
         // Diagnostic line-search trace — fresh per solve. Reserve once at the
         // configured max iteration count so the hot-path push_back stays
         // pointer-bump only.
         alpha_log_.clear();
         context_.metrics.reset_solve();
+
+        if (!build_state_.plan.constraint_scaling_plan_valid
+            || !build_state_.plan.objective_scaling_plan_valid
+            || !build_state_.plan.problem_scaling_plan_valid) {
+            context_.reset_solve();
+            record_terminal_info_(SolverStatus::INVALID_INPUT, SolverStatus::INVALID_INPUT);
+            return false;
+        }
+        // 1. Presolve: prepare data, handle initialization, and reset runtime state.
+        presolve();
+        return true;
     }
 
     LoopExitDecision should_exit_after_step_status_(SolverStatus step_stat, int iter) const
@@ -1837,7 +1863,7 @@ private:
         auto& traj = trajectory.active();
         for (int k = 0; k <= N; ++k) {
             double current_dt = (k < N) ? dt_traj[k] : 0.0;
-            detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
+            detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N, true);
 
             for (int i = 0; i < NC; ++i) {
                 detail::InitializationKernel::initialize_constraint_primal_dual<Model>(
@@ -1921,6 +1947,7 @@ private:
         }
 
         residuals.max_primal_inf = compute_max_violation(traj);
+        residuals.max_unscaled_primal_inf = compute_unscaled_max_violation(traj);
         return residuals;
     }
 
@@ -2133,14 +2160,75 @@ private:
         return max_viol;
     }
 
+    double compute_unscaled_max_violation(const TrajArray& traj) const
+    {
+        if (!detail::constraint_row_scaling_active(config)) {
+            return compute_max_violation(traj);
+        }
+
+        double max_viol = 0.0;
+        for (int k = 0; k <= N; ++k) {
+            const auto& kp = traj[k];
+
+            for (int i = 0; i < NC; ++i) {
+                const double scale = detail::active_constraint_row_scale(kp, config, i);
+                const double inv_scale = (scale != 0.0) ? (1.0 / scale) : 1.0;
+
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+
+                const double g_raw = detail::unscaled_true_constraint_value<Model>(kp, i, config);
+                double viol = 0.0;
+                if (type == 1 && w > 1e-6) {
+                    viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.soft_s(i) * inv_scale);
+                } else if (type == 2 && w > 1e-6) {
+                    viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.lam(i) / w);
+                } else {
+                    viol = std::abs(g_raw + kp.s(i) * inv_scale);
+                }
+                if (viol > max_viol) {
+                    max_viol = viol;
+                }
+            }
+
+            if (k < N) {
+                for (int j = 0; j < NX; ++j) {
+                    double defect = std::abs(traj[k + 1].x(j) - kp.f_resid(j));
+                    if (defect > max_viol) {
+                        max_viol = defect;
+                    }
+                }
+            }
+        }
+        return max_viol;
+    }
+
     SolverPlanInfo make_solver_plan_info_() const
     {
         SolverPlanInfo info;
         info.backend = config.backend;
         info.line_search_type = config.line_search_type;
         info.integrator = config.integrator;
+        info.constraint_scaling = config.constraint_scaling;
+        info.objective_scaling = config.objective_scaling;
+        info.problem_scaling = config.problem_scaling;
         info.fused_riccati_integrator_compatible
             = detail::generated_integrator_matches<Model>(config.integrator);
+        info.constraint_scaling_plan_valid = detail::constraint_scaling_plan_valid(config);
+        info.constraint_scaling_active
+            = info.constraint_scaling_plan_valid && detail::constraint_row_scaling_active(config);
+        info.objective_scaling_plan_valid = detail::objective_scaling_plan_valid(config);
+        info.objective_scaling_active
+            = info.objective_scaling_plan_valid && detail::objective_scaling_active(config);
+        info.problem_scaling_plan_valid = detail::problem_scaling_plan_valid(config);
+        info.problem_scaling_active
+            = info.problem_scaling_plan_valid && detail::problem_scaling_active(config);
         info.linear_solver_ready = static_cast<bool>(linear_solver);
         info.line_search_ready = static_cast<bool>(line_search);
         return info;
@@ -2148,6 +2236,16 @@ private:
 
     void warn_if_solver_plan_degraded_(const SolverPlanInfo& info) const
     {
+        if (!info.constraint_scaling_plan_valid) {
+            MLOG_WARN("Constraint row scaling requires finite positive scale bounds.");
+        }
+        if (!info.objective_scaling_plan_valid) {
+            MLOG_WARN("Objective scaling requires a supported method and finite positive bounds.");
+        }
+        if (!info.problem_scaling_plan_valid) {
+            MLOG_WARN(
+                "Problem-level scaling requires a supported method and finite positive bounds.");
+        }
         if constexpr (detail::has_generated_integrator_v<Model>) {
             if (!info.fused_riccati_integrator_compatible) {
                 MLOG_WARN("Model was generated for "

@@ -2,7 +2,7 @@
 
 Date: 2026-05-03
 
-Status: design accepted, implementation not started
+Status: Stage 0 and Stage 1A implemented
 
 Related:
 
@@ -54,35 +54,59 @@ Common pattern:
 
 MiniSolver will use a config-selected internal scaling plan resolved at the
 build boundary. Users should still configure behavior through `SolverConfig` and
-MiniModel/codegen metadata; they should not pass public scaling strategy
-objects.
+MiniModel/codegen should keep emitting physical model equations. Users should
+not pass public scaling strategy objects or manual per-row scale metadata.
 
-The first implementation should be staged:
+The implementation is staged:
 
 1. Add a badly-scaled NMPC regression case and metrics before behavior changes.
-2. Add model-provided constraint row scaling.
+   Implemented by `test_scaling_regressions`.
+2. Add automatic constraint row scaling as the primary user-facing path.
+   Implemented as `ConstraintScalingMethod::ROW_INF_NORM`.
 3. Add diagnostics for scaled and unscaled residuals.
-4. Extend to state/control/parameter scaling only after row scaling is proven.
-5. Add automatic scaling only after explicit/model-provided scaling has tests.
+4. Add objective curvature scaling with a bounded Gershgorin kernel.
+5. Add a conservative problem-level profile that combines row and objective
+   scaling without transforming user variables or Riccati dynamics coordinates.
+6. Extend to state/control/parameter coordinate scaling only after these
+   conservative kernels are proven.
 
 ## Ownership Boundary
 
-`SolverConfig` owns mode selection:
+`SolverConfig` owns built-in scaling-kernel selection:
 
 ```cpp
-enum class ScalingMode {
+enum class ConstraintScalingMethod {
     NONE,
-    MODEL_PROVIDED,
-    AUTO_CONSTRAINT_ROWS
+    ROW_INF_NORM
+};
+
+enum class ObjectiveScalingMethod {
+    NONE,
+    HESSIAN_GERSHGORIN
+};
+
+enum class ProblemScalingMethod {
+    NONE,
+    RUIZ_EQUILIBRATION
+};
+
+struct SolverConfig {
+    ConstraintScalingMethod constraint_scaling = ConstraintScalingMethod::NONE;
+    ObjectiveScalingMethod objective_scaling = ObjectiveScalingMethod::NONE;
+    ProblemScalingMethod problem_scaling = ProblemScalingMethod::NONE;
 };
 ```
 
 The exact enum names are not fixed, but the boundary is:
 
-- `SolverConfig` selects whether scaling is disabled, model-provided, or
-  automatically computed.
-- MiniModel/codegen owns model-specific scale metadata when scales are known
-  from units or modeling semantics.
+- `SolverConfig` selects whether constraint scaling is disabled or which
+  built-in constraint-scaling kernel is used.
+- Objective and problem-level scaling use separate config enums. Each enum
+  selects one built-in kernel; unsupported enum values or invalid bounds fail at
+  the build boundary.
+- MiniModel/codegen should not expose manual row-scale knobs for ordinary
+  users. Generated models should encode physical residuals; solver config
+  selects whether rows are scaled.
 - Solver core owns applying scale factors consistently to residuals,
   linearized rows, Hessian/gradient terms, termination metrics, and diagnostics.
 - Benchmarks own cross-solver comparisons and must report whether scaling was
@@ -90,8 +114,9 @@ The exact enum names are not fixed, but the boundary is:
 
 Do not put dimension-dependent arrays directly into `SolverConfig`. MiniSolver
 models are template-sized, while `SolverConfig` is currently a dimension-free
-runtime object. Scale storage should live in generated model traits or
-fixed-size solver workspace selected by the scaling plan.
+runtime object. Automatic row-scale storage lives in the fixed-size knot state;
+candidate and SOC trajectories inherit the active scale so slack/dual variables
+stay in the same scaled units during line search.
 
 ## Scaled Vs Unscaled Semantics
 
@@ -145,34 +170,43 @@ Required metrics:
 If some metrics are not yet queryable, add diagnostics first or explicitly mark
 the benchmark as limited. Do not infer scaling success from status alone.
 
-## Stage 1: Model-Provided Constraint Row Scaling
+Implementation note: `test_scaling_regressions` now fixes the baseline that two
+equivalent hard-constraint rows can produce a roughly `1000x` difference in
+`SolverInfo::primal_inf` when scaling is disabled.
 
-This is the first behavior change because it is the lowest-risk scaling layer.
-It does not change user variable units and does not require transforming state
-dynamics.
+## Stage 1A: Automatic Constraint Row Scaling
 
-Expected shape:
+This is the first user-facing behavior change. It does not change user variable
+units and does not require transforming state dynamics. The user enables it with:
 
 ```cpp
-struct ModelScalingTraits {
-    static constexpr bool has_constraint_row_scales = true;
-    static constexpr std::array<double, NC> constraint_row_scales = {...};
-};
+config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
 ```
 
-Generated models may emit equivalent fixed-size metadata. Hand-written models
-can opt in by defining the trait or static member expected by `model_traits`.
+The solver computes a bounded row scale from the active constraint packet,
+stores it on each knot, and applies the same scale to `g_val`, `g_true`, `C`,
+`D`, and SOC residual overrides. The first automatic profile only down-scales
+large rows; it does not scale up tiny rows until tolerance semantics are
+designed in Stage 2.
 
 Core rules:
 
-- A scale value multiplies one constraint row.
 - The same row scale must apply to true residual, QP linearization, and SOC
   correction semantics.
-- Scale factors are clamped to a finite range, initially `[1e-4, 1e4]`, matching
+- Scale factors are bounded to a finite range, initially `[1e-4, 1e4]`, matching
   the mature-solver pattern of bounded equilibration.
-- Invalid scale values are configuration/model errors, not silently repaired in
-  the hot path.
+- Candidate and SOC evaluations must reuse the active row scale rather than
+  recomputing it independently; otherwise `g`, slack, and dual values drift into
+  different units during line search.
 - With scaling disabled, current behavior remains unchanged.
+
+Implementation note: Stage 1A scales `g_val`, `g_true`, `C`, and `D` for
+internal Riccati/globalization metrics while preserving `g_unscaled` for
+diagnostics. `SolverInfo::primal_inf` is the internal metric;
+`SolverInfo::unscaled_primal_inf` exposes the raw model residual magnitude.
+`test_scaling_regressions` covers both the unscaled baseline and automatic
+normalization. MiniModel generated models no longer emit or accept public
+`row_scale=` metadata.
 
 Validation:
 
@@ -199,7 +233,58 @@ This stage is tied to N-OBS-1 and N-PREC-2. Avoid adding a broad diagnostics
 framework before the scaling fields are known; extend the current fixed-size
 metrics/state first.
 
-## Stage 3: State, Control, Parameter, And Objective Scaling
+## Stage 3: Objective Curvature Scaling
+
+Objective scaling is implemented as:
+
+```cpp
+config.objective_scaling = ObjectiveScalingMethod::HESSIAN_GERSHGORIN;
+```
+
+The kernel computes a Gershgorin upper bound for the local objective Hessian
+packet:
+
+```text
+H = [ Q  H^T ]
+    [ H   R  ]
+
+row_bound = max_i sum_j abs(H_ij)
+objective_scale = clamp(1 / max(1, row_bound),
+                        objective_scale_min,
+                        objective_scale_max)
+```
+
+It then scales `cost`, `q`, `r`, `Q`, `R`, and `H` by that scalar before the
+linear solver and globalization consume them. `cost_unscaled` keeps the raw
+objective value, and `get_stage_cost()` continues to report user-unit cost.
+
+This is intentionally a scalar objective scaling, not residual-level
+least-squares weighting. Least-squares residual weighting still belongs in
+MiniModel/codegen through `add_residual`.
+
+## Stage 4: Conservative Problem-Level Scaling Profile
+
+Problem scaling is implemented as:
+
+```cpp
+config.problem_scaling = ProblemScalingMethod::RUIZ_EQUILIBRATION;
+```
+
+The current profile is conservative:
+
+- it activates automatic constraint row scaling;
+- it activates objective Gershgorin scaling;
+- it records `problem_scaling_active` in `SolverInfo`;
+- it does not transform state/control/parameter coordinates;
+- it does not rescale the Riccati dynamics recursion.
+
+This is a bounded Ruiz-inspired equilibration profile rather than full
+coordinate equilibration. That choice is deliberate: full variable scaling would
+change `dx/du`, dynamics defects, Riccati feedback gains, SOC corrections,
+restoration, warm-start deltas, and unscaled diagnostics in one patch. That is
+too much semantic surface without a dedicated benchmark proving the need.
+
+## Stage 5: State, Control, And Parameter Coordinate Scaling
 
 This stage is deeper and should not be mixed with row scaling.
 
@@ -215,27 +300,38 @@ Required transformations:
 
 This stage needs its own red benchmark and exact transformation tests.
 
-## Stage 4: Automatic Scaling
+## Stage 6: Additional Scaling Kernels
 
-Automatic scaling should be conservative and bounded.
+Future scaling kernels should stay conservative and bounded. They should be
+added only after a focused benchmark or regression shows that row-inf-norm
+constraint scaling is insufficient.
 
-Candidate rule for constraint rows:
+Implemented objective scaling kernel:
 
 ```text
-row_norm = max(inf_norm(C_row), inf_norm(D_row), abs(g_row), scale_floor)
-scale = clamp(1.0 / row_norm, min_scale, max_scale)
+HESSIAN_GERSHGORIN:
+    max_abs_eig = Gershgorin upper bound of stage Hessian blocks
+    obj_scale = min(1.0, max_allowed_eig / max_abs_eig)
+```
+
+Implemented conservative problem-level profile:
+
+```text
+RUIZ_EQUILIBRATION:
+    activate ROW_INF_NORM constraint row scaling
+    activate HESSIAN_GERSHGORIN objective scaling
+    do not transform user variables or Riccati dynamics coordinates
 ```
 
 Open design points:
 
-- Whether automatic scales are recomputed once at solver build, once per solve,
-  or only after a large model/reference change.
-- Whether automatic scaling should be default in `Default` profile or only in
-  `Robust` profile at first.
-- How to avoid oscillating scale factors across repeated MPC solves.
+- Whether a future `RUIZ_COORDINATE_EQUILIBRATION` kernel is worth the extra
+  workspace and transformation complexity for small fixed-size NMPC.
+- Whether additional scaling kernels should be default in `Default` profile or
+  only enabled in a future `Robust` profile.
 
-Do not enable automatic scaling by default until the badly-scaled case, ordinary
-well-scaled cases, and nmpc-bench smoke cases all show stable behavior.
+Do not enable additional scaling kernels by default until the badly-scaled case,
+ordinary well-scaled cases, and nmpc-bench smoke cases all show stable behavior.
 
 ## Non-Goals
 
@@ -251,12 +347,17 @@ well-scaled cases, and nmpc-bench smoke cases all show stable behavior.
 1. Add `test_scaling_regressions` or a small benchmark-style test that captures
    the badly-scaled case and current metrics.
 2. Add scaling diagnostics needed by that test if they are missing.
-3. Add `ScalingMode` with `NONE` default and build-boundary validation.
-4. Add model-provided constraint row scales.
-5. Apply row scaling consistently to true/QP/SOC constraint paths.
-6. Update termination diagnostics to report scaled and unscaled residuals.
-7. Run focused scaling tests, `test_memory`, and full `ctest`.
-8. Only then consider automatic row scaling and variable scaling.
+3. Add `ConstraintScalingMethod` with `NONE` default and build-boundary validation.
+4. Add `ObjectiveScalingMethod` and `ProblemScalingMethod` as explicit config
+   categories.
+5. Add automatic constraint row scales.
+6. Apply row scaling consistently to true/QP/SOC constraint paths.
+7. Add bounded objective Gershgorin scaling while preserving unscaled user cost.
+8. Add conservative problem-level scaling as a config profile that composes the
+   implemented row and objective kernels.
+9. Update termination diagnostics to report scaled and unscaled residuals.
+10. Run focused scaling tests, `test_memory`, and full `ctest`.
+11. Only then consider coordinate-level variable scaling.
 
 ## Review Gates
 

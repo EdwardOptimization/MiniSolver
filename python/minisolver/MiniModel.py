@@ -286,7 +286,8 @@ class OptimalControlModel:
                     'weight': weight_value
                 })
 
-    def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside', linearize_at_boundary=False):
+    def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside',
+                        linearize_at_boundary=False):
         """
         Add a quadratic constraint: (x-center)^T Q (x-center) {sense} rhs
         """

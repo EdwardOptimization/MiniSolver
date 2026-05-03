@@ -31,6 +31,30 @@ enum class InertiaStrategy {
 // disable backtracking and simply take a fraction-to-boundary step.
 enum class LineSearchType { MERIT, FILTER, NONE };
 
+enum class ConstraintScalingMethod {
+    NONE,
+
+    // Scales each constraint row by the inverse inf-norm of its residual/Jacobian packet.
+    ROW_INF_NORM
+};
+
+enum class ObjectiveScalingMethod {
+    NONE,
+
+    // Scale cost/gradient/Hessian by the inverse Gershgorin upper bound of the
+    // local objective Hessian packet. User-facing costs remain available unscaled.
+    HESSIAN_GERSHGORIN
+};
+
+enum class ProblemScalingMethod {
+    NONE,
+
+    // Bounded first problem-level profile: constraint row equilibration plus
+    // objective Hessian Gershgorin scaling. It intentionally does not transform
+    // user variables or Riccati dynamics coordinates yet.
+    RUIZ_EQUILIBRATION
+};
+
 enum class HessianApproximation {
     EXACT, // Exact objective Hessian + constraint Hessian; dynamics Hessian is not included.
     // Objective-only curvature: exact Hessian for general minimize() terms plus
@@ -131,6 +155,13 @@ struct SolverConfig {
     WarmStartRegularizationMode warm_start_regularization
         = WarmStartRegularizationMode::RESET_TO_REG_INIT;
     TerminationProfile termination_profile = TerminationProfile::STRICT_KKT;
+    ConstraintScalingMethod constraint_scaling = ConstraintScalingMethod::NONE;
+    ObjectiveScalingMethod objective_scaling = ObjectiveScalingMethod::NONE;
+    ProblemScalingMethod problem_scaling = ProblemScalingMethod::NONE;
+    double constraint_row_scale_min = 1e-4;
+    double constraint_row_scale_max = 1e4;
+    double objective_scale_min = 1e-4;
+    double objective_scale_max = 1.0;
 
     // --- Integration ---
     // RK4 is a good balance for general nonlinear problems
