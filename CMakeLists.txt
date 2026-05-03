@@ -274,7 +274,8 @@ add_minisolver_python_test(test_minimodel_terminal tests/minimodel/test_terminal
 set(TEST_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated_tests")
 set(KINEMATIC_BICYCLE_TEST_MODEL "${TEST_GENERATED_DIR}/kinematicbicycleregressionmodel.h")
 set(DOUBLE_INTEGRATOR_3D_TEST_MODEL "${TEST_GENERATED_DIR}/doubleintegrator3dregressionmodel.h")
-set(ASSET_REGRESSION_REFERENCE_HEADER "${TEST_GENERATED_DIR}/asset_regression_reference_data.h")
+set(ASSET_REGRESSION_REFERENCE_HEADER
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/reference/asset_regression_reference_data.h")
 set(IMPLICIT_SPARSE_RICCATI_TEST_MODELS
     "${TEST_GENERATED_DIR}/fusedeulerimplicitregressionmodel.h"
     "${TEST_GENERATED_DIR}/genericeulerimplicitregressionmodel.h"
@@ -304,15 +305,6 @@ add_custom_command(
         ${CMAKE_CURRENT_SOURCE_DIR}/python/minisolver/MiniModel.py
         ${CMAKE_CURRENT_SOURCE_DIR}/python/minisolver/templates/model.h.in
     COMMENT "Generating double integrator 3D regression test model"
-)
-
-add_custom_command(
-    OUTPUT ${ASSET_REGRESSION_REFERENCE_HEADER}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${TEST_GENERATED_DIR}
-    COMMAND ${MINISOLVER_PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/reference/generate_asset_regression_reference_data.py ${ASSET_REGRESSION_REFERENCE_HEADER}
-    DEPENDS
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/reference/generate_asset_regression_reference_data.py
-    COMMENT "Generating asset regression reference data"
 )
 
 add_custom_command(
@@ -403,5 +395,7 @@ add_executable(test_asset_regressions
 )
 add_dependencies(test_asset_regressions minisolver_test_models)
 target_link_libraries(test_asset_regressions minisolver_lib gtest_main)
-target_include_directories(test_asset_regressions PRIVATE ${TEST_GENERATED_DIR})
+target_include_directories(test_asset_regressions PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/reference
+    ${TEST_GENERATED_DIR})
 add_test(NAME test_asset_regressions COMMAND test_asset_regressions)

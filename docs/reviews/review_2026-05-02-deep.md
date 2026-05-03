@@ -332,13 +332,13 @@ NMPC-relevant property tests that would have high yield:
 
 Fuzzing on `set_initial_state` / `set_parameter` could surface the silent-failure API issues (Dim 7).
 
-#### N-TEST-4 (P1) — No golden-reference comparison vs IPOPT/CasADi/acados in this repo
+#### N-TEST-4 (P1) — No fixed golden-reference comparison in this repo
 
 Resolution note: this is now covered in-tree by
-[`tests/reference/generate_asset_regression_reference_data.py`](../../tests/reference/generate_asset_regression_reference_data.py)
+[`tests/reference/asset_regression_reference_data.h`](../../tests/reference/asset_regression_reference_data.h)
 and [`tests/test_asset_regressions.cpp`](../../tests/test_asset_regressions.cpp).
-The generator uses CasADi/IPOPT to produce references, and the C++ test compares
-MiniSolver on kinematic bicycle and 3D double-integrator cases. Broader
+The header stores fixed golden values generated offline, and the C++ test
+compares MiniSolver on kinematic bicycle and 3D double-integrator cases. Broader
 solver-to-solver comparison remains in MiniSolver-Bench.
 
 #### N-TEST-5 (P2) — ASan/UBSan in CI Debug builds but not in `build.sh`
@@ -497,7 +497,7 @@ Not a current bug, but a future-blocking design choice for the embedded marketin
 
 ### Dimension 13: Dependencies & License
 
-#### N-DEP-1 (note) — CasADi (LGPL-3) is in `requirements.txt` for test reference data
+#### N-DEP-1 (resolved) — CasADi is no longer a MiniSolver dependency
 
 [`requirements.txt`](../../requirements.txt):
 
@@ -506,10 +506,12 @@ sympy>=1.10
 numpy>=1.20.0
 pandas>=1.3.0
 matplotlib>=3.4.0
-casadi>=3.6.0     # <-- LGPL-3
 ```
 
-CasADi is LGPL-3 while MiniSolver is Apache 2.0. CasADi is used for generating test reference data (`tests/reference/`), not embedded in product code. This is fine but should be explicit in a `LICENSE-3RD-PARTY.md` or README section: "Build/test/reference dependencies include LGPL-licensed CasADi (used only for test data generation, not linked into product binary). Product binary depends only on Eigen3 (MPL2) or no external libraries (CustomMatrix)."
+The earlier CasADi test/reference dependency was removed. Asset regression tests
+now use checked-in fixed golden constants in
+[`tests/reference/asset_regression_reference_data.h`](../../tests/reference/asset_regression_reference_data.h),
+so configuring or running MiniSolver tests does not require CasADi/IPOPT.
 
 #### N-DEP-2 (P2) — Python `requirements.txt` pins only minor floors, not exact versions
 
@@ -639,7 +641,7 @@ This is the same mechanism ADR 0002 lists as needing-implementation for the f-ty
 | Old `test_autodiff.cpp` is the only AD test, FD verification absent | Found `test_solver_quality.cpp:309-431` (1st-order FD), `test_integrator.cpp:767` (implicit A/B FD); the old file was later renamed to `test_car_model_basic.cpp` | 1st-order FD coverage exists; only 2nd-order Hessians remain uncovered (recorded as N-TEST-1) |
 | ASan/UBSan completely missing from CI | Found `.github/workflows/ci.yml:83` enables `-fsanitize=address,undefined` for Debug build matrix | Sanitizers in CI; only `build.sh` lacks the option (recorded as N-TEST-5) |
 | GPU backend silently lies about being implemented | Found `src/cuda/gpu_ops.cu:2` `#error "GPU Backend implementation is incomplete..."` plus 5/2 `FeaturesTest.GPUBackendUnsupportedFailsExplicitly` confirmation | Honest-incomplete; not a finding |
-| No CasADi in tree, golden reference impossible without external project | Found CasADi already in `requirements.txt:12` for reference data generation | Cross-check infrastructure cheap to add (recorded as N-TEST-4) |
+| No golden reference possible without external project | Fixed golden constants are checked in under `tests/reference/asset_regression_reference_data.h` | Cross-check infrastructure exists without making CasADi a MiniSolver dependency |
 | Filter line search has only the ADR'd switching condition gap | Re-read Wächter-Biegler §2.3: also missing `θ_max` sentinel and f-type filter-augmentation skip | ADR 0002 should be expanded (recorded as N-THEORY-1) |
 
 ---
@@ -709,7 +711,7 @@ P1 (significant):
 | N-TEST-1 | Hessian FD verification | Small (extend existing FD test) | AD codegen safety |
 | N-TEST-2 | `test_autodiff.cpp` rename | Trivial | Test discoverability |
 | N-TEST-3 | Property-based tests | Medium (RapidCheck + 5-10 properties) | Catch regression bugs |
-| N-TEST-4 | Golden cross-check vs CasADi | Fixed by asset regression suite | Algorithm validation |
+| N-TEST-4 | Fixed golden-reference cross-check | Fixed by asset regression suite | Algorithm validation |
 | N-MOD-1 | DSL unit checks | Medium (sympy-based) | Modeling safety |
 | N-THEORY-1 | Filter `θ_max` + f-type | Medium (paired with ADR 0002 work) | Convergence theory |
 | N-THEORY-2 | Filter Pareto-frontier | Small | Acceptance certificate completeness |
@@ -746,7 +748,7 @@ If this fix ledger is worked, the suggested order (maximizing per-step risk redu
 1. **N-THEORY-5** (trivial code change, strong race_cars suspect, removes silent algorithm gap). Validate by measuring race_cars success rate before/after on existing bench.
 2. **N-CONV-1** (status layering — unblocks distinguishing failure modes for all subsequent debugging).
 3. **N-CONV-2 + N-NUM-1 + N-NUM-2 + N-EMBED-2 + N-RT-1 + N-CONV-4 + N-OBS-3** (small individual fixes; bundle into one "hardening" commit).
-4. **N-TEST-4 (golden CasADi cross-check)** — small effort, high confidence value, leverages existing dependency.
+4. **N-TEST-4 (fixed golden-reference cross-check)** — resolved by checked-in asset regression reference data.
 5. **N-TEST-1 (Hessian FD)** — directly extends existing FD test pattern.
 6. **N-TEST-3 (property tests)** — set up RapidCheck once, add 5-10 properties incrementally.
 7. **N-OBS-1 + N-OBS-2 (diagnostics + logger callback)** — paired since both touch the observability surface.
