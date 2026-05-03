@@ -128,10 +128,12 @@ int main(int /*argc*/, char** /*argv*/)
     solver.rollout_dynamics();
 
     std::cout << ">> Solving (Cold Start)...\n";
-    // Optional: Save case before solving to capture inputs
-    // SolverSnapshotIO<CarModel, 50>::save_case("debug_case.dat", solver);
+    // Optional: capture inputs before solving, then persist them only if solve fails.
+    // auto pre_solve = SolverSnapshotIO<CarModel, 50>::capture_snapshot(solver);
 
     SolverStatus status = solver.solve();
+    // SolverSnapshotIO<CarModel, 50>::save_failure_snapshot("failed_case.msnap", pre_solve,
+    // status);
     std::cout << ">> Final Status: " << status_to_string(status) << "\n";
 
     save_trajectory_csv("trajectory.csv", solver, dts, obs_x, obs_y, obs_rad);

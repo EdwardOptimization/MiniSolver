@@ -631,6 +631,28 @@ public:
         return result(SnapshotStatus::OK);
     }
 
+    static bool is_failure_status(SolverStatus status)
+    {
+        return status != SolverStatus::OPTIMAL && status != SolverStatus::FEASIBLE;
+    }
+
+    // Persist the pre-solve replay state only when solve_status reports failure.
+    // This keeps the explicit user flow:
+    //   auto pre_solve = SnapshotIO::capture_snapshot(solver);
+    //   SolverStatus status = solver.solve();
+    //   SnapshotIO::save_failure_snapshot("failed.msnap", pre_solve, status);
+    static SnapshotResult save_failure_snapshot(
+        const std::string& filename, const Snapshot& pre_solve_snapshot, SolverStatus solve_status)
+    {
+        if (!is_failure_status(solve_status)) {
+            return result(SnapshotStatus::OK);
+        }
+
+        Snapshot failure_snapshot = pre_solve_snapshot;
+        failure_snapshot.status = solve_status;
+        return save_snapshot(filename, failure_snapshot);
+    }
+
     static SnapshotResult save_case(const std::string& filename, const SolverType& solver)
     {
         return save_snapshot(filename, capture_snapshot(solver));

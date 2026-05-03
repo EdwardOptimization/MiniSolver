@@ -30,6 +30,12 @@ std::string MakeUniqueTestFilename(const char* stem, const char* ext)
     return name;
 }
 
+bool FileExists(const std::string& filename)
+{
+    std::ifstream in(filename, std::ios::binary);
+    return in.good();
+}
+
 SolverConfig MakeNonDefaultConfig()
 {
     SolverConfig config;
@@ -423,6 +429,49 @@ TEST(SerializerTest, LoadCanOverrideBackendExplicitly)
     options.override_backend = Backend::GPU_MPX;
     ASSERT_EQ(SnapshotIO::load_case(filename, solverB, options).status, SnapshotStatus::OK);
     EXPECT_EQ(solverB.get_config().backend, Backend::GPU_MPX);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SerializerTest, SaveFailureSnapshotIsNoOpForSuccessfulStatuses)
+{
+    MiniSolver<CarModel, 10> solver(2, Backend::CPU_SERIAL);
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    const auto pre_solve = SnapshotIO::capture_snapshot(solver);
+
+    const std::string optimal_file = MakeUniqueTestFilename("test_snapshot_optimal_noop", ".bin");
+    std::remove(optimal_file.c_str());
+    EXPECT_EQ(
+        SnapshotIO::save_failure_snapshot(optimal_file, pre_solve, SolverStatus::OPTIMAL).status,
+        SnapshotStatus::OK);
+    EXPECT_FALSE(FileExists(optimal_file));
+
+    const std::string feasible_file = MakeUniqueTestFilename("test_snapshot_feasible_noop", ".bin");
+    std::remove(feasible_file.c_str());
+    EXPECT_EQ(
+        SnapshotIO::save_failure_snapshot(feasible_file, pre_solve, SolverStatus::FEASIBLE).status,
+        SnapshotStatus::OK);
+    EXPECT_FALSE(FileExists(feasible_file));
+}
+
+TEST(SerializerTest, SaveFailureSnapshotWritesPreSolveStateOnFailure)
+{
+    MiniSolver<CarModel, 10> solver(2, Backend::CPU_SERIAL);
+    solver.set_initial_state("x", 1.25);
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    const auto pre_solve = SnapshotIO::capture_snapshot(solver);
+
+    solver.set_initial_state("x", 9.5);
+
+    const std::string filename = MakeUniqueTestFilename("test_snapshot_failure_presolve", ".bin");
+    std::remove(filename.c_str());
+    ASSERT_EQ(SnapshotIO::save_failure_snapshot(filename, pre_solve, SolverStatus::MAX_ITER).status,
+        SnapshotStatus::OK);
+    ASSERT_TRUE(FileExists(filename));
+
+    MiniSolver<CarModel, 10> loaded(2, Backend::CPU_SERIAL);
+    ASSERT_EQ(SnapshotIO::load_case(filename, loaded).status, SnapshotStatus::OK);
+    EXPECT_DOUBLE_EQ(loaded.get_state(0, 0), 1.25);
 
     std::remove(filename.c_str());
 }
