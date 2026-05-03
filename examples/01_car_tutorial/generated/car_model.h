@@ -5,6 +5,7 @@
 #include "minisolver/matrix/matrix_defs.h"
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 namespace minisolver {
@@ -15,6 +16,8 @@ struct CarModel {
     static const int NU = 2;
     static const int NC = 5;
     static const int NP = 13;
+
+    static constexpr std::uint64_t model_fingerprint = 0x6287ecdd758f47b9ull;
 
     static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
 

@@ -1,4 +1,5 @@
 import sympy as sp
+import hashlib
 import os
 import re
 
@@ -227,6 +228,54 @@ class OptimalControlModel:
         if substitutions:
             general = sp.simplify(general.subs(substitutions))
         return sp.simplify(general + self._least_squares_objective(substitutions))
+
+    def _fingerprint_token(self, value):
+        if isinstance(value, str):
+            return repr(value)
+        if isinstance(value, bool) or isinstance(value, int) or isinstance(value, float):
+            return repr(value)
+        if isinstance(value, sp.MatrixBase):
+            rows = [
+                ",".join(self._fingerprint_token(value[row, col]) for col in range(value.cols))
+                for row in range(value.rows)
+            ]
+            return f"Matrix({value.rows},{value.cols})[" + ";".join(rows) + "]"
+        if isinstance(value, (list, tuple)):
+            return "[" + ",".join(self._fingerprint_token(item) for item in value) + "]"
+        if isinstance(value, dict):
+            items = []
+            for key in sorted(value.keys()):
+                items.append(f"{self._fingerprint_token(key)}:{self._fingerprint_token(value[key])}")
+            return "{" + ",".join(items) + "}"
+        if isinstance(value, sp.Basic):
+            return sp.srepr(value)
+        return repr(value)
+
+    def _compute_model_fingerprint(self, integrator_type):
+        parts = []
+
+        def add(label, value):
+            parts.append(f"{label}={self._fingerprint_token(value)}")
+
+        add("schema", "MiniModelFingerprintV1")
+        add("model", self.name)
+        add("integrator", integrator_type)
+        add("use_fused_riccati", self.use_fused_riccati)
+        add("states", [s.name for s in self.states])
+        add("controls", [u.name for u in self.controls])
+        add("parameters", [p.name for p in self.parameters])
+        for state in self.states:
+            add(f"dynamics:{state.name}", self.dynamics_rhs.get(state, 0))
+        add("objective", self.objective)
+        add("residuals", self.residuals)
+        add("residual_weights", self.residual_weights)
+        add("constraints", self.constraints)
+        add("true_constraints", self.true_constraints)
+        add("soft_constraints", self.soft_constraints)
+        add("special_constraints", self.special_constraints)
+
+        digest = hashlib.sha256("\n".join(parts).encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], byteorder="big", signed=False)
 
     def _residual_gauss_newton_hessian(self, xu_vec, substitutions=None):
         dim = xu_vec.rows
@@ -1269,6 +1318,9 @@ class OptimalControlModel:
         
         # Constants
         code_constants = f"static const int NX={nx};\n    static const int NU={nu};\n    static const int NC={nc};\n    static const int NP={np_param};"
+
+        fingerprint = self._compute_model_fingerprint(integrator_type)
+        code_constants += f"\n\n    static constexpr std::uint64_t model_fingerprint = 0x{fingerprint:016x}ull;"
 
         # Marker: which integrator the fused Riccati kernel was CSE'd against.
         # MiniSolver's constructor reads this (SFINAE-detected) and warns on a

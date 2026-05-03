@@ -5,6 +5,7 @@
 #include "minisolver/matrix/matrix_defs.h"
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 namespace minisolver {
@@ -15,6 +16,8 @@ struct BicycleExtModel {
     static const int NU = 2;
     static const int NC = 10;
     static const int NP = 15;
+
+    static constexpr std::uint64_t model_fingerprint = 0xa99a616837c1d7d3ull;
 
     static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
 

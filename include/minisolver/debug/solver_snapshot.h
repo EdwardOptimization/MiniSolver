@@ -380,6 +380,11 @@ private:
         if constexpr (detail::has_generated_integrator_v<Model>) {
             hash_integral(hash, static_cast<int>(Model::generated_integrator));
         }
+        if constexpr (detail::has_model_fingerprint_v<Model>) {
+            hash_integral(hash, Model::model_fingerprint);
+        } else {
+            hash_string(hash, "no_model_fingerprint");
+        }
         return hash;
     }
 

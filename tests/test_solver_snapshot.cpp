@@ -210,6 +210,14 @@ struct L1SoftModelAltNames : L1SoftModel {
     static constexpr std::array<const char*, NU> control_names = { "u_alt" };
     static constexpr std::array<const char*, NP> param_names = {};
 };
+
+struct L1SoftModelFingerprintA : L1SoftModel {
+    static constexpr std::uint64_t model_fingerprint = 0x123456789abcdef0ull;
+};
+
+struct L1SoftModelFingerprintB : L1SoftModel {
+    static constexpr std::uint64_t model_fingerprint = 0x0fedcba987654321ull;
+};
 } // namespace
 
 TEST(SolverSnapshotTest, CaptureAndSaveAndLoad)
@@ -510,6 +518,23 @@ TEST(SolverSnapshotTest, LoadRejectsSameDimensionDifferentModelFingerprint)
 
     MiniSolver<L1SoftModelAltNames, 5> solverB(1, Backend::CPU_SERIAL);
     EXPECT_EQ((SolverSnapshotIO<L1SoftModelAltNames, 5>::load_case(filename, solverB).status),
+        SnapshotStatus::ModelMismatch);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SolverSnapshotTest, LoadRejectsSameMetadataDifferentGeneratedFingerprint)
+{
+    L1SoftModel::constraint_types[0] = 0;
+    L1SoftModel::constraint_weights[0] = 0.0;
+
+    MiniSolver<L1SoftModelFingerprintA, 5> solverA(1, Backend::CPU_SERIAL);
+    const std::string filename = MakeUniqueTestFilename("test_generated_model_fingerprint", ".bin");
+    ASSERT_EQ((SolverSnapshotIO<L1SoftModelFingerprintA, 5>::save_case(filename, solverA).status),
+        SnapshotStatus::OK);
+
+    MiniSolver<L1SoftModelFingerprintB, 5> solverB(1, Backend::CPU_SERIAL);
+    EXPECT_EQ((SolverSnapshotIO<L1SoftModelFingerprintB, 5>::load_case(filename, solverB).status),
         SnapshotStatus::ModelMismatch);
 
     std::remove(filename.c_str());

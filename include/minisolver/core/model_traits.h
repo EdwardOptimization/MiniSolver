@@ -20,6 +20,16 @@ namespace detail {
     template <typename Model>
     static constexpr bool has_generated_integrator_v = has_generated_integrator<Model>::value;
 
+    // Optional stable model/codegen fingerprint emitted by MiniModel.py.
+    template <typename, typename = void> struct has_model_fingerprint : std::false_type { };
+
+    template <typename Model>
+    struct has_model_fingerprint<Model, std::void_t<decltype(Model::model_fingerprint)>>
+        : std::true_type { };
+
+    template <typename Model>
+    static constexpr bool has_model_fingerprint_v = has_model_fingerprint<Model>::value;
+
     template <typename Model> bool generated_integrator_matches(IntegratorType integrator)
     {
         if constexpr (has_generated_integrator_v<Model>) {
