@@ -27,7 +27,6 @@ SolverConfig make_config(IntegratorType integrator, bool rollout)
     config.max_iters = 80;
     config.tol_con = 1e-7;
     config.tol_dual = 1e-7;
-    config.tol_grad = 1e-7;
     config.mu_final = 1e-8;
     config.tol_mu = 1e-8;
     config.tol_cost = 1e-10;
