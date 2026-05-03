@@ -1942,6 +1942,17 @@ public:
 };
 
 template <typename TrajArray>
+class AlwaysFailRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
+public:
+    LinearSolveResult solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        return false;
+    }
+};
+
+template <typename TrajArray>
 class TinyStepThenFailRecoverySolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
     int calls = 0;
@@ -2082,6 +2093,29 @@ TEST(BugfixTest, MehrotraDoesNotUpdateMuWhenCorrectorSolveFails)
         << "Failed Riccati retries should be visible in SolverInfo diagnostics";
     EXPECT_DOUBLE_EQ(Access::mu(solver), config.mu_init)
         << "Failed Mehrotra corrector solve must not advance the barrier parameter";
+}
+
+TEST(BugfixTest, RtiFixedIterationDoesNotMaskLinearSolveFailure)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = AlwaysFailRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.termination_profile = TerminationProfile::RTI_FIXED_ITERATION;
+    config.max_iters = 10;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    Access::set_linear_solver(solver, std::make_unique<FakeSolver>());
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::LINEAR_SOLVE_FAILED)
+        << "RTI fixed-iteration mode must not hide fatal direction-solve failures";
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::LINEAR_SOLVE_FAILED);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::LINEAR_SOLVE_FAILED);
 }
 
 TEST(BugfixTest, TinyStepRecoveryFailureReturnsRestorationFailed)

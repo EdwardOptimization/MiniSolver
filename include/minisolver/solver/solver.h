@@ -1839,8 +1839,21 @@ private:
     {
         LoopExitDecision decision;
 
-        // SQP-RTI mode exits after one step; postsolve assigns the final status.
-        // Preserve the existing priority: RTI exits before inspecting step_stat.
+        // Terminal failures stop immediately.
+        if (step_stat == SolverStatus::NUMERICAL_ERROR
+            || step_stat == SolverStatus::LINEAR_SOLVE_FAILED
+            || step_stat == SolverStatus::STEP_TOO_SMALL
+            || step_stat == SolverStatus::INSUFFICIENT_PROGRESS
+            || step_stat == SolverStatus::RESTORATION_FAILED
+            || step_stat == SolverStatus::INVALID_INPUT) {
+            decision.should_exit = true;
+            decision.status = step_stat;
+            decision.reason = reason_for_loop_status_(step_stat);
+            return decision;
+        }
+
+        // SQP-RTI mode exits after one non-fatal step; postsolve assigns the final quality.
+        // Fatal direction/search failures above must not be masked as fixed-iteration exits.
         if (detail::TerminationKernel::uses_fixed_iteration_profile(config)) {
             decision.should_exit = true;
             decision.reason = TerminationReason::FIXED_ITERATION;
@@ -1859,19 +1872,6 @@ private:
         }
 
         if (step_stat == SolverStatus::FEASIBLE || step_stat == SolverStatus::INFEASIBLE) {
-            decision.should_exit = true;
-            decision.status = step_stat;
-            decision.reason = reason_for_loop_status_(step_stat);
-            return decision;
-        }
-
-        // Terminal failures stop immediately.
-        if (step_stat == SolverStatus::NUMERICAL_ERROR
-            || step_stat == SolverStatus::LINEAR_SOLVE_FAILED
-            || step_stat == SolverStatus::STEP_TOO_SMALL
-            || step_stat == SolverStatus::INSUFFICIENT_PROGRESS
-            || step_stat == SolverStatus::RESTORATION_FAILED
-            || step_stat == SolverStatus::INVALID_INPUT) {
             decision.should_exit = true;
             decision.status = step_stat;
             decision.reason = reason_for_loop_status_(step_stat);
