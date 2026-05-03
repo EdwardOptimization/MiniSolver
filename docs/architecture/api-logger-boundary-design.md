@@ -309,6 +309,9 @@ Implemented:
 - Phase 2 checked scalar getters: state, control, parameter, slack, and dual
   checked scalar getters report invalid access through `ApiStatus` without
   overwriting the output reference.
+- Phase 2b constructor/config validation: constructors reject invalid horizon
+  and invalid `SolverConfig`; `set_config()` validates a candidate config before
+  mutating solver state and preserves the constructor-selected backend.
 - Phase 3 host logger backend: `MLOG_*` routes through a centralized backend
   with optional callback capture, default ANSI color is disabled, and host
   output uses newline writes instead of `std::endl`.

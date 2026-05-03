@@ -21,9 +21,12 @@ TEST(ConfigRegressionTest, NegativeHorizonRejected)
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
 
-    MiniSolver<BugTestModel, 10> solver(-3, Backend::CPU_SERIAL, config);
-    EXPECT_EQ(solver.get_horizon(), 0);
+    EXPECT_THROW(
+        (MiniSolver<BugTestModel, 10>(-3, Backend::CPU_SERIAL, config)), std::invalid_argument);
+    EXPECT_THROW(
+        (MiniSolver<BugTestModel, 10>(11, Backend::CPU_SERIAL, config)), std::invalid_argument);
 
+    MiniSolver<BugTestModel, 10> solver(0, Backend::CPU_SERIAL, config);
     solver.resize_horizon(-1);
     EXPECT_EQ(solver.get_horizon(), 0);
 }
@@ -193,10 +196,45 @@ TEST(ConfigRegressionTest, SetConfigPreservesBackendInvariant)
     SolverConfig new_conf;
     new_conf.print_level = PrintLevel::NONE;
     new_conf.backend = Backend::GPU_PCR;
-    solver.set_config(new_conf);
+    EXPECT_EQ(solver.set_config(new_conf), ApiStatus::OK);
 
     EXPECT_EQ(solver.get_config().backend, Backend::GPU_MPX)
         << "set_config must preserve the constructor-set backend invariant";
+}
+
+TEST(ConfigRegressionTest, SetConfigRejectsInvalidConfigWithoutMutation)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+    conf.max_iters = 5;
+    conf.default_dt = 0.1;
+
+    MiniSolver<BugTestModel, 10> solver(3, Backend::CPU_SERIAL, conf);
+
+    SolverConfig invalid = solver.get_config();
+    invalid.max_iters = -1;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_EQ(solver.get_config().max_iters, 5);
+
+    invalid = solver.get_config();
+    invalid.default_dt = std::numeric_limits<double>::infinity();
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::NonFiniteValue);
+    EXPECT_DOUBLE_EQ(solver.get_config().default_dt, 0.1);
+
+    invalid = solver.get_config();
+    invalid.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+    invalid.constraint_row_scale_min = 0.0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_EQ(solver.get_config().constraint_scaling, ConstraintScalingMethod::NONE);
+}
+
+TEST(ConfigRegressionTest, ConstructorRejectsInvalidConfig)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = -1;
+    EXPECT_THROW(
+        (MiniSolver<BugTestModel, 10>(3, Backend::CPU_SERIAL, config)), std::invalid_argument);
 }
 
 TEST(ConfigRegressionTest, SetConfigDefersPlanRebuildUntilSolve)

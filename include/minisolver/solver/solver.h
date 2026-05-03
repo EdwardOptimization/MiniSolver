@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "minisolver/core/config_validation.h"
 #include "minisolver/core/logger.h"
 #include "minisolver/core/model_traits.h"
 #include "minisolver/core/solver_context.h"
@@ -110,17 +111,15 @@ public:
     template <typename, int> friend struct ::minisolver::test::SolverInternalAccess;
 
     MiniSolver(int initial_N, Backend b, SolverConfig conf = SolverConfig())
-        : trajectory(std::max(0, std::min(initial_N, MAX_N)))
-        , N(std::max(0, std::min(initial_N, MAX_N)))
+        : trajectory(validate_horizon_or_throw_(initial_N))
+        , N(validate_horizon_or_throw_(initial_N))
         , config(conf)
     {
-
-        if (initial_N < 0 || initial_N > MAX_N) {
-            MLOG_ERROR("N (" << initial_N << ") outside [0, " << MAX_N << "]. Clamping.");
-        }
-
         // Constructor has an explicit backend argument; keep it as the source of truth.
         config.backend = b;
+        if (detail::validate_solver_config(config) != ApiStatus::OK) {
+            throw std::invalid_argument("MiniSolver constructed with invalid SolverConfig");
+        }
         context_.reset_algorithmic(config.mu_init, config.reg_init);
 
         dt_traj.fill(conf.default_dt);
@@ -223,8 +222,13 @@ public:
         // across set_config so a caller passing a default-constructed conf
         // doesn't silently switch backends.
         const Backend preserved_backend = config.backend;
-        config = conf;
-        config.backend = preserved_backend;
+        SolverConfig candidate = conf;
+        candidate.backend = preserved_backend;
+        const ApiStatus validation = detail::validate_solver_config(candidate);
+        if (validation != ApiStatus::OK) {
+            return validation;
+        }
+        config = candidate;
         if (config.max_iters > 0 && static_cast<int>(alpha_log_.capacity()) < config.max_iters) {
             alpha_log_.reserve(static_cast<size_t>(config.max_iters));
         }
@@ -2441,6 +2445,14 @@ private:
         build_state_.plan = make_solver_plan_info_();
         warn_if_solver_plan_degraded_(build_state_.plan);
         build_state_.dirty = false;
+    }
+
+    static int validate_horizon_or_throw_(int horizon)
+    {
+        if (horizon < 0 || horizon > MAX_N) {
+            throw std::invalid_argument("MiniSolver horizon outside [0, MAX_N]");
+        }
+        return horizon;
     }
 
     // Lookup Maps

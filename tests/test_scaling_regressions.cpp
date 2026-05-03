@@ -200,15 +200,8 @@ TEST(ScalingRegressionTest, AutomaticScalingRejectsInvalidScaleBounds)
     config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
     config.constraint_row_scale_min = 0.0;
 
-    MiniSolver<BadlyScaledEquivalentModel, 1> solver(0, Backend::CPU_SERIAL, config);
-
-    const SolverStatus status = solver.solve();
-    const SolverInfo& info = solver.get_info();
-
-    EXPECT_EQ(status, SolverStatus::INVALID_INPUT);
-    EXPECT_EQ(info.status, SolverStatus::INVALID_INPUT);
-    EXPECT_EQ(info.termination_reason, TerminationReason::INVALID_INPUT);
-    EXPECT_FALSE(info.constraint_scaling_active);
+    EXPECT_THROW((MiniSolver<BadlyScaledEquivalentModel, 1>(0, Backend::CPU_SERIAL, config)),
+        std::invalid_argument);
 }
 
 TEST(ScalingRegressionTest, HessianGershgorinScalesObjectivePacketOnly)
