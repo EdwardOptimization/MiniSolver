@@ -280,4 +280,6 @@ TEST(StatusTest, SolverInfoReportsDegradedRiccatiStep)
 
     EXPECT_TRUE(solver.get_info().degraded_step)
         << "Small-NU Riccati freeze fallback should be visible in SolverInfo";
+    EXPECT_GT(solver.get_info().degraded_riccati_freeze_count, 0)
+        << "SolverInfo should expose how many Riccati stages used the freeze fallback";
 }

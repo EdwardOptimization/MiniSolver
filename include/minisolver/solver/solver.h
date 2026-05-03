@@ -779,6 +779,7 @@ private:
 
     void increase_regularization_after_failed_solve_(bool clamp_to_min)
     {
+        context_.info.regularization_escalation_count++;
         if (clamp_to_min && context_.solve.reg < config.reg_min) {
             context_.solve.reg = config.reg_min;
         }
@@ -809,6 +810,7 @@ private:
     {
         if (result.degraded_step) {
             context_.info.degraded_step = true;
+            context_.info.degraded_riccati_freeze_count += result.degraded_riccati_freeze_count;
         }
     }
 
@@ -1406,6 +1408,7 @@ private:
     bool feasibility_restoration()
     {
         context_.info.restoration_used = true;
+        context_.info.restoration_attempt_count++;
         if (config.print_level >= PrintLevel::DEBUG) {
             MLOG_DEBUG("Entering Feasibility Restoration Phase.");
         }
@@ -1578,9 +1581,13 @@ private:
         const double feasible_bound = config.tol_con * config.feasible_tol_scale;
         const double improvement_tol = 1e-12 * std::max(1.0, violation_before);
 
-        return success && MatOps::is_finite_scalar(violation_after)
+        const bool restored = success && MatOps::is_finite_scalar(violation_after)
             && (violation_after <= feasible_bound
                 || violation_after < violation_before - improvement_tol);
+        if (restored) {
+            context_.info.restoration_success_count++;
+        }
+        return restored;
     }
 
     bool project_l1_soft_pair_to_central_path_(Knot& kp, int i, double mu, double w) const

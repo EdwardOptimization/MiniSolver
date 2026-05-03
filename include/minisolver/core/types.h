@@ -117,6 +117,10 @@ struct SolverInfo {
     bool line_search_failed = false;
     bool restoration_used = false;
     bool degraded_step = false;
+    int degraded_riccati_freeze_count = 0;
+    int regularization_escalation_count = 0;
+    int restoration_attempt_count = 0;
+    int restoration_success_count = 0;
 
     void reset()
     {
@@ -134,6 +138,10 @@ struct SolverInfo {
         line_search_failed = false;
         restoration_used = false;
         degraded_step = false;
+        degraded_riccati_freeze_count = 0;
+        regularization_escalation_count = 0;
+        restoration_attempt_count = 0;
+        restoration_success_count = 0;
     }
 };
 

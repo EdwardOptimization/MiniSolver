@@ -2025,6 +2025,8 @@ TEST(BugfixTest, MehrotraDoesNotUpdateMuWhenCorrectorSolveFails)
 
     EXPECT_EQ(status, SolverStatus::LINEAR_SOLVE_FAILED);
     EXPECT_EQ(fake_solver_ptr->calls, 2);
+    EXPECT_EQ(solver.get_info().regularization_escalation_count, 1)
+        << "Failed Riccati retries should be visible in SolverInfo diagnostics";
     EXPECT_DOUBLE_EQ(Access::mu(solver), config.mu_init)
         << "Failed Mehrotra corrector solve must not advance the barrier parameter";
 }
@@ -2061,6 +2063,8 @@ TEST(BugfixTest, TinyStepRecoveryFailureReturnsRestorationFailed)
     EXPECT_EQ(status, SolverStatus::RESTORATION_FAILED)
         << "Tiny-step recovery failure should not be collapsed into INFEASIBLE.";
     EXPECT_EQ(fake_solver_ptr->calls, 2);
+    EXPECT_EQ(solver.get_info().restoration_attempt_count, 1);
+    EXPECT_EQ(solver.get_info().restoration_success_count, 0);
 }
 
 TEST(BugfixTest, NanJacobianReturnsNumericalError)
