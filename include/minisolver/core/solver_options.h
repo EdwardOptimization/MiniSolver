@@ -163,9 +163,9 @@ struct SolverConfig {
     int inertia_max_retries = 5;
 
     // --- Convergence Tolerances ---
-    double tol_grad = 1e-4;
     double tol_con = 1e-4;
-    double tol_dual = 1e-4; // Dual Infeasibility Tolerance
+    // Stationarity / dual infeasibility tolerance for the Lagrangian residual.
+    double tol_dual = 1e-4;
     double tol_mu = 1e-5;
     // Objective Stagnation Tolerance
     // Stops the solver if the cost improvement between iterations is smaller than this value,

@@ -214,7 +214,6 @@ Implemented:
 
 Still deferred:
 
-- separate stationarity vs dual infeasibility naming for `tol_grad` / `tol_dual`;
 - acceptable/reduced-accuracy status beyond the existing `FEASIBLE` summary.
 - full `ACCEPTABLE_NMPC` behavior beyond the current documented profile;
 - scale-aware termination thresholds.
@@ -254,8 +253,8 @@ Still deferred:
 6. Done: Update docs and status semantics:
    - explain `OPTIMAL` vs `FEASIBLE`;
    - document tolerance units and scaling assumptions;
-   - mark `tol_grad` as unresolved until stationarity vs dual infeasibility
-     naming is settled.
+   - resolve the old `tol_grad` / `tol_dual` split by treating
+     `dual_inf/tol_dual` as the stationarity / Lagrangian residual channel.
 
 7. Run validation:
    - targeted termination/residual tests;
@@ -265,9 +264,6 @@ Still deferred:
 
 ## Deferred Items
 
-- `tol_grad`: do not wire or remove it in the termination pass. It needs a
-  separate decision on whether MiniSolver exposes both stationarity and dual
-  infeasibility, or treats them as the same metric.
 - infeasibility/unboundedness certificates: do not add statuses that imply
   certificates until the solver can produce evidence.
 - acceptable/reduced-accuracy public status: keep using `FEASIBLE` until there

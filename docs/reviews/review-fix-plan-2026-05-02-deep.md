@@ -46,7 +46,7 @@ Validation recorded before opening this ledger:
 | --- | --- | --- | --- |
 | **N-NUM-1** Mehrotra `update_mu` divides `avg / current_mu` without zero guard; companion `mehrotra_target_mu` was patched in 5/2 but `update_mu` wasn't. | correction | [`barrier_update.h`](../../include/minisolver/algorithms/barrier_update.h), [`solver-refactor-plan.md`](../architecture/solver-refactor-plan.md). | Do not add hot-path guards for `current_mu <= 0`. A nonpositive barrier parameter is outside solver invariants and should be validated at config/build/initialization boundaries. The obsolete zero-mu test was removed in `58dafcd`. |
 | **N-NUM-2** `recover_dual_search_directions` divides by `lam_i` without flooring (`s_i` is floored to `min_barrier_slack` but `lam_i` is not). | fixed | [`riccati.h`](../../include/minisolver/solver/riccati.h), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). | Fixed in `58dafcd fix: harden solver diagnostics and dual recovery` with `BugfixTest.L1DualRecoveryFloorsNonpositiveLambda`. |
-| **N-CONV-2** `tol_grad` is declared, set, serialized, but `TerminationKernel` never reads it. Dead config field. | deferred-design | [`solver_options.h:151`](../../include/minisolver/core/solver_options.h) declares `tol_grad = 1e-4`; [`termination.h`](../../include/minisolver/algorithms/termination.h) does not reference it; 6 test files set values that have no effect. | Do not wire or delete in isolation. Resolve with the termination design pass after deciding whether MiniSolver exposes stationarity separately from dual infeasibility. |
+| **N-CONV-2** `tol_grad` is declared, set, serialized, but `TerminationKernel` never reads it. Dead config field. | fixed | [`solver_options.h`](../../include/minisolver/core/solver_options.h), [`serializer.h`](../../include/minisolver/core/serializer.h), [`test_config_regressions.cpp`](../../tests/test_config_regressions.cpp). | Resolved by removing the dead `tol_grad` field and treating `tol_dual` as the stationarity / Lagrangian residual tolerance. A compile-time regression prevents reintroducing the dead field. |
 | **N-CONV-3** `OPTIMAL` requires `mu <= mu_final`, breaking standard IPM "KKT residual ≤ tol" semantics. Users with low-precision tolerances cannot reach OPTIMAL. | fixed | [`termination.h`](../../include/minisolver/algorithms/termination.h), [`solver_context.h`](../../include/minisolver/core/solver_context.h), [`test_barrier_residual_contract.cpp`](../../tests/test_barrier_residual_contract.cpp), [`termination-design.md`](../architecture/termination-design.md). | Fixed by adding true complementarity metrics and making strict `OPTIMAL` depend on primal/dual/true-complementarity residuals. `mu` remains internal barrier scheduling state. |
 | **N-OBS-1** `SolverContext` exposes ~8 of ~20 capability-adoption-plan diagnostic fields. Cannot query degraded-fallback flag, SOC counts, restoration counts, scaling status, linear-solver factorization status, etc. | deferred-design | [`solver_context.h`](../../include/minisolver/core/solver_context.h) inventory; capability adoption plan P0 #3. | Already prioritized; this review just elevates urgency. Implement incrementally: start with degraded_riccati_freeze_count, soc_attempted/accepted/rejected, restoration_attempted/accepted/rejected, regularization_escalation_count. |
 | **N-OBS-2** Logger uses `std::cout` / `std::endl` / hardcoded ANSI escape codes; no embedded-safe path; not redirectable. | deferred-design | [`logger.h`](../../include/minisolver/core/logger.h):19-61; [`api-logger-boundary-design.md`](../architecture/api-logger-boundary-design.md). | Design contract accepted: route `MLOG_*` through one centralized backend, keep compile-time no-op logging for embedded zero-malloc, remove hardcoded ANSI from the default path, and keep serializer I/O out of scope. Implementation must add logger-capture tests before changing behavior. |
@@ -90,37 +90,34 @@ Validation recorded before opening this ledger:
 
 Current recommended sequence after the May 3 status re-anchor:
 
-1. **N-CONV-2**: finish termination naming debt for `tol_grad` using
-   [`termination-design.md`](../architecture/termination-design.md). Do not wire
-   or delete the field in isolation.
-2. **N-OBS-1**: expand structured diagnostics incrementally. Start with fields
+1. **N-OBS-1**: expand structured diagnostics incrementally. Start with fields
    that already have solver events: degraded Riccati freeze, SOC
    attempted/accepted/rejected, restoration attempted/accepted/rejected, and
    regularization escalation.
-3. **N-API-1 + N-OBS-2**: implement the accepted
+2. **N-API-1 + N-OBS-2**: implement the accepted
    [`api-logger-boundary-design.md`](../architecture/api-logger-boundary-design.md)
    in red-test batches. API setters should return `ApiStatus`; logging should
    route through a central backend. Serializer remains out of scope.
-4. **N-MOD-2**: start scaling work from
+3. **N-MOD-2**: start scaling work from
    [`scaling-normalization-design.md`](../architecture/scaling-normalization-design.md)
    Stage 0. Add a badly scaled NMPC case and metrics before implementing
    model-provided constraint row scaling.
-5. **N-THEORY-1** remaining filter theory: f-type/h-type classification,
+4. **N-THEORY-1** remaining filter theory: f-type/h-type classification,
    f-type filter-augmentation skip, and switching condition. Keep
    `LineSearchType::FILTER` as the user-facing config.
-6. **N-THEORY-2** Pareto-frontier filter history, after N-THEORY-1 semantics
+5. **N-THEORY-2** Pareto-frontier filter history, after N-THEORY-1 semantics
    are stable.
-7. **N-EMBED-1** embedded profile: logger/exception/container boundaries, ARM
+6. **N-EMBED-1** embedded profile: logger/exception/container boundaries, ARM
    cross-compile, and binary-size measurement. This is a release-readiness item,
    not a solver-algorithm blocker.
-8. **N-NUM-3 / N-NUM-4 / N-PREC-2**: normalize initialization/restoration
+7. **N-NUM-3 / N-NUM-4 / N-PREC-2**: normalize initialization/restoration
    tolerances and tolerance documentation after the scaling contract is known.
-9. **N-THEORY-4** inertia detection: defer until benchmark evidence or real
+8. **N-THEORY-4** inertia detection: defer until benchmark evidence or real
    solver failures show regularization escalation is insufficient.
 
 Already resolved after this ledger was opened: **N-THEORY-5**, **N-CONV-1**,
 **N-NUM-2**, **N-CONV-3**, **N-CONV-4**, **N-RT-1**, **N-EMBED-2**,
-**N-OBS-3**, **N-TEST-1**, **N-TEST-4**, **N-TEST-5**, **N-TEST-6**.
+**N-OBS-3**, **N-CONV-2**, **N-TEST-1**, **N-TEST-4**, **N-TEST-5**, **N-TEST-6**.
 **N-TEST-3** and **N-MOD-1** have lightweight coverage in place, with heavier
 property/fuzz and physical-unit systems deferred until evidence justifies the
 dependency or scope. **N-NUM-1** was reclassified as an invalid-invariant /

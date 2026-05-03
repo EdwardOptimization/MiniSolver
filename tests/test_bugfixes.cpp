@@ -1806,7 +1806,6 @@ TEST(BugfixTest, PostLineSearchStopRejectsStaleFeasibilitySnapshot)
     config.mu_final = 1e-6;
     config.tol_con = 1e-8;
     config.tol_dual = 1e-8;
-    config.tol_grad = 1e-8;
 
     using Solver = MiniSolver<BugTestModel, 10>;
     using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
@@ -1835,7 +1834,6 @@ TEST(BugfixTest, PostLineSearchStopDoesNotUseStaleDualShortcut)
     config.mu_final = 1e-6;
     config.tol_con = 1e-8;
     config.tol_dual = 1e-8;
-    config.tol_grad = 1e-8;
 
     using Solver = MiniSolver<BugTestModel, 10>;
     using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;

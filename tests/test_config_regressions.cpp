@@ -1,4 +1,20 @@
 #include "bugfix_common.h"
+#include <type_traits>
+#include <utility>
+
+namespace {
+template <typename T, typename = void> struct HasTolGradMember : std::false_type { };
+
+template <typename T>
+struct HasTolGradMember<T, decltype((void)std::declval<T&>().tol_grad, void())> : std::true_type {
+};
+} // namespace
+
+TEST(ConfigRegressionTest, SolverConfigDoesNotExposeDeadTolGrad)
+{
+    EXPECT_FALSE(HasTolGradMember<SolverConfig>::value)
+        << "Stationarity is controlled by tol_dual; a separate tol_grad field was dead API.";
+}
 
 TEST(ConfigRegressionTest, NegativeHorizonRejected)
 {

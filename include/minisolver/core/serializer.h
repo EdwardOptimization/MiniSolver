@@ -19,7 +19,8 @@ namespace minisolver {
 template <typename Model, int MAX_N> class SolverSerializer {
 public:
     using SolverType = MiniSolver<Model, MAX_N>;
-    static constexpr const char* kCurrentFormatMagic = "MINISOLV_3";
+    static constexpr const char* kCurrentFormatMagic = "MINISOLV_4";
+    static constexpr const char* kLegacyFormatMagicV3 = "MINISOLV_3";
     static constexpr const char* kLegacyFormatMagicV2 = "MINISOLV_2";
     static constexpr const char* kLegacyFormatMagicV1 = "MINISOLV_1";
 
@@ -126,7 +127,6 @@ private:
         std::int32_t inertia_max_retries = static_cast<std::int32_t>(cfg.inertia_max_retries);
         write_pod(out, inertia_max_retries);
 
-        write_pod(out, cfg.tol_grad);
         write_pod(out, cfg.tol_con);
         write_pod(out, cfg.tol_dual);
         write_pod(out, cfg.tol_mu);
@@ -198,9 +198,9 @@ private:
         }
         cfg.inertia_max_retries = static_cast<int>(inertia_max_retries);
 
-        if (!read_pod(in, cfg.tol_grad) || !read_pod(in, cfg.tol_con) || !read_pod(in, cfg.tol_dual)
-            || !read_pod(in, cfg.tol_mu) || !read_pod(in, cfg.tol_cost)
-            || !read_pod(in, cfg.feasible_tol_scale) || !read_enum(in, cfg.line_search_type)) {
+        if (!read_pod(in, cfg.tol_con) || !read_pod(in, cfg.tol_dual) || !read_pod(in, cfg.tol_mu)
+            || !read_pod(in, cfg.tol_cost) || !read_pod(in, cfg.feasible_tol_scale)
+            || !read_enum(in, cfg.line_search_type)) {
             return false;
         }
 
@@ -423,7 +423,8 @@ public:
         }
         std::string version(magic);
 
-        if (version == kLegacyFormatMagicV2 || version == kLegacyFormatMagicV1) {
+        if (version == kLegacyFormatMagicV3 || version == kLegacyFormatMagicV2
+            || version == kLegacyFormatMagicV1) {
             std::cerr << "[Serializer] Unsupported snapshot format " << version
                       << ". Regenerate the snapshot with the current build.\n";
             return false;

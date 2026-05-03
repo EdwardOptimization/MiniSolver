@@ -59,7 +59,6 @@ SolverConfig MakeNonDefaultConfig()
     config.huge_penalty = 9e8;
     config.inertia_max_retries = 3;
 
-    config.tol_grad = 1e-3;
     config.tol_con = 2e-3;
     config.tol_dual = 3e-3;
     config.tol_mu = 4e-6;
@@ -133,7 +132,6 @@ void ExpectConfigEq(const SolverConfig& a, const SolverConfig& b)
     EXPECT_DOUBLE_EQ(a.huge_penalty, b.huge_penalty);
     EXPECT_EQ(a.inertia_max_retries, b.inertia_max_retries);
 
-    EXPECT_DOUBLE_EQ(a.tol_grad, b.tol_grad);
     EXPECT_DOUBLE_EQ(a.tol_con, b.tol_con);
     EXPECT_DOUBLE_EQ(a.tol_dual, b.tol_dual);
     EXPECT_DOUBLE_EQ(a.tol_mu, b.tol_mu);
@@ -420,7 +418,7 @@ TEST(SerializerTest, RejectsOldFormatMagic)
     {
         std::ofstream out(filename, std::ios::binary);
         ASSERT_TRUE(out.good());
-        out.write("MINISOLV_2", 10); // old magic
+        out.write("MINISOLV_3", 10); // previous config layout had the dead tol_grad field.
     }
 
     MiniSolver<CarModel, 10> solver(2, Backend::CPU_SERIAL);

@@ -77,7 +77,6 @@ TEST(FeaturesTest, CostStagnationTermination)
     int N = 1;
     SolverConfig config;
     config.print_level = PrintLevel::DEBUG;
-    config.tol_grad = 1e-12;
     config.tol_con = 1e-12;
     config.tol_mu = 1e-12;
     config.mu_final = 1e-9;
