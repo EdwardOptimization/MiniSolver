@@ -88,28 +88,47 @@ Validation recorded before opening this ledger:
 
 ## Open Follow-Up Order
 
-This ledger's recommended sequence (also in main review, repeated here for ease of execution):
+Current recommended sequence after the May 3 status re-anchor:
 
-1. **Finish termination naming debt**: resolve **N-CONV-2** (`tol_grad`) using
-   [`termination-design.md`](../architecture/termination-design.md), not an isolated field wiring.
-2. **N-TEST-4** (fixed golden-reference cross-check; CasADi dependency removed).
-3. **N-TEST-1** (Hessian FD).
-4. **N-TEST-3** (property-based with RapidCheck setup).
-5. **N-OBS-2** + **N-OBS-1** (logger callback + diagnostics expansion).
-6. **N-API-1** (silent setter cleanup, paired with new logger).
-7. **N-EMBED-1** (embedded profile + ARM CI).
-8. **N-MOD-2** (problem scaling).
-9. Bundle remaining filter theory: **N-THEORY-1** f-type/switching and
-   **N-THEORY-2** Pareto frontier.
-10. **N-THEORY-4** (inertia detection — defer until benchmark evidence demands).
+1. **N-CONV-2**: finish termination naming debt for `tol_grad` using
+   [`termination-design.md`](../architecture/termination-design.md). Do not wire
+   or delete the field in isolation.
+2. **N-OBS-1**: expand structured diagnostics incrementally. Start with fields
+   that already have solver events: degraded Riccati freeze, SOC
+   attempted/accepted/rejected, restoration attempted/accepted/rejected, and
+   regularization escalation.
+3. **N-API-1 + N-OBS-2**: implement the accepted
+   [`api-logger-boundary-design.md`](../architecture/api-logger-boundary-design.md)
+   in red-test batches. API setters should return `ApiStatus`; logging should
+   route through a central backend. Serializer remains out of scope.
+4. **N-MOD-2**: start scaling work from
+   [`scaling-normalization-design.md`](../architecture/scaling-normalization-design.md)
+   Stage 0. Add a badly scaled NMPC case and metrics before implementing
+   model-provided constraint row scaling.
+5. **N-THEORY-1** remaining filter theory: f-type/h-type classification,
+   f-type filter-augmentation skip, and switching condition. Keep
+   `LineSearchType::FILTER` as the user-facing config.
+6. **N-THEORY-2** Pareto-frontier filter history, after N-THEORY-1 semantics
+   are stable.
+7. **N-EMBED-1** embedded profile: logger/exception/container boundaries, ARM
+   cross-compile, and binary-size measurement. This is a release-readiness item,
+   not a solver-algorithm blocker.
+8. **N-NUM-3 / N-NUM-4 / N-PREC-2**: normalize initialization/restoration
+   tolerances and tolerance documentation after the scaling contract is known.
+9. **N-THEORY-4** inertia detection: defer until benchmark evidence or real
+   solver failures show regularization escalation is insufficient.
 
 Already resolved after this ledger was opened: **N-THEORY-5**, **N-CONV-1**,
 **N-NUM-2**, **N-CONV-3**, **N-CONV-4**, **N-RT-1**, **N-EMBED-2**,
-**N-OBS-3**. **N-NUM-1** was reclassified as an invalid-invariant /
+**N-OBS-3**, **N-TEST-1**, **N-TEST-4**, **N-TEST-5**, **N-TEST-6**.
+**N-TEST-3** and **N-MOD-1** have lightweight coverage in place, with heavier
+property/fuzz and physical-unit systems deferred until evidence justifies the
+dependency or scope. **N-NUM-1** was reclassified as an invalid-invariant /
 over-defensive-code correction. **N-THEORY-3** was resolved with split affine
 primal/dual step lengths. **N-THEORY-6** was resolved for the default
 multiple-shooting merit path; rollout-mode analytic derivatives remain a
 separate deferred design item. **N-THEORY-1** now has the `theta_max` gate; its
 f-type/switching sub-items remain open.
 
-Items not on this critical path are deferred-design candidates: **N-PREC-1**, **N-API-2**, **N-MOD-1**.
+Items not on this critical path remain deferred-design candidates:
+**N-PREC-1**, **N-API-2**, **N-API-3**, **N-DEP-2**, and serializer cleanup.
