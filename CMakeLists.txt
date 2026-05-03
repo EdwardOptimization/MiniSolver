@@ -270,6 +270,7 @@ add_minisolver_python_test(test_minimodel_implicit_patterns tests/minimodel/test
 add_minisolver_python_test(test_minimodel_constraints tests/minimodel/test_constraints.py)
 add_minisolver_python_test(test_minimodel_residual_costs tests/minimodel/test_residual_costs.py)
 add_minisolver_python_test(test_minimodel_terminal tests/minimodel/test_terminal.py)
+add_minisolver_python_test(test_minimodel_model_safety tests/minimodel/test_model_safety.py)
 
 set(TEST_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated_tests")
 set(KINEMATIC_BICYCLE_TEST_MODEL "${TEST_GENERATED_DIR}/kinematicbicycleregressionmodel.h")

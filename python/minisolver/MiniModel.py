@@ -65,6 +65,21 @@ class OptimalControlModel:
             p.name for p in self.parameters
         ]
 
+    def _declared_symbols(self):
+        return set(self.states) | set(self.controls) | set(self.parameters)
+
+    def _validate_declared_symbols(self, label, *values):
+        unknown = []
+        declared = self._declared_symbols()
+        for value in values:
+            if value is None:
+                continue
+            for expr in self._flatten_expr_list(value):
+                unknown.extend(sorted(expr.free_symbols - declared, key=lambda sym: sym.name))
+        if unknown:
+            names = ", ".join(sym.name for sym in unknown)
+            raise ValueError(f"{label} references undeclared symbols: {names}")
+
     def _validate_cpp_identifier(self, kind, name):
         if not isinstance(name, str) or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
             raise ValueError(f"{kind} name {name!r} is not a valid C++ identifier")
@@ -116,6 +131,8 @@ class OptimalControlModel:
         """
         if state not in self.states:
             raise ValueError(f"Unknown state: {state}")
+        expr = sp.sympify(expr)
+        self._validate_declared_symbols("dynamics", expr)
         self.dynamics_rhs[state] = expr
 
     def _is_numeric_expr(self, expr):
@@ -141,6 +158,8 @@ class OptimalControlModel:
         Add term to Lagrange cost function
         """
         for expr in exprs:
+            expr = sp.sympify(expr)
+            self._validate_declared_symbols("objective", expr)
             self.objective += expr
 
     def _flatten_expr_list(self, value):
@@ -158,6 +177,7 @@ class OptimalControlModel:
 
     def _validate_residual_weight(self, weight):
         weight_expr = sp.sympify(weight)
+        self._validate_declared_symbols("residual weight", weight_expr)
         if self._is_numeric_expr(weight_expr) and float(sp.N(weight_expr)) < 0.0:
             raise ValueError("residual weight must be non-negative")
         decision_symbols = set(self.states) | set(self.controls)
@@ -186,6 +206,7 @@ class OptimalControlModel:
             raise ValueError("residual weight length must match residual length")
 
         for residual_expr, weight_expr in zip(residuals, weights):
+            self._validate_declared_symbols("residual", residual_expr)
             self.residuals.append(sp.sympify(residual_expr))
             self.residual_weights.append(self._validate_residual_weight(weight_expr))
 
@@ -238,17 +259,31 @@ class OptimalControlModel:
                 expr = constraint.lhs - constraint.rhs
             elif isinstance(constraint, sp.GreaterThan): # lhs >= rhs -> rhs - lhs <= 0
                 expr = constraint.rhs - constraint.lhs
+
+            expr = sp.sympify(expr)
+            self._validate_declared_symbols("constraint", expr)
                 
             # Add to constraints list
             self.constraints.append(expr)
             self.true_constraints.append(expr)
             idx = len(self.constraints) - 1
             
-            if weight is not None and weight > 0.0:
+            if weight is not None:
+                weight_expr = sp.sympify(weight)
+                self._validate_declared_symbols("soft constraint weight", weight_expr)
+                if not self._is_numeric_expr(weight_expr):
+                    raise ValueError("soft constraint weight must be numeric")
+                weight_value = float(sp.N(weight_expr))
+                if weight_value < 0.0:
+                    raise ValueError("soft constraint weight must be non-negative")
+            else:
+                weight_value = 0.0
+
+            if weight_value > 0.0:
                 self.soft_constraints.append({
                     'index': idx,
                     'type': loss,
-                    'weight': weight
+                    'weight': weight_value
                 })
 
     def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside', linearize_at_boundary=False):
@@ -262,13 +297,20 @@ class OptimalControlModel:
             Q_mat = Q
             
         x_vec = sp.Matrix(x)
+        self._validate_declared_symbols("quadratic constraint variables", x_vec)
         
         if center is None:
-            c_vec = sp.Matrix([0]*len(x))
+            c_vec = sp.Matrix([0]*x_vec.rows)
         else:
             c_vec = sp.Matrix(center)
+            if c_vec.rows != x_vec.rows:
+                raise ValueError("Dimension mismatch in center and x")
+            self._validate_declared_symbols("quadratic constraint center", c_vec)
             
-        if len(x) != Q_mat.shape[0] or Q_mat.shape[0] != Q_mat.shape[1]:
+        self._validate_declared_symbols("quadratic constraint Q", Q_mat)
+        self._validate_declared_symbols("quadratic constraint rhs", rhs)
+
+        if x_vec.rows != Q_mat.shape[0] or Q_mat.shape[0] != Q_mat.shape[1]:
              raise ValueError("Dimension mismatch in Q and x")
 
         # Form the quadratic term: (x-c)^T Q (x-c)
@@ -285,7 +327,7 @@ class OptimalControlModel:
             if linearize_at_boundary:
                 epsilon = 1e-6
                 true_expr = sp.sqrt(rhs) - sp.sqrt(quad_term + epsilon)
-                xp_syms = [sp.symbols(f"xp_{len(self.special_constraints)}_{i}") for i in range(len(x))]
+                xp_syms = [sp.symbols(f"xp_{len(self.special_constraints)}_{i}") for i in range(x_vec.rows)]
                 xp_vec = sp.Matrix(xp_syms)
                 
                 # Gradient at boundary: 2 Q (xp - c)
@@ -971,6 +1013,11 @@ class OptimalControlModel:
         return code
 
     def generate(self, output_dir="include/model", use_fused_riccati=True, integrator_type="RK4_EXPLICIT"):
+        missing_dynamics = [s.name for s in self.states if s not in self.dynamics_rhs]
+        if missing_dynamics:
+            names = ", ".join(missing_dynamics)
+            raise ValueError(f"Missing dynamics for state(s): {names}")
+
         # 1. Vectorize
         x_vec = sp.Matrix(self.states)
         u_vec = sp.Matrix(self.controls)
