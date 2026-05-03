@@ -84,6 +84,7 @@ SolverConfig MakeNonDefaultConfig()
     config.restoration_mu = 2e-2;
     config.restoration_reg = 3e-2;
     config.restoration_alpha = 0.85;
+    config.restoration_sufficient_decrease_factor = 0.75;
 
     config.max_iters = 17;
     config.print_level = PrintLevel::DEBUG;
@@ -157,6 +158,8 @@ void ExpectConfigEq(const SolverConfig& a, const SolverConfig& b)
     EXPECT_DOUBLE_EQ(a.restoration_mu, b.restoration_mu);
     EXPECT_DOUBLE_EQ(a.restoration_reg, b.restoration_reg);
     EXPECT_DOUBLE_EQ(a.restoration_alpha, b.restoration_alpha);
+    EXPECT_DOUBLE_EQ(
+        a.restoration_sufficient_decrease_factor, b.restoration_sufficient_decrease_factor);
 
     EXPECT_EQ(a.max_iters, b.max_iters);
     EXPECT_EQ(a.print_level, b.print_level);

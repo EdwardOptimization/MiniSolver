@@ -1881,6 +1881,27 @@ public:
 };
 
 template <typename TrajArray>
+class TinyImprovementRestorationSolver : public RiccatiSolver<TrajArray, BugTestModel> {
+public:
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx.setZero();
+            traj[k].du.setZero();
+            traj[k].ds.setZero();
+            traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
+        }
+        if (N > 0) {
+            traj[0].du(0) = -1e-6;
+        }
+        return true;
+    }
+};
+
+template <typename TrajArray>
 class CapturingRestorationPenaltySolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
     bool called = false;
@@ -2005,6 +2026,33 @@ TEST(BugfixTest, FeasibilityRestorationRequiresViolationImprovement)
     EXPECT_FALSE(Access::feasibility_restoration(solver))
         << "restoration should not report success when the applied step leaves violation "
            "unchanged";
+}
+
+TEST(BugfixTest, FeasibilityRestorationRejectsTinyRelativeImprovement)
+{
+    SolverConfig config;
+    config.max_restoration_iters = 1;
+    config.enable_feasibility_restoration = true;
+
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using TrajArray = Solver::TrajArray;
+
+    Solver solver(1, Backend::CPU_SERIAL, config);
+    Access::set_linear_solver(
+        solver, std::make_unique<TinyImprovementRestorationSolver<TrajArray>>());
+
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].u(0) = 10.0; // BugTestModel constraint is u - 1 <= 0.
+    traj[0].s(0) = 1e-3;
+    traj[0].lam(0) = 1.0;
+    traj[1].u(0) = 10.0;
+    traj[1].s(0) = 1e-3;
+    traj[1].lam(0) = 1.0;
+
+    EXPECT_FALSE(Access::feasibility_restoration(solver))
+        << "restoration should require a meaningful relative infeasibility reduction, "
+           "not a numerically tiny decrease";
 }
 
 TEST(BugfixTest, MehrotraDoesNotUpdateMuWhenCorrectorSolveFails)

@@ -1763,11 +1763,11 @@ private:
         refresh_trajectory_model();
         const double violation_after = compute_max_violation(traj);
         const double feasible_bound = config.tol_con * config.feasible_tol_scale;
-        const double improvement_tol = 1e-12 * std::max(1.0, violation_before);
+        const double required_violation
+            = config.restoration_sufficient_decrease_factor * violation_before;
 
         const bool restored = success && MatOps::is_finite_scalar(violation_after)
-            && (violation_after <= feasible_bound
-                || violation_after < violation_before - improvement_tol);
+            && (violation_after <= feasible_bound || violation_after <= required_violation);
         if (restored) {
             context_.info.restoration_success_count++;
         }

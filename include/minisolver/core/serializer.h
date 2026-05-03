@@ -19,7 +19,8 @@ namespace minisolver {
 template <typename Model, int MAX_N> class SolverSerializer {
 public:
     using SolverType = MiniSolver<Model, MAX_N>;
-    static constexpr const char* kCurrentFormatMagic = "MINISOLV_4";
+    static constexpr const char* kCurrentFormatMagic = "MINISOLV_5";
+    static constexpr const char* kLegacyFormatMagicV4 = "MINISOLV_4";
     static constexpr const char* kLegacyFormatMagicV3 = "MINISOLV_3";
     static constexpr const char* kLegacyFormatMagicV2 = "MINISOLV_2";
     static constexpr const char* kLegacyFormatMagicV1 = "MINISOLV_1";
@@ -154,6 +155,7 @@ private:
         write_pod(out, cfg.restoration_mu);
         write_pod(out, cfg.restoration_reg);
         write_pod(out, cfg.restoration_alpha);
+        write_pod(out, cfg.restoration_sufficient_decrease_factor);
 
         std::int32_t max_iters = static_cast<std::int32_t>(cfg.max_iters);
         write_pod(out, max_iters);
@@ -226,7 +228,8 @@ private:
         cfg.max_restoration_iters = static_cast<int>(max_restoration_iters);
 
         if (!read_pod(in, cfg.restoration_mu) || !read_pod(in, cfg.restoration_reg)
-            || !read_pod(in, cfg.restoration_alpha)) {
+            || !read_pod(in, cfg.restoration_alpha)
+            || !read_pod(in, cfg.restoration_sufficient_decrease_factor)) {
             return false;
         }
 
@@ -423,8 +426,8 @@ public:
         }
         std::string version(magic);
 
-        if (version == kLegacyFormatMagicV3 || version == kLegacyFormatMagicV2
-            || version == kLegacyFormatMagicV1) {
+        if (version == kLegacyFormatMagicV4 || version == kLegacyFormatMagicV3
+            || version == kLegacyFormatMagicV2 || version == kLegacyFormatMagicV1) {
             std::cerr << "[Serializer] Unsupported snapshot format " << version
                       << ". Regenerate the snapshot with the current build.\n";
             return false;

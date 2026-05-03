@@ -240,6 +240,9 @@ struct SolverConfig {
     double restoration_mu = 1e-1;
     double restoration_reg = 1e-2;
     double restoration_alpha = 0.8;
+    // Restoration succeeds after reaching the feasible bound or reducing
+    // infeasibility to this fraction of the pre-restoration value.
+    double restoration_sufficient_decrease_factor = 0.9;
 
     // --- General ---
     int max_iters = 100; // Give it enough room
