@@ -348,6 +348,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(test_memory PRIVATE -Wno-mismatched-new-delete)
 endif()
 add_minisolver_test(test_integrator tests/test_integrator.cpp)
+add_minisolver_test(test_property_regressions tests/test_property_regressions.cpp)
 
 # --- Solver Components ---
 add_minisolver_test(test_riccati tests/test_riccati.cpp)
