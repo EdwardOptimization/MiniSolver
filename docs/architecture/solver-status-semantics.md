@@ -58,6 +58,13 @@ Status groups:
 `UNBOUNDED` is intentionally not exposed yet. MiniSolver currently has no unboundedness detector, so
 adding that status would create an API promise without evidence.
 
+When constraint or problem scaling is enabled, `FEASIBLE` uses
+`SolverInfo::primal_inf`, the internal scaled feasibility metric. This keeps the
+solver's globalization and termination rules consistent with the KKT system it
+actually solved. User-facing diagnostics should also inspect
+`SolverInfo::unscaled_primal_inf`, which reports raw model-unit constraint
+residuals and dynamics defects.
+
 Postsolve precedence:
 
 1. Fatal numerical/input failures may return directly if the active iterate is not trustworthy.

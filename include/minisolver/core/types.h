@@ -149,7 +149,11 @@ struct SolverInfo {
     TerminationReason termination_reason = TerminationReason::NONE;
 
     int iterations = 0;
+    // Internal primal feasibility metric used by convergence and FEASIBLE classification.
+    // With constraint/problem scaling enabled, inspect unscaled_primal_inf for model-unit
+    // residuals.
     double primal_inf = 0.0;
+    // Raw model-unit feasibility diagnostic; not used by default to classify SolverStatus.
     double unscaled_primal_inf = 0.0;
     double dual_inf = 0.0;
     double complementarity_inf = 0.0;
