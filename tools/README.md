@@ -29,7 +29,7 @@ cross-solver benchmark suite.
 
 * `auto_tuner.cpp`: Monte-Carlo search over MiniSolver configuration choices
   using the car tutorial generated model.
-* `replay_solver.cpp`: replay serialized solver snapshots for debugging. It
+* `replay_solver.cpp`: replay solver snapshots for debugging. It
   currently uses the car tutorial generated model.
 * `plot_trajectory.py`: plot trajectory CSV outputs from examples.
 

@@ -109,8 +109,8 @@ Completed after the initial loop extraction:
 
 - `SolverContext` now owns solve scalars (`mu`, `reg`, `current_iter`,
   `slack_reset_consecutive_count`) and solver metrics.
-- Serializer and focused bugfix tests now read/write solve state through
-  `SolverContext`, keeping serialized state explicit.
+- Solver snapshot/replay I/O and focused bugfix tests now read/write solve
+  state through `SolverContext`, keeping replay state explicit.
 - Internal phase contracts now return small result structs:
   `DirectionResult`, `GlobalizationResult`, `LoopExitDecision`, and
   `PostsolveResiduals`.
@@ -320,8 +320,8 @@ Completed after the kernel pass:
 - `set_config()` now marks the internal build state dirty instead of rebuilding
   line-search components immediately.
 - `solve()` rebuilds dirty internal components once before presolve.
-- Serializer load now routes through the same dirty-build path after restoring
-  config and algorithmic state.
+- Solver snapshot load now routes through the same dirty-build path after
+  restoring config and algorithmic state.
 - The plan info records the frozen component choices currently needed by the
   solver: backend, line-search type, integrator, component readiness, and
   fused-Riccati/integrator compatibility.

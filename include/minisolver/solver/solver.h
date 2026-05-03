@@ -36,7 +36,7 @@
 
 namespace minisolver {
 
-template <typename Model, int MAX_N> class SolverSerializer;
+template <typename Model, int MAX_N> class SolverSnapshotIO;
 
 // Test-only friend hook. Defined in tests/; forward-declared here so the
 // private `apply_slack_reset_` helper can be exercised in isolation without
@@ -108,7 +108,7 @@ public:
     using TrajectoryType = Trajectory<Knot, MAX_N>;
     using TrajArray = typename TrajectoryType::TrajArray;
 
-    friend class SolverSerializer<Model, MAX_N>;
+    friend class SolverSnapshotIO<Model, MAX_N>;
     template <typename, int> friend struct ::minisolver::test::SolverInternalAccess;
 
     MiniSolver(int initial_N, Backend b, SolverConfig conf = SolverConfig())
@@ -732,6 +732,20 @@ public:
     }
 
 private:
+    ApiStatus restore_config_from_snapshot_(const SolverConfig& restored_config)
+    {
+        const ApiStatus validation = detail::validate_solver_config(restored_config);
+        if (validation != ApiStatus::OK) {
+            return validation;
+        }
+        config = restored_config;
+        if (config.max_iters > 0 && static_cast<int>(alpha_log_.capacity()) < config.max_iters) {
+            alpha_log_.reserve(static_cast<size_t>(config.max_iters));
+        }
+        build_state_.dirty = true;
+        return ApiStatus::OK;
+    }
+
     TerminationReason reason_for_loop_status_(SolverStatus status) const
     {
         switch (status) {

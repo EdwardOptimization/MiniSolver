@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "generated/car_model.h"
-#include "minisolver/core/serializer.h" // [NEW]
+#include "minisolver/debug/solver_snapshot.h"
 #include "minisolver/solver/solver.h"
 
 using namespace minisolver;
@@ -129,7 +129,7 @@ int main(int /*argc*/, char** /*argv*/)
 
     std::cout << ">> Solving (Cold Start)...\n";
     // Optional: Save case before solving to capture inputs
-    // SolverSerializer<CarModel, 50>::save_case("debug_case.dat", solver);
+    // SolverSnapshotIO<CarModel, 50>::save_case("debug_case.dat", solver);
 
     SolverStatus status = solver.solve();
     std::cout << ">> Final Status: " << status_to_string(status) << "\n";

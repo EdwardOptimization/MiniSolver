@@ -1,5 +1,5 @@
 #include "../examples/01_car_tutorial/generated/car_model.h"
-#include "minisolver/core/serializer.h"
+#include "minisolver/debug/solver_snapshot.h"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -38,8 +38,20 @@ SolverConfig MakeNonDefaultConfig()
     config.warm_start_barrier = WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP;
     config.warm_start_regularization = WarmStartRegularizationMode::DECAY_PREVIOUS_REG;
     config.termination_profile = TerminationProfile::ACCEPTABLE_NMPC;
+    config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+    config.objective_scaling = ObjectiveScalingMethod::HESSIAN_GERSHGORIN;
+    config.problem_scaling = ProblemScalingMethod::RUIZ_EQUILIBRATION;
+    config.constraint_row_scale_min = 2e-5;
+    config.constraint_row_scale_max = 3e3;
+    config.objective_scale_min = 4e-5;
+    config.objective_scale_max = 0.25;
+
     config.integrator = IntegratorType::EULER_IMPLICIT;
     config.default_dt = 0.123;
+    config.newton_config.max_iters = 9;
+    config.newton_config.tol = 3e-9;
+    config.newton_config.regularization = 4e-11;
+
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
 
     config.mu_init = 0.7;
@@ -71,6 +83,8 @@ SolverConfig MakeNonDefaultConfig()
     config.line_search_backtrack_factor = 0.3;
     config.filter_gamma_theta = 2e-5;
     config.filter_gamma_phi = 3e-5;
+    config.filter_theta_max_factor = 77.0;
+    config.armijo_c1 = 7e-5;
 
     config.min_barrier_slack = 1e-13;
     config.barrier_inf_cost = 1e7;
@@ -105,77 +119,9 @@ SolverConfig MakeNonDefaultConfig()
     return config;
 }
 
-void ExpectConfigEq(const SolverConfig& a, const SolverConfig& b)
+template <typename SnapshotIO> void ExpectConfigEq(const SolverConfig& a, const SolverConfig& b)
 {
-    EXPECT_EQ(a.backend, b.backend);
-    EXPECT_EQ(a.initialization, b.initialization);
-    EXPECT_EQ(a.warm_start_barrier, b.warm_start_barrier);
-    EXPECT_EQ(a.warm_start_regularization, b.warm_start_regularization);
-    EXPECT_EQ(a.termination_profile, b.termination_profile);
-    EXPECT_EQ(a.integrator, b.integrator);
-    EXPECT_DOUBLE_EQ(a.default_dt, b.default_dt);
-    EXPECT_EQ(a.barrier_strategy, b.barrier_strategy);
-
-    EXPECT_DOUBLE_EQ(a.mu_init, b.mu_init);
-    EXPECT_DOUBLE_EQ(a.mu_final, b.mu_final);
-    EXPECT_DOUBLE_EQ(a.mu_linear_decrease_factor, b.mu_linear_decrease_factor);
-    EXPECT_DOUBLE_EQ(a.barrier_tolerance_factor, b.barrier_tolerance_factor);
-    EXPECT_DOUBLE_EQ(a.mu_safety_margin, b.mu_safety_margin);
-
-    EXPECT_EQ(a.inertia_strategy, b.inertia_strategy);
-    EXPECT_DOUBLE_EQ(a.reg_init, b.reg_init);
-    EXPECT_DOUBLE_EQ(a.reg_min, b.reg_min);
-    EXPECT_DOUBLE_EQ(a.reg_max, b.reg_max);
-    EXPECT_DOUBLE_EQ(a.reg_scale_up, b.reg_scale_up);
-    EXPECT_DOUBLE_EQ(a.reg_scale_down, b.reg_scale_down);
-    EXPECT_DOUBLE_EQ(a.regularization_step, b.regularization_step);
-    EXPECT_DOUBLE_EQ(a.singular_threshold, b.singular_threshold);
-    EXPECT_DOUBLE_EQ(a.huge_penalty, b.huge_penalty);
-    EXPECT_EQ(a.inertia_max_retries, b.inertia_max_retries);
-
-    EXPECT_DOUBLE_EQ(a.tol_con, b.tol_con);
-    EXPECT_DOUBLE_EQ(a.tol_dual, b.tol_dual);
-    EXPECT_DOUBLE_EQ(a.tol_mu, b.tol_mu);
-    EXPECT_DOUBLE_EQ(a.tol_cost, b.tol_cost);
-    EXPECT_DOUBLE_EQ(a.feasible_tol_scale, b.feasible_tol_scale);
-
-    EXPECT_EQ(a.line_search_type, b.line_search_type);
-    EXPECT_EQ(a.line_search_max_iters, b.line_search_max_iters);
-    EXPECT_DOUBLE_EQ(a.line_search_tau, b.line_search_tau);
-    EXPECT_DOUBLE_EQ(a.line_search_backtrack_factor, b.line_search_backtrack_factor);
-    EXPECT_DOUBLE_EQ(a.filter_gamma_theta, b.filter_gamma_theta);
-    EXPECT_DOUBLE_EQ(a.filter_gamma_phi, b.filter_gamma_phi);
-
-    EXPECT_DOUBLE_EQ(a.min_barrier_slack, b.min_barrier_slack);
-    EXPECT_DOUBLE_EQ(a.barrier_inf_cost, b.barrier_inf_cost);
-    EXPECT_DOUBLE_EQ(a.slack_reset_trigger, b.slack_reset_trigger);
-    EXPECT_DOUBLE_EQ(a.warm_start_slack_init, b.warm_start_slack_init);
-    EXPECT_DOUBLE_EQ(a.soc_trigger_alpha, b.soc_trigger_alpha);
-    EXPECT_DOUBLE_EQ(a.merit_nu_init, b.merit_nu_init);
-    EXPECT_DOUBLE_EQ(a.eta_suff_descent, b.eta_suff_descent);
-
-    EXPECT_EQ(a.max_restoration_iters, b.max_restoration_iters);
-    EXPECT_DOUBLE_EQ(a.restoration_mu, b.restoration_mu);
-    EXPECT_DOUBLE_EQ(a.restoration_reg, b.restoration_reg);
-    EXPECT_DOUBLE_EQ(a.restoration_alpha, b.restoration_alpha);
-    EXPECT_DOUBLE_EQ(
-        a.restoration_sufficient_decrease_factor, b.restoration_sufficient_decrease_factor);
-
-    EXPECT_EQ(a.max_iters, b.max_iters);
-    EXPECT_EQ(a.print_level, b.print_level);
-    EXPECT_EQ(a.enable_profiling, b.enable_profiling);
-
-    EXPECT_EQ(a.hessian_approximation, b.hessian_approximation);
-    EXPECT_EQ(a.direction_refinement, b.direction_refinement);
-    EXPECT_EQ(a.enable_rti, b.enable_rti);
-    EXPECT_EQ(a.enable_line_search_rollout, b.enable_line_search_rollout);
-
-    EXPECT_EQ(a.enable_defect_correction, b.enable_defect_correction);
-    EXPECT_EQ(a.enable_corrector, b.enable_corrector);
-    EXPECT_EQ(a.enable_aggressive_barrier, b.enable_aggressive_barrier);
-    EXPECT_EQ(a.enable_slack_reset, b.enable_slack_reset);
-    EXPECT_EQ(a.enable_feasibility_restoration, b.enable_feasibility_restoration);
-    EXPECT_EQ(a.enable_soc, b.enable_soc);
+    EXPECT_TRUE(SnapshotIO::config_equal(a, b));
 }
 
 // A minimal L1 soft-constraint model to verify that snapshots serialize soft_s correctly.
@@ -252,6 +198,12 @@ struct L1SoftModel {
         compute_cost(kp);
     }
 };
+
+struct L1SoftModelAltNames : L1SoftModel {
+    static constexpr std::array<const char*, NX> state_names = { "x_alt" };
+    static constexpr std::array<const char*, NU> control_names = { "u_alt" };
+    static constexpr std::array<const char*, NP> param_names = {};
+};
 } // namespace
 
 TEST(SerializerTest, CaptureAndSaveAndLoad)
@@ -265,7 +217,7 @@ TEST(SerializerTest, CaptureAndSaveAndLoad)
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
 
     using MySolver = MiniSolver<CarModel, 50>;
-    using Serializer = SolverSerializer<CarModel, 50>;
+    using SnapshotIO = SolverSnapshotIO<CarModel, 50>;
 
     MySolver solver(N, Backend::CPU_SERIAL, config);
     solver.set_dt(0.1);
@@ -296,7 +248,7 @@ TEST(SerializerTest, CaptureAndSaveAndLoad)
     }
 
     // 1. Capture State (Test New Interface)
-    auto snapshot = Serializer::capture_state(solver, SolverStatus::FEASIBLE);
+    auto snapshot = SnapshotIO::capture_snapshot(solver, SolverStatus::FEASIBLE);
     snapshot.iterations = 7;
     snapshot.mu = 0.3;
     snapshot.reg = 1.2;
@@ -311,19 +263,19 @@ TEST(SerializerTest, CaptureAndSaveAndLoad)
 
     // 2. Save to Disk
     std::string filename = MakeUniqueTestFilename("test_snapshot", ".dat");
-    bool save_ok = Serializer::save_state(filename, snapshot);
-    EXPECT_TRUE(save_ok);
+    SnapshotResult save_result = SnapshotIO::save_snapshot(filename, snapshot);
+    EXPECT_EQ(save_result.status, SnapshotStatus::OK);
 
     // 3. Load into new solver
     MySolver solver2(10, Backend::CPU_SERIAL); // Initialize with different N
-    bool load_ok = Serializer::load_case(filename, solver2);
-    EXPECT_TRUE(load_ok);
+    SnapshotResult load_result = SnapshotIO::load_case(filename, solver2);
+    EXPECT_EQ(load_result.status, SnapshotStatus::OK);
 
     // 4. Verify Loaded Data
     EXPECT_EQ(solver2.get_horizon(), N);
     EXPECT_EQ(solver2.get_config().mu_init, 0.5);
     EXPECT_EQ(solver2.get_config().barrier_strategy, BarrierStrategy::MEHROTRA);
-    auto loaded_snapshot = Serializer::capture_state(solver2);
+    auto loaded_snapshot = SnapshotIO::capture_snapshot(solver2);
     EXPECT_EQ(loaded_snapshot.iterations, 7);
     EXPECT_DOUBLE_EQ(loaded_snapshot.mu, 0.3);
     EXPECT_DOUBLE_EQ(loaded_snapshot.reg, 1.2);
@@ -365,7 +317,7 @@ TEST(SerializerTest, SnapshotSerializesSoftS_L1)
     config.max_iters = 0; // Presolve initializes soft_s; no need to iterate.
 
     using Solver = MiniSolver<L1SoftModel, 5>;
-    using Serializer = SolverSerializer<L1SoftModel, 5>;
+    using SnapshotIO = SolverSnapshotIO<L1SoftModel, 5>;
 
     Solver solver(1, Backend::CPU_SERIAL, config);
     solver.set_dt(1.0);
@@ -373,7 +325,7 @@ TEST(SerializerTest, SnapshotSerializesSoftS_L1)
 
     solver.solve();
 
-    auto snapA = Serializer::capture_state(solver);
+    auto snapA = SnapshotIO::capture_snapshot(solver);
     ASSERT_EQ(snapA.N, 1);
     ASSERT_EQ(snapA.trajectory.size(), 2u);
     const double soft_s_A = snapA.trajectory[0].soft_s[0];
@@ -381,12 +333,12 @@ TEST(SerializerTest, SnapshotSerializesSoftS_L1)
     ASSERT_GT(soft_s_A, 0.0);
 
     const std::string filename = MakeUniqueTestFilename("test_softs_snapshot", ".bin");
-    ASSERT_TRUE(Serializer::save_state(filename, snapA));
+    ASSERT_EQ(SnapshotIO::save_snapshot(filename, snapA).status, SnapshotStatus::OK);
 
     Solver solver2(1, Backend::CPU_SERIAL, config);
-    ASSERT_TRUE(Serializer::load_case(filename, solver2));
+    ASSERT_EQ(SnapshotIO::load_case(filename, solver2).status, SnapshotStatus::OK);
 
-    auto snapB = Serializer::capture_state(solver2);
+    auto snapB = SnapshotIO::capture_snapshot(solver2);
     ASSERT_EQ(snapB.N, 1);
     const double soft_s_B = snapB.trajectory[0].soft_s[0];
     EXPECT_DOUBLE_EQ(soft_s_B, soft_s_A);
@@ -403,14 +355,91 @@ TEST(SerializerTest, SnapshotSerializesAllConfigFields)
     ASSERT_EQ(solverA.get_config().backend, Backend::GPU_PCR);
 
     std::string filename = MakeUniqueTestFilename("test_config_snapshot", ".bin");
-    ASSERT_TRUE((minisolver::SolverSerializer<CarModel, 10>::save_case(filename, solverA)));
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
 
     MiniSolver<CarModel, 10> solverB(2, Backend::CPU_SERIAL);
-    ASSERT_TRUE((minisolver::SolverSerializer<CarModel, 10>::load_case(filename, solverB)));
+    SnapshotLoadOptions options;
+    options.backend_policy = SnapshotBackendPolicy::UseSnapshotBackend;
+    ASSERT_EQ(SnapshotIO::load_case(filename, solverB, options).status, SnapshotStatus::OK);
 
     const SolverConfig& cfgA = solverA.get_config();
     const SolverConfig& cfgB = solverB.get_config();
-    ExpectConfigEq(cfgA, cfgB);
+    ExpectConfigEq<SnapshotIO>(cfgA, cfgB);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SerializerTest, LoadRejectsInvalidSerializedConfigAtomically)
+{
+    MiniSolver<CarModel, 10> solverA(2, Backend::CPU_SERIAL);
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    auto snapshot = SnapshotIO::capture_snapshot(solverA);
+    snapshot.config.reg_scale_up = 1.0;
+
+    std::string filename = MakeUniqueTestFilename("test_invalid_config_snapshot", ".bin");
+    ASSERT_EQ(SnapshotIO::save_snapshot(filename, snapshot).status, SnapshotStatus::OK);
+
+    SolverConfig preserved;
+    preserved.mu_init = 0.321;
+    MiniSolver<CarModel, 10> solverB(1, Backend::CPU_SERIAL, preserved);
+    SnapshotResult load_result = SnapshotIO::load_case(filename, solverB);
+    EXPECT_EQ(load_result.status, SnapshotStatus::InvalidConfig);
+    EXPECT_EQ(solverB.get_horizon(), 1);
+    EXPECT_DOUBLE_EQ(solverB.get_config().mu_init, 0.321);
+    EXPECT_GT(solverB.get_config().reg_scale_up, 1.0);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SerializerTest, LoadKeepsConstructedBackendByDefault)
+{
+    SolverConfig config = MakeNonDefaultConfig();
+    MiniSolver<CarModel, 10> solverA(2, Backend::GPU_PCR, config);
+    ASSERT_EQ(solverA.get_config().backend, Backend::GPU_PCR);
+
+    std::string filename = MakeUniqueTestFilename("test_backend_policy_snapshot", ".bin");
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
+
+    MiniSolver<CarModel, 10> solverB(2, Backend::CPU_SERIAL);
+    ASSERT_EQ(SnapshotIO::load_case(filename, solverB).status, SnapshotStatus::OK);
+    EXPECT_EQ(solverB.get_config().backend, Backend::CPU_SERIAL);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SerializerTest, LoadCanOverrideBackendExplicitly)
+{
+    MiniSolver<CarModel, 10> solverA(2, Backend::CPU_SERIAL);
+
+    std::string filename = MakeUniqueTestFilename("test_backend_override_snapshot", ".bin");
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
+
+    MiniSolver<CarModel, 10> solverB(2, Backend::CPU_SERIAL);
+    SnapshotLoadOptions options;
+    options.backend_policy = SnapshotBackendPolicy::OverrideWith;
+    options.override_backend = Backend::GPU_MPX;
+    ASSERT_EQ(SnapshotIO::load_case(filename, solverB, options).status, SnapshotStatus::OK);
+    EXPECT_EQ(solverB.get_config().backend, Backend::GPU_MPX);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SerializerTest, LoadRejectsSameDimensionDifferentModelFingerprint)
+{
+    L1SoftModel::constraint_types[0] = 0;
+    L1SoftModel::constraint_weights[0] = 0.0;
+
+    MiniSolver<L1SoftModel, 5> solverA(1, Backend::CPU_SERIAL);
+    const std::string filename = MakeUniqueTestFilename("test_model_fingerprint", ".bin");
+    ASSERT_EQ((SolverSnapshotIO<L1SoftModel, 5>::save_case(filename, solverA).status),
+        SnapshotStatus::OK);
+
+    MiniSolver<L1SoftModelAltNames, 5> solverB(1, Backend::CPU_SERIAL);
+    EXPECT_EQ((SolverSnapshotIO<L1SoftModelAltNames, 5>::load_case(filename, solverB).status),
+        SnapshotStatus::ModelMismatch);
 
     std::remove(filename.c_str());
 }
@@ -425,7 +454,8 @@ TEST(SerializerTest, RejectsOldFormatMagic)
     }
 
     MiniSolver<CarModel, 10> solver(2, Backend::CPU_SERIAL);
-    EXPECT_FALSE((minisolver::SolverSerializer<CarModel, 10>::load_case(filename, solver)));
+    EXPECT_EQ((minisolver::SolverSnapshotIO<CarModel, 10>::load_case(filename, solver).status),
+        SnapshotStatus::UnsupportedVersion);
     std::remove(filename.c_str());
 }
 
@@ -448,12 +478,13 @@ TEST(SerializerTest, FullRoundTrip)
 
     // 2. Serialize to File
     std::string filename = MakeUniqueTestFilename("test_roundtrip", ".bin");
-    minisolver::SolverSerializer<CarModel, 10>::save_case(filename, solverA);
+    minisolver::SolverSnapshotIO<CarModel, 10>::save_case(filename, solverA);
 
     // 3. Deserialize to Solver B
     MiniSolver<CarModel, 10> solverB(N, Backend::CPU_SERIAL, config);
-    bool load_ok = minisolver::SolverSerializer<CarModel, 10>::load_case(filename, solverB);
-    EXPECT_TRUE(load_ok);
+    SnapshotResult load_ok
+        = minisolver::SolverSnapshotIO<CarModel, 10>::load_case(filename, solverB);
+    EXPECT_EQ(load_ok.status, SnapshotStatus::OK);
 
     // 4. Cleanup
     std::remove(filename.c_str());
@@ -462,8 +493,8 @@ TEST(SerializerTest, FullRoundTrip)
     EXPECT_EQ(solverA.get_horizon(), solverB.get_horizon());
     EXPECT_EQ(solverA.get_iteration_count(), solverB.get_iteration_count());
 
-    auto stateA = minisolver::SolverSerializer<CarModel, 10>::capture_state(solverA);
-    auto stateB = minisolver::SolverSerializer<CarModel, 10>::capture_state(solverB);
+    auto stateA = minisolver::SolverSnapshotIO<CarModel, 10>::capture_snapshot(solverA);
+    auto stateB = minisolver::SolverSnapshotIO<CarModel, 10>::capture_snapshot(solverB);
     EXPECT_DOUBLE_EQ(stateA.mu, stateB.mu);
     EXPECT_DOUBLE_EQ(stateA.reg, stateB.reg);
     EXPECT_DOUBLE_EQ(stateA.total_cost, stateB.total_cost);
@@ -497,7 +528,8 @@ TEST(SerializerTest, TruncatedFileRejected)
     solver.solve();
 
     std::string filename = MakeUniqueTestFilename("test_truncated", ".bin");
-    ASSERT_TRUE((minisolver::SolverSerializer<CarModel, 10>::save_case(filename, solver)));
+    ASSERT_EQ((minisolver::SolverSnapshotIO<CarModel, 10>::save_case(filename, solver).status),
+        SnapshotStatus::OK);
 
     std::ifstream in(filename, std::ios::binary);
     ASSERT_TRUE(in.good());
@@ -518,11 +550,41 @@ TEST(SerializerTest, TruncatedFileRejected)
     EXPECT_EQ(solver2.get_horizon(), 1);
     EXPECT_DOUBLE_EQ(solver2.get_config().mu_init, 0.123);
 
-    EXPECT_FALSE((minisolver::SolverSerializer<CarModel, 10>::load_case(filename, solver2)));
+    EXPECT_EQ((minisolver::SolverSnapshotIO<CarModel, 10>::load_case(filename, solver2).status),
+        SnapshotStatus::TruncatedFile);
 
     // Load should be atomic: on failure, the solver state should remain unchanged.
     EXPECT_EQ(solver2.get_horizon(), 1);
     EXPECT_DOUBLE_EQ(solver2.get_config().mu_init, 0.123);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SerializerTest, TrailingBytesRejectedByDefault)
+{
+    MiniSolver<CarModel, 10> solver(3, Backend::CPU_SERIAL);
+    solver.set_dt(0.1);
+
+    std::string filename = MakeUniqueTestFilename("test_trailing_bytes", ".bin");
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    ASSERT_EQ(SnapshotIO::save_case(filename, solver).status, SnapshotStatus::OK);
+
+    {
+        std::ofstream out(filename, std::ios::binary | std::ios::app);
+        ASSERT_TRUE(out.good());
+        const std::array<char, 4> extra = { 'J', 'U', 'N', 'K' };
+        out.write(extra.data(), static_cast<std::streamsize>(extra.size()));
+    }
+
+    MiniSolver<CarModel, 10> strict_loader(1, Backend::CPU_SERIAL);
+    EXPECT_EQ(SnapshotIO::load_case(filename, strict_loader).status, SnapshotStatus::TrailingBytes);
+
+    MiniSolver<CarModel, 10> permissive_loader(1, Backend::CPU_SERIAL);
+    SnapshotLoadOptions options;
+    options.reject_trailing_bytes = false;
+    EXPECT_EQ(
+        SnapshotIO::load_case(filename, permissive_loader, options).status, SnapshotStatus::OK);
+    EXPECT_EQ(permissive_loader.get_horizon(), 3);
 
     std::remove(filename.c_str());
 }
@@ -536,10 +598,13 @@ TEST(SerializerTest, OversizeHorizonRejected)
     solver_big.set_dt(0.1);
 
     std::string filename = MakeUniqueTestFilename("test_oversize", ".bin");
-    ASSERT_TRUE((minisolver::SolverSerializer<CarModel, 50>::save_case(filename, solver_big)));
+    ASSERT_EQ((minisolver::SolverSnapshotIO<CarModel, 50>::save_case(filename, solver_big).status),
+        SnapshotStatus::OK);
 
     MiniSolver<CarModel, 10> solver_small(5, Backend::CPU_SERIAL);
-    EXPECT_FALSE((minisolver::SolverSerializer<CarModel, 10>::load_case(filename, solver_small)));
+    EXPECT_EQ(
+        (minisolver::SolverSnapshotIO<CarModel, 10>::load_case(filename, solver_small).status),
+        SnapshotStatus::HorizonTooLarge);
 
     std::remove(filename.c_str());
 }

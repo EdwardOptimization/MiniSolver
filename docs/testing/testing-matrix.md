@@ -21,10 +21,9 @@ Out of scope for this matrix:
 
 - Full NMPC performance comparisons against acados/CasADi. Those belong in the
   separate `MiniSolver-Bench` repository.
-- Serializer redesign. The current serializer is a solver snapshot/replay tool
-  for trajectories, config, and solver state; it is not just logging. It should
-  be tested for round-trip compatibility today, but its API/format deserves a
-  separate refactor because the solver state model has changed substantially.
+- Cross-version snapshot schema migration. The current solver snapshot I/O is a
+  replay/debug tool, not a stable public interchange format. Current-format
+  round-trip behavior is tested, while old formats are rejected explicitly.
 
 ## Test Tiers
 
@@ -77,7 +76,7 @@ Out of scope for this matrix:
 | --- | --- |
 | Zero dynamic allocation during production `solve()` | `test_memory` with profiling/logging disabled and multiple line-search modes |
 | Profiling/logging | Explicitly not part of the zero-malloc guarantee unless converted to fixed buffers |
-| Serializer snapshot/replay | Round-trip config, trajectory, soft slacks, and atomic failure behavior |
+| Solver snapshot/replay | Round-trip config, trajectory, soft slacks, backend policy, model fingerprint, and atomic failure behavior |
 
 ## CI Commands
 
@@ -116,5 +115,5 @@ P2:
 
 - Keep fixed-capacity line-search history tests lightweight.
 - Move long horizon or slow stress coverage to nightly if it becomes expensive.
-- Revisit serializer as a separate snapshot/replay refactor, not as part of
-  solver-loop testing.
+- Keep snapshot/replay tests current whenever `SolverConfig` or solver runtime
+  state changes.

@@ -150,7 +150,7 @@ MiniSolver includes a one-click build script that handles dependency checking, c
   * **`examples/`**: Runnable generated-model examples, including the car tutorial and advanced bicycle case.
   * **`tools/`**:
       * `auto_tuner.cpp`: Monte-Carlo search for optimal solver configurations.
-      * `replay_solver.cpp`: Debugging tool to replay serialized solver states.
+      * `replay_solver.cpp`: Debugging tool to replay solver snapshot states.
       * `benchmark_suite/`: MiniSolver configuration benchmark suite.
   * **`docs/`**: Design notes, ADRs, review ledgers, and testing plans.
 

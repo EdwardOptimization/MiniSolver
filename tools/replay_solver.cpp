@@ -5,7 +5,7 @@
 
 // Include the Model you want to replay (e.g. CarModel)
 #include "../examples/01_car_tutorial/generated/car_model.h"
-#include "minisolver/core/serializer.h"
+#include "minisolver/debug/solver_snapshot.h"
 #include "minisolver/solver/solver.h"
 
 using namespace minisolver;
@@ -29,12 +29,14 @@ int main(int argc, char** argv)
 
     std::cout << ">> Replaying Case: " << filename << "\n";
 
-    // 1. Create Solver (Config will be overwritten by load)
+    // 1. Create Solver. The replay environment keeps the constructed backend by default.
     MiniSolver<Model, MAX_N> solver(10, Backend::CPU_SERIAL); // Initial N doesn't matter
 
     // 2. Load Case
-    if (!SolverSerializer<Model, MAX_N>::load_case(filename, solver)) {
-        std::cerr << ">> Failed to load case.\n";
+    SnapshotResult load_result = SolverSnapshotIO<Model, MAX_N>::load_case(filename, solver);
+    if (!load_result) {
+        std::cerr << ">> Failed to load case: " << snapshot_status_to_string(load_result.status)
+                  << "\n";
         return 1;
     }
 
