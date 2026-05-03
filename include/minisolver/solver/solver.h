@@ -339,6 +339,18 @@ public:
         return trajectory[stage].p(idx);
     }
 
+    ApiStatus get_parameter(int stage, int idx, double& out) const
+    {
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NP || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        out = trajectory[stage].p(idx);
+        return ApiStatus::OK;
+    }
+
     double get_parameter(int stage, const std::string& name) const
     {
         int idx = get_param_idx(name);
@@ -441,6 +453,18 @@ public:
         return trajectory[stage].x(idx);
     }
 
+    ApiStatus get_state(int stage, int idx, double& out) const
+    {
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NX || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        out = trajectory[stage].x(idx);
+        return ApiStatus::OK;
+    }
+
     // 4. Control Access
     ApiStatus set_control_guess(int stage, int idx, double value)
     {
@@ -524,6 +548,21 @@ public:
         return trajectory[stage].u(idx);
     }
 
+    ApiStatus get_control(int stage, int idx, double& out) const
+    {
+        if (stage == N) {
+            return ApiStatus::TerminalControl;
+        }
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NU || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        out = trajectory[stage].u(idx);
+        return ApiStatus::OK;
+    }
+
     // 5. Slack / Dual Access
     ApiStatus set_slack_guess(int stage, int idx, double value)
     {
@@ -589,12 +628,36 @@ public:
         return trajectory[stage].s(idx);
     }
 
+    ApiStatus get_slack(int stage, int idx, double& out) const
+    {
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NC || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        out = trajectory[stage].s(idx);
+        return ApiStatus::OK;
+    }
+
     double get_dual(int stage, int idx) const
     {
         if (stage > N || stage < 0 || idx >= NC || idx < 0) {
             return 0.0;
         }
         return trajectory[stage].lam(idx);
+    }
+
+    ApiStatus get_dual(int stage, int idx, double& out) const
+    {
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NC || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        out = trajectory[stage].lam(idx);
+        return ApiStatus::OK;
     }
 
     // 6. Cost Access

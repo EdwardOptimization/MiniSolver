@@ -139,6 +139,49 @@ TEST(ConfigRegressionTest, ApiSettersReturnExplicitStatusAndDoNotMutate)
     EXPECT_EQ(solver.set_dt(std::numeric_limits<double>::quiet_NaN()), ApiStatus::NonFiniteValue);
 }
 
+TEST(ConfigRegressionTest, CheckedScalarGettersReportInvalidAccess)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    MiniSolver<ApiStatusTestModel, 3> solver(2, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_initial_state("x", 1.25), ApiStatus::OK);
+    ASSERT_EQ(solver.set_parameter(0, 0, 2.5), ApiStatus::OK);
+    ASSERT_EQ(solver.set_control_guess(0, 0, -0.5), ApiStatus::OK);
+    ASSERT_EQ(solver.set_slack_guess(0, 0, 3.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_dual_guess(0, 0, 4.0), ApiStatus::OK);
+
+    double value = -99.0;
+    EXPECT_EQ(solver.get_state(0, 0, value), ApiStatus::OK);
+    EXPECT_DOUBLE_EQ(value, 1.25);
+
+    value = -99.0;
+    EXPECT_EQ(solver.get_parameter(0, 0, value), ApiStatus::OK);
+    EXPECT_DOUBLE_EQ(value, 2.5);
+
+    value = -99.0;
+    EXPECT_EQ(solver.get_control(0, 0, value), ApiStatus::OK);
+    EXPECT_DOUBLE_EQ(value, -0.5);
+
+    value = -99.0;
+    EXPECT_EQ(solver.get_slack(0, 0, value), ApiStatus::OK);
+    EXPECT_DOUBLE_EQ(value, 3.0);
+
+    value = -99.0;
+    EXPECT_EQ(solver.get_dual(0, 0, value), ApiStatus::OK);
+    EXPECT_DOUBLE_EQ(value, 4.0);
+
+    value = -99.0;
+    EXPECT_EQ(solver.get_state(3, 0, value), ApiStatus::InvalidStage);
+    EXPECT_DOUBLE_EQ(value, -99.0);
+
+    EXPECT_EQ(solver.get_state(0, 2, value), ApiStatus::InvalidIndex);
+    EXPECT_EQ(solver.get_control(2, 0, value), ApiStatus::TerminalControl);
+    EXPECT_EQ(solver.get_parameter(0, 2, value), ApiStatus::InvalidIndex);
+    EXPECT_EQ(solver.get_slack(-1, 0, value), ApiStatus::InvalidStage);
+    EXPECT_EQ(solver.get_dual(0, 2, value), ApiStatus::InvalidIndex);
+}
+
 TEST(ConfigRegressionTest, SetConfigPreservesBackendInvariant)
 {
     SolverConfig conf;
