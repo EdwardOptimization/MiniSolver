@@ -64,7 +64,8 @@ TEST(LineSearchTest, FilterAcceptance)
 
     linear_solver.solve(trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
 
-    double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const double alpha = result.alpha;
 
     EXPECT_GT(alpha, 0.0);
     EXPECT_LE(alpha, 1.0);
@@ -566,7 +567,8 @@ TEST(LineSearchTest, FilterRejectsPureL2KktResidualIncrease)
     Model::compute_constraints(active[0]);
     Model::compute_cost_gn(active[0]);
 
-    const double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const double alpha = result.alpha;
 
     EXPECT_DOUBLE_EQ(alpha, 0.0)
         << "Filter theta must include the L2 residual g+s-lam/w, otherwise a pure "
@@ -602,8 +604,9 @@ TEST(LineSearchTest, FilterSocUsesCandidateSlackAsCorrectionBase)
     Model::compute_constraints(active[0]);
     Model::compute_cost_gn(active[0]);
 
-    (void)ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
 
+    EXPECT_TRUE(result.soc_attempted);
     ASSERT_TRUE(linear_solver.called);
     EXPECT_DOUBLE_EQ(linear_solver.observed_trial_s, 1.2);
     EXPECT_DOUBLE_EQ(linear_solver.observed_soc_base_s, linear_solver.observed_trial_s)
@@ -640,8 +643,11 @@ TEST(LineSearchTest, FilterSocDampsCorrectionToStayInterior)
     Model::compute_constraints(active[0]);
     Model::compute_cost_gn(active[0]);
 
-    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+    const double alpha = result.alpha;
 
+    EXPECT_TRUE(result.soc_attempted);
+    EXPECT_TRUE(result.soc_accepted);
     ASSERT_TRUE(linear_solver.called);
     EXPECT_GT(alpha, 0.0)
         << "SOC should be damped to an interior candidate instead of applying an invalid full "
@@ -678,8 +684,9 @@ TEST(LineSearchTest, FilterSocUsesModelSocConstraintOverride)
     Model::compute_constraints(active[0]);
     Model::compute_cost_gn(active[0]);
 
-    (void)ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
 
+    EXPECT_TRUE(result.soc_attempted);
     ASSERT_TRUE(linear_solver.called);
     EXPECT_DOUBLE_EQ(linear_solver.observed_soc_rhs_g, 7.0)
         << "SOC should let the model override correction residuals without changing normal true "
@@ -714,7 +721,8 @@ TEST(LineSearchTest, FilterAcceptanceUsesTrueResidualNotQpResidual)
     Model::compute_true_constraints(active[0]);
     Model::compute_cost_gn(active[0]);
 
-    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+    const double alpha = result.alpha;
 
     EXPECT_GT(alpha, 0.0)
         << "Filter globalization should evaluate true nonlinear residuals, not the QP/IPM "
@@ -748,7 +756,8 @@ TEST(LineSearchTest, FilterRejectsTrialAboveThetaMax)
     Model::compute_constraints(active[0]);
     Model::compute_cost_gn(active[0]);
 
-    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+    const double alpha = result.alpha;
 
     EXPECT_EQ(alpha, 0.0)
         << "Filter must reject trials whose violation exceeds theta_max even if phi decreases.";
@@ -782,7 +791,8 @@ TEST(LineSearchTest, MeritAcceptanceUsesTrueResidualNotQpResidual)
     Model::compute_true_constraints(active[0]);
     Model::compute_cost_gn(active[0]);
 
-    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+    const double alpha = result.alpha;
 
     EXPECT_GT(alpha, 0.0)
         << "Merit globalization should evaluate true nonlinear residuals, not the QP/IPM "
@@ -815,7 +825,8 @@ TEST(LineSearchTest, MeritArmijoDoesNotBuildFiniteDifferenceProbe)
     Model::compute_cost_gn(active[0]);
     Model::cost_evaluations = 0;
 
-    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+    const double alpha = result.alpha;
 
     EXPECT_GT(alpha, 0.0);
     EXPECT_EQ(Model::cost_evaluations, 1)
@@ -852,8 +863,9 @@ TEST(LineSearchTest, FilterSocSkippedInRolloutMode)
     Model::compute_constraints(active[0]);
     Model::compute_cost_gn(active[0]);
 
-    (void)ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
 
+    EXPECT_FALSE(result.soc_attempted);
     EXPECT_FALSE(linear_solver.called)
         << "Current SOC implementation is multiple-shooting only; rollout mode needs a separate "
            "control-space SOC definition.";
@@ -891,7 +903,8 @@ TEST(LineSearchTest, MeritRolloutProducesConsistentStates)
     // Buggy rollout overwrites propagated x1 with x1 + dx1 (=100).
     active[1].dx(0) = -900.0;
 
-    double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const double alpha = result.alpha;
     EXPECT_GT(alpha, 0.0);
 
     const auto& after = trajectory.active();
@@ -1002,7 +1015,9 @@ TEST(LineSearchTest, FilterHistoryWrapsAtFixedCapacity)
             detail::evaluate_model_stage<Model>(active[k], config, current_dt, k == N);
         }
 
-        const double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+        const LineSearchResult result
+            = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+        const double alpha = result.alpha;
         ASSERT_GT(alpha, 0.0) << "filter rejected at iteration " << iter;
     }
 
@@ -1039,7 +1054,8 @@ TEST(LineSearchTest, NoLineSearchRefreshesAcceptedPointEvaluations)
         active[k].du(0) = 0.0;
     }
 
-    double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const double alpha = result.alpha;
     EXPECT_GT(alpha, 0.0);
 
     const auto& after = trajectory.active();
@@ -1071,7 +1087,8 @@ TEST(LineSearchTest, NoLineSearchDoesNotUpdateTerminalControl)
         active[k].du(0) = 7.0;
     }
 
-    double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const double alpha = result.alpha;
     EXPECT_GT(alpha, 0.0);
     EXPECT_DOUBLE_EQ(trajectory.active()[N].u(0), 0.0)
         << "u_N is not a decision variable and must not be advanced by line search.";
@@ -1105,7 +1122,8 @@ TEST(LineSearchTest, NoLineSearchRolloutProducesConsistentStates)
     active[1].dx(0) = -900.0;
     active[0].du(0) = 1.0;
 
-    double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const double alpha = result.alpha;
     EXPECT_GT(alpha, 0.0);
 
     const auto& after = trajectory.active();

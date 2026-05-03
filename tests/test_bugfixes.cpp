@@ -80,6 +80,10 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         s.linear_solver = std::move(solver);
     }
+    static void record_line_search_diagnostics(Solver& s, const LineSearchResult& result)
+    {
+        s.record_line_search_diagnostics_(result);
+    }
     static bool build_dirty(const Solver& s) { return s.build_state_.dirty; }
     static LineSearchType plan_line_search_type(const Solver& s)
     {
@@ -678,7 +682,8 @@ TEST(BugfixTest, FilterLineSearchClearsFilterOnBarrierUpdate)
     }
 
     linear_solver.solve(trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
-    const double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const double alpha = result.alpha;
     ASSERT_GT(alpha, 0.0);
     ASSERT_EQ(ls.filter_size(), 1u) << "expected one filter entry after accepted step";
 
@@ -717,7 +722,7 @@ TEST(BugfixTest, MeritLineSearchResetsNuOnBarrierUpdate)
     }
 
     linear_solver.solve(trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
-    ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    (void)ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
 
     const double merit_nu_after_ratchet = ls.get_merit_nu();
     ASSERT_GT(merit_nu_after_ratchet, 5000.0)
@@ -2065,6 +2070,30 @@ TEST(BugfixTest, TinyStepRecoveryFailureReturnsRestorationFailed)
     EXPECT_EQ(fake_solver_ptr->calls, 2);
     EXPECT_EQ(solver.get_info().restoration_attempt_count, 1);
     EXPECT_EQ(solver.get_info().restoration_success_count, 0);
+}
+
+TEST(BugfixTest, SolverInfoRecordsSocLineSearchDiagnostics)
+{
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    Solver solver(1, Backend::CPU_SERIAL, config);
+
+    LineSearchResult rejected_soc;
+    rejected_soc.soc_attempted = true;
+    rejected_soc.soc_rejected = true;
+    Access::record_line_search_diagnostics(solver, rejected_soc);
+
+    LineSearchResult accepted_soc;
+    accepted_soc.soc_attempted = true;
+    accepted_soc.soc_accepted = true;
+    Access::record_line_search_diagnostics(solver, accepted_soc);
+
+    EXPECT_EQ(solver.get_info().soc_attempt_count, 2);
+    EXPECT_EQ(solver.get_info().soc_accept_count, 1);
+    EXPECT_EQ(solver.get_info().soc_reject_count, 1);
 }
 
 TEST(BugfixTest, NanJacobianReturnsNumericalError)

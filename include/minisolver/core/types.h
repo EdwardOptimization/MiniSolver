@@ -119,6 +119,9 @@ struct SolverInfo {
     bool degraded_step = false;
     int degraded_riccati_freeze_count = 0;
     int regularization_escalation_count = 0;
+    int soc_attempt_count = 0;
+    int soc_accept_count = 0;
+    int soc_reject_count = 0;
     int restoration_attempt_count = 0;
     int restoration_success_count = 0;
 
@@ -140,8 +143,24 @@ struct SolverInfo {
         degraded_step = false;
         degraded_riccati_freeze_count = 0;
         regularization_escalation_count = 0;
+        soc_attempt_count = 0;
+        soc_accept_count = 0;
+        soc_reject_count = 0;
         restoration_attempt_count = 0;
         restoration_success_count = 0;
+    }
+};
+
+struct LineSearchResult {
+    double alpha = 0.0;
+    bool soc_attempted = false;
+    bool soc_accepted = false;
+    bool soc_rejected = false;
+
+    constexpr LineSearchResult() = default;
+    constexpr explicit LineSearchResult(double alpha_value)
+        : alpha(alpha_value)
+    {
     }
 };
 

@@ -28,8 +28,9 @@ public:
 
     virtual ~LineSearchStrategy() = default;
 
-    virtual double search(TrajectoryType& trajectory, LinearSolver<TrajArray>& linear_solver,
-        const std::array<double, MAX_N>& dt_traj, double mu, double reg, const SolverConfig& config)
+    virtual LineSearchResult search(TrajectoryType& trajectory,
+        LinearSolver<TrajArray>& linear_solver, const std::array<double, MAX_N>& dt_traj, double mu,
+        double reg, const SolverConfig& config)
         = 0;
 
     virtual void reset() { }
@@ -49,7 +50,7 @@ template <typename Model, int MAX_N> class NoLineSearch : public LineSearchStrat
     using typename Base::TrajectoryType;
 
 public:
-    double search(TrajectoryType& trajectory, LinearSolver<TrajArray>& /*linear_solver*/,
+    LineSearchResult search(TrajectoryType& trajectory, LinearSolver<TrajArray>& /*linear_solver*/,
         const std::array<double, MAX_N>& dt_traj, double /*mu*/, double /*reg*/,
         const SolverConfig& config) override
     {
@@ -60,7 +61,7 @@ public:
         const double alpha
             = fraction_to_boundary_rule<TrajArray, Model>(active, N, config.line_search_tau);
         if (alpha <= 1e-8) {
-            return 0.0;
+            return LineSearchResult(0.0);
         }
 
         trajectory.prepare_candidate();
@@ -117,7 +118,7 @@ public:
         }
 
         trajectory.swap();
-        return alpha;
+        return LineSearchResult(alpha);
     }
 };
 
@@ -383,7 +384,7 @@ public:
     // Test / diagnostic accessor.
     double get_merit_nu() const { return merit_nu; }
 
-    double search(TrajectoryType& trajectory, LinearSolver<TrajArray>& /*linear_solver*/,
+    LineSearchResult search(TrajectoryType& trajectory, LinearSolver<TrajArray>& /*linear_solver*/,
         const std::array<double, MAX_N>& dt_traj, double mu, double /*reg*/,
         const SolverConfig& config) override
     {
@@ -466,10 +467,10 @@ public:
         if (accepted) {
             trajectory.swap();
         } else {
-            return 0.0; // Fail
+            return LineSearchResult(0.0); // Fail
         }
 
-        return alpha;
+        return LineSearchResult(alpha);
     }
 };
 
@@ -699,7 +700,7 @@ public:
     // Test / diagnostic accessor.
     size_t filter_size() const { return filter_size_; }
 
-    double search(TrajectoryType& trajectory, LinearSolver<TrajArray>& linear_solver,
+    LineSearchResult search(TrajectoryType& trajectory, LinearSolver<TrajArray>& linear_solver,
         const std::array<double, MAX_N>& dt_traj, double mu, double reg,
         const SolverConfig& config) override
     {
@@ -720,6 +721,7 @@ public:
         bool accepted = false;
         int ls_iter = 0;
         bool soc_attempted = false;
+        LineSearchResult result;
 
         while (ls_iter < config.line_search_max_iters) {
             if (!config.enable_line_search_rollout) {
@@ -772,9 +774,13 @@ public:
             // variant is implemented.
             if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0
                 && alpha > config.soc_trigger_alpha && !config.enable_line_search_rollout) {
-                accepted = try_soc_correction(
+                const bool soc_accepted = try_soc_correction(
                     active, candidate, linear_solver, dt_traj, N, mu, reg, theta_0, phi_0, config);
                 soc_attempted = true;
+                accepted = soc_accepted;
+                result.soc_attempted = true;
+                result.soc_accepted = soc_accepted;
+                result.soc_rejected = !soc_accepted;
                 if (accepted) {
                     break;
                 }
@@ -797,10 +803,12 @@ public:
                 filter_next_ = (filter_next_ + 1) % FILTER_CAPACITY;
             }
         } else {
-            return 0.0; // Fail
+            result.alpha = 0.0;
+            return result; // Fail
         }
 
-        return alpha;
+        result.alpha = alpha;
+        return result;
     }
 };
 

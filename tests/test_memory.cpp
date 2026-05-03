@@ -404,10 +404,12 @@ TEST(MemoryTest, ZeroMalloc_FilterSOC_Path)
 
     g_allocation_count = 0;
     g_memory_check_active = true;
-    const double alpha = line_search.search(trajectory, linear_solver, dt_traj, /*mu=*/0.1,
-        /*reg=*/1e-4, config);
+    const LineSearchResult result
+        = line_search.search(trajectory, linear_solver, dt_traj, /*mu=*/0.1,
+            /*reg=*/1e-4, config);
     g_memory_check_active = false;
 
+    const double alpha = result.alpha;
     EXPECT_DOUBLE_EQ(alpha, 0.0);
     EXPECT_EQ(g_allocation_count, 0) << "Detected " << g_allocation_count
                                      << " heap allocations inside FilterLineSearch SOC path!";

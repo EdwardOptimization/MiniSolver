@@ -311,8 +311,8 @@ TEST(AdvancedFeaturesTest, SOCLogic)
     // Actually search computes m_0.
 
     // Run search
-    double alpha = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
-    (void)alpha; // Unused variable
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    (void)result; // Unused variable
 
     // Expectations:
     // 1. First step (alpha=1, dx=-10 -> x=0) rejected because cost increases (0 -> 10000).

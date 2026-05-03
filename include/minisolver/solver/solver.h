@@ -814,6 +814,19 @@ private:
         }
     }
 
+    void record_line_search_diagnostics_(const LineSearchResult& result)
+    {
+        if (result.soc_attempted) {
+            context_.info.soc_attempt_count++;
+        }
+        if (result.soc_accepted) {
+            context_.info.soc_accept_count++;
+        }
+        if (result.soc_rejected) {
+            context_.info.soc_reject_count++;
+        }
+    }
+
     void prepare_direction_workspace_()
     {
         // Candidate buffer preparation (shared by Mehrotra predictor and direction-refinement
@@ -1045,8 +1058,10 @@ private:
         }
 
         timer.start("Line Search");
-        result.alpha = line_search->search(
+        const LineSearchResult line_search_result = line_search->search(
             trajectory, *linear_solver, dt_traj, context_.solve.mu, context_.solve.reg, config);
+        record_line_search_diagnostics_(line_search_result);
+        result.alpha = line_search_result.alpha;
         alpha_log_.push_back(result.alpha);
         context_.metrics.last_alpha = result.alpha;
         // IMPORTANT: line_search may swap trajectory buffers.
