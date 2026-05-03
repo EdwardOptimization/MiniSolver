@@ -183,6 +183,57 @@ struct RolloutLineSearchModel {
     template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& /*kp*/) { }
 };
 
+struct MeritAnalyticDphiModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static inline int cost_evaluations = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> out;
+        out(0) = x(0) + u(0) * dt;
+        return out;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        ++cost_evaluations;
+        kp.cost = kp.x(0) * kp.x(0);
+        kp.q(0) = 2.0 * kp.x(0);
+        kp.r.setZero();
+        kp.Q(0, 0) = 2.0;
+        kp.R.setZero();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>&) { }
+};
+
 struct L2ResidualFilterModel {
     static const int NX = 1;
     static const int NU = 1;
@@ -653,6 +704,40 @@ TEST(LineSearchTest, MeritAcceptanceUsesTrueResidualNotQpResidual)
     EXPECT_GT(alpha, 0.0)
         << "Merit globalization should evaluate true nonlinear residuals, not the QP/IPM "
            "linearization residual packet.";
+}
+
+TEST(LineSearchTest, MeritArmijoDoesNotBuildFiniteDifferenceProbe)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::MERIT;
+    config.line_search_max_iters = 1;
+    config.armijo_c1 = 1.0e-4;
+    config.enable_line_search_rollout = false;
+
+    using Model = MeritAnalyticDphiModel;
+    MeritLineSearch<Model, 2> ls;
+    RolloutStubLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2> trajectory(N);
+    std::array<double, 2> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 1.0;
+    active[0].dx(0) = -0.5;
+    active[0].s.setZero();
+    active[0].lam.setZero();
+    Model::compute_cost_gn(active[0]);
+    Model::cost_evaluations = 0;
+
+    const double alpha = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_GT(alpha, 0.0);
+    EXPECT_EQ(Model::cost_evaluations, 1)
+        << "Merit Armijo should use analytic dphi instead of building an extra finite-difference "
+           "trial point before the first backtracking evaluation.";
 }
 
 TEST(LineSearchTest, FilterSocSkippedInRolloutMode)

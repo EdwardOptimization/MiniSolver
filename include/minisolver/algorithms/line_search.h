@@ -129,7 +129,109 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
     using typename Base::TrajectoryType;
 
     double merit_nu = 1000.0;
-    double dphi_ = 0.0; // numerical directional derivative (Armijo)
+
+    static double abs_directional_derivative(double value, double direction)
+    {
+        if (value > 0.0) {
+            return direction;
+        }
+        if (value < 0.0) {
+            return -direction;
+        }
+        return 0.0;
+    }
+
+    double constraint_direction(const typename TrajArray::value_type& kp, int i) const
+    {
+        double direction = kp.ds(i);
+        for (int j = 0; j < Model::NX; ++j) {
+            direction += kp.C(i, j) * kp.dx(j);
+        }
+        for (int j = 0; j < Model::NU; ++j) {
+            direction += kp.D(i, j) * kp.du(j);
+        }
+        return direction;
+    }
+
+    double compute_merit_directional_derivative(
+        const TrajArray& t, int N, double mu, const SolverConfig& config) const
+    {
+        double dphi = 0.0;
+        const int NC = Model::NC;
+        const int NX = Model::NX;
+        const int NU = Model::NU;
+
+        for (int k = 0; k <= N; ++k) {
+            const auto& kp = t[k];
+
+            for (int j = 0; j < NX; ++j) {
+                dphi += kp.q(j) * kp.dx(j);
+            }
+            if (k < N) {
+                for (int j = 0; j < NU; ++j) {
+                    dphi += kp.r(j) * kp.du(j);
+                }
+            }
+
+            for (int i = 0; i < NC; ++i) {
+                if (kp.s(i) > config.min_barrier_slack) {
+                    dphi -= mu * kp.ds(i) / kp.s(i);
+                }
+
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+
+                const double g_dir = constraint_direction(kp, i);
+                const double g_true = detail::true_constraint_value<Model>(kp, i);
+
+                if (type == 1 && w > 1e-6) {
+                    if (kp.soft_s(i) > config.min_barrier_slack) {
+                        dphi -= mu * kp.dsoft_s(i) / kp.soft_s(i);
+                    }
+                    if (w - kp.lam(i) > 1e-9) {
+                        dphi += mu * kp.dlam(i) / (w - kp.lam(i));
+                    }
+                    dphi += w * kp.dsoft_s(i);
+
+                    const double residual = g_true + kp.s(i) - kp.soft_s(i);
+                    const double residual_dir = g_dir - kp.dsoft_s(i);
+                    dphi += merit_nu * abs_directional_derivative(residual, residual_dir);
+                } else if (type == 2 && w > 1e-6) {
+                    const double penalty_residual = g_true + kp.s(i);
+                    dphi += w * penalty_residual * g_dir;
+
+                    const double residual = g_true + kp.s(i) - kp.lam(i) / w;
+                    const double residual_dir = g_dir - kp.dlam(i) / w;
+                    dphi += merit_nu * abs_directional_derivative(residual, residual_dir);
+                } else {
+                    const double residual = g_true + kp.s(i);
+                    dphi += merit_nu * abs_directional_derivative(residual, g_dir);
+                }
+            }
+
+            if (k < N) {
+                for (int row = 0; row < NX; ++row) {
+                    double defect = t[k + 1].x(row) - kp.f_resid(row);
+                    double defect_dir = t[k + 1].dx(row);
+                    for (int col = 0; col < NX; ++col) {
+                        defect_dir -= kp.A(row, col) * kp.dx(col);
+                    }
+                    for (int col = 0; col < NU; ++col) {
+                        defect_dir -= kp.B(row, col) * kp.du(col);
+                    }
+                    dphi += merit_nu * abs_directional_derivative(defect, defect_dir);
+                }
+            }
+        }
+
+        return dphi;
+    }
 
     double compute_merit(const TrajArray& t, int N, double mu, const SolverConfig& config)
     {
@@ -314,14 +416,18 @@ public:
         bool accepted = false;
         int ls_iter = 0;
 
-        dphi_ = 0.0;
+        double dphi = 0.0;
         if (config.armijo_c1 > 0.0 && alpha > 0.0) {
-            const double eps_alpha = std::min(1.0e-6, std::max(1.0e-10, alpha * 1.0e-6));
-            build_trial(candidate, active, dt_traj, N, eps_alpha, config);
-            const double phi_eps = compute_merit(candidate, N, mu, config);
-            dphi_ = (phi_eps - phi_0) / eps_alpha;
-            if (!std::isfinite(dphi_)) {
-                dphi_ = 0.0;
+            if (!config.enable_line_search_rollout) {
+                dphi = compute_merit_directional_derivative(active, N, mu, config);
+            } else {
+                const double eps_alpha = std::min(1.0e-6, std::max(1.0e-10, alpha * 1.0e-6));
+                build_trial(candidate, active, dt_traj, N, eps_alpha, config);
+                const double phi_eps = compute_merit(candidate, N, mu, config);
+                dphi = (phi_eps - phi_0) / eps_alpha;
+            }
+            if (!std::isfinite(dphi)) {
+                dphi = 0.0;
             }
         }
 
@@ -337,10 +443,10 @@ public:
             // merit descent direction, fall back to strict decrease rather
             // than accepting a non-descent "Armijo" step.
             if (config.armijo_c1 > 0.0) {
-                const double threshold = phi_0 + config.armijo_c1 * alpha * dphi_;
-                if (dphi_ < 0.0 && phi_alpha <= threshold) {
+                const double threshold = phi_0 + config.armijo_c1 * alpha * dphi;
+                if (dphi < 0.0 && phi_alpha <= threshold) {
                     accepted = true;
-                } else if (dphi_ >= 0.0 && phi_alpha < phi_0) {
+                } else if (dphi >= 0.0 && phi_alpha < phi_0) {
                     accepted = true;
                 }
             } else {

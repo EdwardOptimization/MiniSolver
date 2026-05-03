@@ -83,7 +83,7 @@ Validation recorded before opening this ledger:
 | **N-DEP-2** `requirements.txt` pins only minor floors. Non-deterministic builds. | confirmed | [`requirements.txt`](../../requirements.txt) all `>=`. | Generate `requirements-lock.txt` with pinned versions, used by CI; keep `requirements.txt` flexible for development. |
 | **N-TEST-5** ASan/UBSan in CI Debug builds but not in `build.sh`. | fixed | [`.github/workflows/ci.yml:83`](../../.github/workflows/ci.yml) enables sanitizers in CI; [`build.sh`](../../build.sh) now supports `ASAN=1`, `UBSAN=1`, or `SANITIZE=1` and propagates `-fsanitize=address,undefined -fno-omit-frame-pointer` to C, C++, and executable linker flags. | Fixed by adding an opt-in sanitizer mode while preserving default `./build.sh` behavior. |
 | **N-TEST-6** `test_memory.cpp` does not exercise generated bicycle (NX=6, NU=2, NC=10 with hard+soft constraints) under zero-malloc check. | fixed | [`tests/test_memory.cpp`](../../tests/test_memory.cpp) now includes the generated `KinematicBicycleRegressionModel` and checks `solve()` under global `operator new` instrumentation; [`CMakeLists.txt`](../../CMakeLists.txt) makes `test_memory` depend on generated test models. | Fixed by adding `MemoryTest.ZeroMalloc_GeneratedBicycleConstraintModel`. |
-| **N-THEORY-6** Merit `dphi_` uses finite-difference instead of analytic directional derivative. | deferred-design | [`line_search.h:317-326`](../../include/minisolver/algorithms/line_search.h). acados computes the merit directional derivative analytically from cost, dynamics, and inequality terms. [`globalization-mehrotra-theory-plan.md`](../architecture/globalization-mehrotra-theory-plan.md) records the MiniSolver adaptation. | Implement after N-THEORY-3 with red tests comparing analytic `dphi` against finite difference for hard, L1, and L2 constraints. This machinery should also feed filter switching. |
+| **N-THEORY-6** Merit `dphi_` uses finite-difference instead of analytic directional derivative. | fixed | [`line_search.h`](../../include/minisolver/algorithms/line_search.h), [`test_line_search.cpp`](../../tests/test_line_search.cpp). Red baseline: `LineSearchTest.MeritArmijoDoesNotBuildFiniteDifferenceProbe` observed two model cost evaluations before the first backtracking check. | Fixed for the default multiple-shooting merit path by computing analytic cost, barrier, constraint-residual, and dynamics-defect directional derivatives. Rollout mode intentionally keeps the finite-difference fallback until a separate control-space derivative contract is designed. |
 | **N-AD-1** Initial concern about FD verification absence — corrected on closer inspection. | correction | `test_solver_quality.cpp:309-431` covers 1st-order. Only 2nd-order Hessians remain uncovered (recorded as N-TEST-1). | No action — this row is here for traceability. |
 
 ## Open Follow-Up Order
@@ -99,14 +99,15 @@ This ledger's recommended sequence (also in main review, repeated here for ease 
 6. **N-API-1** (silent setter cleanup, paired with new logger).
 7. **N-EMBED-1** (embedded profile + ARM CI).
 8. **N-MOD-2** (problem scaling).
-9. Bundle remaining theory: **N-THEORY-1 + N-THEORY-2 + N-THEORY-6**
-   (filter + Mehrotra + analytic merit dphi).
+9. Bundle remaining filter theory: **N-THEORY-1 + N-THEORY-2**.
 10. **N-THEORY-4** (inertia detection — defer until benchmark evidence demands).
 
 Already resolved after this ledger was opened: **N-THEORY-5**, **N-CONV-1**,
 **N-NUM-2**, **N-CONV-3**, **N-CONV-4**, **N-RT-1**, **N-EMBED-2**,
 **N-OBS-3**. **N-NUM-1** was reclassified as an invalid-invariant /
 over-defensive-code correction. **N-THEORY-3** was resolved with split affine
-primal/dual step lengths.
+primal/dual step lengths. **N-THEORY-6** was resolved for the default
+multiple-shooting merit path; rollout-mode analytic derivatives remain a
+separate deferred design item.
 
 Items not on this critical path are deferred-design candidates: **N-PREC-1**, **N-API-2**, **N-MOD-1**.
