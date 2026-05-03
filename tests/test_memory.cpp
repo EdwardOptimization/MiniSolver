@@ -1,4 +1,5 @@
 #include "../examples/01_car_tutorial/generated/car_model.h"
+#include "kinematicbicycleregressionmodel.h"
 #include "minisolver/algorithms/line_search.h"
 #include "minisolver/integrator/implicit_integrator.h"
 #include "minisolver/solver/solver.h"
@@ -178,6 +179,33 @@ public:
         return true;
     }
 };
+
+void configure_bicycle_track(
+    MiniSolver<KinematicBicycleRegressionModel, 12>& solver, int horizon, double dt)
+{
+    for (int k = 0; k <= horizon; ++k) {
+        const double x_ref = 1.2 * k * dt;
+        solver.set_parameter(k, "x_ref", x_ref);
+        solver.set_parameter(k, "y_ref", 0.0);
+        solver.set_parameter(k, "psi_ref", 0.0);
+        solver.set_parameter(k, "v_ref", 1.2);
+        solver.set_parameter(k, "n_x", 0.0);
+        solver.set_parameter(k, "n_y", 1.0);
+        solver.set_parameter(k, "w_left", 1.0);
+        solver.set_parameter(k, "w_right", 1.0);
+
+        solver.set_state_guess(k, "x", x_ref);
+        solver.set_state_guess(k, "y", 0.0);
+        solver.set_state_guess(k, "psi", 0.0);
+        solver.set_state_guess(k, "v", 1.2);
+        solver.set_state_guess(k, "delta", 0.0);
+    }
+
+    for (int k = 0; k < horizon; ++k) {
+        solver.set_control_guess(k, "a", 0.0);
+        solver.set_control_guess(k, "delta_rate", 0.0);
+    }
+}
 } // namespace
 
 TEST(MemoryTest, ZeroMalloc_Compliance_Test)
@@ -301,6 +329,31 @@ TEST(MemoryTest, ZeroMalloc_SolveAfterSetConfigDoesNotAllocate)
     g_memory_check_active = false;
 
     EXPECT_EQ(g_allocation_count, 0) << "set_config() must not defer heap allocation into solve()";
+}
+
+TEST(MemoryTest, ZeroMalloc_GeneratedBicycleConstraintModel)
+{
+    constexpr int N = 8;
+    constexpr double dt = 0.05;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.enable_profiling = false;
+    config.line_search_type = LineSearchType::FILTER;
+    config.enable_soc = true;
+    config.max_iters = 5;
+
+    MiniSolver<KinematicBicycleRegressionModel, 12> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(dt);
+    configure_bicycle_track(solver, N, dt);
+
+    g_allocation_count = 0;
+    g_memory_check_active = true;
+    solver.solve();
+    g_memory_check_active = false;
+
+    EXPECT_EQ(g_allocation_count, 0)
+        << "Generated bicycle model solve() must remain heap-allocation free.";
 }
 
 TEST(MemoryTest, ZeroMalloc_FilterSOC_Path)
