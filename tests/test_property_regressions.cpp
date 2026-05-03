@@ -1,4 +1,5 @@
 #include "minisolver/algorithms/initialization.h"
+#include "minisolver/algorithms/model_evaluation.h"
 #include "minisolver/core/trajectory.h"
 #include "minisolver/solver/line_search_utils.h"
 #include <array>
@@ -48,6 +49,60 @@ struct L2SoftConstraintModel {
     static constexpr std::array<double, NC> constraint_weights = { 2.0 };
     static constexpr std::array<int, NC> constraint_types = { 2 };
 };
+
+struct ScalingPropertyModel {
+    static constexpr int NX = 2;
+    static constexpr int NU = 1;
+    static constexpr int NC = 2;
+    static constexpr int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x0", "x1" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0, 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0, 0 };
+};
+
+double row_inf_norm(const KnotPoint<double, ScalingPropertyModel::NX, ScalingPropertyModel::NU,
+                        ScalingPropertyModel::NC, ScalingPropertyModel::NP>& kp,
+    int row)
+{
+    double norm = std::abs(kp.g_unscaled(row));
+    for (int col = 0; col < ScalingPropertyModel::NX; ++col) {
+        norm = std::max(norm, std::abs(kp.C(row, col)));
+    }
+    for (int col = 0; col < ScalingPropertyModel::NU; ++col) {
+        norm = std::max(norm, std::abs(kp.D(row, col)));
+    }
+    return norm;
+}
+
+double objective_hessian_row_bound(const KnotPoint<double, ScalingPropertyModel::NX,
+    ScalingPropertyModel::NU, 0, ScalingPropertyModel::NP>& kp)
+{
+    double bound = 0.0;
+    for (int row = 0; row < ScalingPropertyModel::NX; ++row) {
+        double row_sum = 0.0;
+        for (int col = 0; col < ScalingPropertyModel::NX; ++col) {
+            row_sum += std::abs(kp.Q(row, col));
+        }
+        for (int col = 0; col < ScalingPropertyModel::NU; ++col) {
+            row_sum += std::abs(kp.H(col, row));
+        }
+        bound = std::max(bound, row_sum);
+    }
+    for (int row = 0; row < ScalingPropertyModel::NU; ++row) {
+        double row_sum = 0.0;
+        for (int col = 0; col < ScalingPropertyModel::NX; ++col) {
+            row_sum += std::abs(kp.H(row, col));
+        }
+        for (int col = 0; col < ScalingPropertyModel::NU; ++col) {
+            row_sum += std::abs(kp.R(row, col));
+        }
+        bound = std::max(bound, row_sum);
+    }
+    return bound;
+}
 
 } // namespace
 
@@ -179,5 +234,81 @@ TEST(PropertyRegressionTest, FractionToBoundaryKeepsHardAndL1VariablesInterior)
             EXPECT_GT(soft_s_new, -1e-12);
             EXPECT_GT(soft_dual_new, -1e-12);
         }
+    }
+}
+
+TEST(PropertyRegressionTest, AutomaticConstraintRowScalingBoundsRandomRows)
+{
+    using Knot = KnotPoint<double, ScalingPropertyModel::NX, ScalingPropertyModel::NU,
+        ScalingPropertyModel::NC, ScalingPropertyModel::NP>;
+
+    SolverConfig config;
+    config.constraint_row_scale_min = 1e-4;
+    config.constraint_row_scale_max = 1e4;
+
+    std::mt19937 rng(0x5CA1E);
+    std::uniform_real_distribution<double> value_dist(-1000.0, 1000.0);
+
+    for (int sample = 0; sample < 200; ++sample) {
+        Knot kp;
+        kp.set_zero();
+        for (int row = 0; row < ScalingPropertyModel::NC; ++row) {
+            kp.g_unscaled(row) = value_dist(rng);
+            for (int col = 0; col < ScalingPropertyModel::NX; ++col) {
+                kp.C(row, col) = value_dist(rng);
+            }
+            for (int col = 0; col < ScalingPropertyModel::NU; ++col) {
+                kp.D(row, col) = value_dist(rng);
+            }
+
+            const double row_norm = row_inf_norm(kp, row);
+            const double scale = detail::compute_auto_constraint_row_scale(kp, config, row);
+
+            EXPECT_TRUE(std::isfinite(scale));
+            EXPECT_GE(scale, config.constraint_row_scale_min);
+            EXPECT_LE(scale, config.constraint_row_scale_max);
+            EXPECT_LE(scale * std::max(1.0, row_norm), 1.0 + 1e-12)
+                << "row-inf scaling should down-scale large rows to O(1)";
+        }
+    }
+}
+
+TEST(PropertyRegressionTest, ObjectiveGershgorinScalingBoundsRandomCurvature)
+{
+    using Knot = KnotPoint<double, ScalingPropertyModel::NX, ScalingPropertyModel::NU, 0,
+        ScalingPropertyModel::NP>;
+
+    SolverConfig config;
+    config.objective_scale_min = 1e-4;
+    config.objective_scale_max = 1.0;
+
+    std::mt19937 rng(0x9E125);
+    std::uniform_real_distribution<double> value_dist(-1000.0, 1000.0);
+
+    for (int sample = 0; sample < 200; ++sample) {
+        Knot kp;
+        kp.set_zero();
+        for (int row = 0; row < ScalingPropertyModel::NX; ++row) {
+            for (int col = 0; col < ScalingPropertyModel::NX; ++col) {
+                kp.Q(row, col) = value_dist(rng);
+            }
+        }
+        for (int row = 0; row < ScalingPropertyModel::NU; ++row) {
+            for (int col = 0; col < ScalingPropertyModel::NU; ++col) {
+                kp.R(row, col) = value_dist(rng);
+            }
+            for (int col = 0; col < ScalingPropertyModel::NX; ++col) {
+                kp.H(row, col) = value_dist(rng);
+            }
+        }
+
+        const double row_bound = objective_hessian_row_bound(kp);
+        const double scale = detail::compute_hessian_gershgorin_objective_scale(kp, config);
+
+        EXPECT_TRUE(std::isfinite(scale));
+        EXPECT_GE(scale, config.objective_scale_min);
+        EXPECT_LE(scale, config.objective_scale_max);
+        EXPECT_LE(scale * std::max(1.0, row_bound), 1.0 + 1e-12)
+            << "Gershgorin objective scaling should bound the active Hessian row sum";
     }
 }
