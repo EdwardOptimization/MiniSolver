@@ -63,7 +63,7 @@ Total: 41 new findings, 1 corrected interpretation of prior coverage.
 - **Embedded-deployment claim is significantly overstated relative to current code**. README markets "Compile with `-O3`. No external libraries required" and "Embedded Safety", but 11 headers `#include <iostream>`, 4 sites `throw std::invalid_argument`, `solver.h` uses `std::unordered_map<std::string, int>` for name lookup, and there is no ARM cross-compile job, no `-fno-rtti -fno-exceptions` build option, no binary-size measurement target. (Dim 9, P0)
 - **`SolverStatus` has only 5 values, missing standard NLP solver status layering** (`MAX_ITER`, `UNBOUNDED`, `LINEAR_SOLVE_FAILED`, `RESTORATION_FAILED`, `INVALID_INPUT`). When max_iters elapses with primal_inf still above tolerance, the user receives `INFEASIBLE` even though the problem may be feasible — they cannot distinguish "increase max_iters" from "problem unsolvable". `tests/test_status.cpp:96-98` explicitly comments expecting MAX_ITER but the enum doesn't have it. (Dim 2, P0)
 - **Riccati / KKT solve has no inertia detection**. Standard primal-dual IPM (IPOPT, HPIPM) verifies the inertia of the augmented system equals (n_positive=variables, n_negative=equality_constraints+slacks, n_zero=0); failure means the iterate is a saddle, not a minimizer. MiniSolver only retries with increased regularization on SPD failure, never checks inertia. The code may converge to non-minimizers without detection. (Dim 14, P0)
-- **`Restoration` silently skips quadratic feasibility penalty under `BarrierStrategy::MEHROTRA`** ([`solver.h`](../../include/minisolver/solver/solver.h) line 1317 `if (config.barrier_strategy != BarrierStrategy::MEHROTRA)`). For Mehrotra users, restoration becomes a cost-only solve with identity Q and zero q — it does **not** push toward feasibility. This is a likely contributor to ADR 0002's still-unresolved race_cars 9.4% INFEASIBLE rate. (Dim 14, P0)
+- **`Restoration` silently skips quadratic feasibility penalty under `BarrierStrategy::MEHROTRA`** ([`solver.h`](../../include/minisolver/solver/solver.h) line 1317 `if (config.barrier_strategy != BarrierStrategy::MEHROTRA)`). For Mehrotra users, restoration becomes a cost-only solve with identity Q and zero q — it does **not** push toward feasibility. Case-level impact belongs to MiniSolver-Bench; this repository should track only the generic solver bug. (Dim 14, P0)
 - **Problem-level scaling is completely absent** — `grep scaling` in `solver.h` returns 0 hits. This is the headline P0 of [`solver-capability-adoption-plan.md`](../architecture/solver-capability-adoption-plan.md) (Ruiz equilibration / Ipopt NLP scaling). Without scaling, NMPC problems mixing meters / radians / normalized forces have constraint rows differing by 10^4 in natural scale all contributing equally to filter / merit / KKT residual checks. (Dim 3, P0)
 - **Diagnostics surface is far below capability-adoption-plan baseline**. `SolverContext` exposes only `{mu, reg, current_iter, slack_reset_consecutive_count, last_prim_inf, last_dual_inf, last_alpha, last_mu_aff, last_alpha_aff}`. Missing: requested vs actual backend, degraded-fallback flag (Riccati small-NU freeze), linearization_age, SOC counts, restoration counts, warm-start mode/repaired flag, scaling state, linear solver factorization status, regularization escalation count, scaled vs unscaled residuals. (Dim 6, P1; ADR'd as deferred)
 - **0 property-based tests, 0 fuzzing harnesses across 158 tests**. `grep -i "rapidcheck|libfuzzer|hypothesis|fuzz"` returns 0. Numerical software typically benefits from property tests like "any feasible QP solved by solver must satisfy KKT", which catches sign / dual-recovery / barrier-update bugs that fixed inputs miss. (Dim 5, P1)
@@ -255,9 +255,9 @@ inline const char* status_to_string(SolverStatus status)
 
 Code paths with `status_to_string` in logs or save files report `"SOLVED"` while user-side `if (status == SolverStatus::OPTIMAL)` matches the enum. Inconsistent semantics; serializer round-trip fine (uses enum) but log + serialized text don't match.
 
-#### N-CONV-5 (note) — ADR 0002 race_cars 9.4% INFEASIBLE root cause not advanced by static review
+#### N-CONV-5 (note) — External benchmark root-cause tracking is out of scope here
 
-ADR 0002 documents the deferred filter switching condition and notes race_cars / quadrotor_nav gaps. Without running nmpc-bench (out of scope for this review per plan), I cannot confirm or refute the root-cause hypothesis. However, **N-THEORY-5 (Mehrotra restoration skip)** below is a plausible additional contributor that the ADR does not currently identify.
+ADR 0002 documents deferred globalization work and points to external benchmark gaps. Without running nmpc-bench (out of scope for this review per plan), this repository should not record case-specific root-cause hypotheses. However, **N-THEORY-5 (Mehrotra restoration skip)** below is a generic solver bug that remains valid independently of any benchmark case.
 
 ### Dimension 3: Modeling Soundness
 
@@ -527,7 +527,7 @@ Additionally missing:
 - (a) **`θ_max` filter sentinel seed (Eqn 21)**: the filter should be initialized with `F_0 = {(θ, φ) : θ ≥ θ_max}` where `θ_max = 1e4 · max(1, θ(x_0))`. [`line_search.h`](../../include/minisolver/algorithms/line_search.h) `reset()` (line 577-581) only clears entries — no sentinel.
 - (b) **f-type acceptance must NOT augment the filter** (Wächter-Biegler §2.3 algorithm step A-5.4). Today every accepted step pushes to filter (`line_search.h` line 681-687).
 
-ADR 0002 should be updated to acknowledge all three gaps, or a sub-ADR added for (a)/(b). The combined effect on race_cars / quadrotor_nav remains unproven without bench data.
+ADR 0002 should be updated to acknowledge all three gaps, or a sub-ADR added for (a)/(b). Cross-solver case-level impact should be measured and recorded in MiniSolver-Bench.
 
 #### N-THEORY-2 (P1) — Filter ring buffer overwrites oldest entries after 1024 steps
 
@@ -561,7 +561,7 @@ Standard Mehrotra:
 
 MiniSolver ([`solver.h`](../../include/minisolver/solver/solver.h) line 1005, `compute_fraction_to_boundary_(affine_traj)`) computes a single α covering all primal-dual variables. This produces a more conservative `μ_aff` (it takes `min(α_p, α_d)` implicitly), which makes `σ = (μ_aff/μ)^3` larger and therefore `μ_target` larger, i.e. less aggressive barrier reduction. This is a safe but suboptimal Mehrotra implementation.
 
-Not a correctness bug; a performance-on-easy-problems issue. For race_cars and quadrotor_nav this could be relevant.
+Not a correctness bug; a performance-on-easy-problems issue. Case-level relevance should be measured in MiniSolver-Bench.
 
 #### N-THEORY-4 (P0) — No inertia detection in Riccati / SPD recovery
 
@@ -577,7 +577,7 @@ None of these check the **inertia** of the resulting (regularized) KKT system. S
 
 If actual inertia differs (`n_negative` too small ⇒ saddle), the regularization should be **increased** (typically by powers of 10) until inertia matches. Today the `RiccatiSolver` regularization is purely SPD-failure driven — it can succeed in factorizing a regularized matrix that converges to a saddle, not a minimizer.
 
-Implementation cost: requires LDLT (with diagonal pivoting) to read off positive/negative eigenvalue counts, replacing or augmenting the current LLT-based path. Significant work. Plausibly explains the race_cars rate alongside N-THEORY-5.
+Implementation cost: requires LDLT (with diagonal pivoting) to read off positive/negative eigenvalue counts, replacing or augmenting the current LLT-based path. Significant work. Any case-level explanation belongs to MiniSolver-Bench evidence, not this repository.
 
 #### N-THEORY-5 (P0) — Restoration silently skips quadratic feasibility penalty under Mehrotra
 
@@ -603,7 +603,7 @@ Implementation cost: requires LDLT (with diagonal pivoting) to read off positive
 
 The `if (...!= MEHROTRA)` guard is unexplained — there is no comment justifying why Mehrotra mode skips the restoration penalty. The code immediately above (lines 1294-1309) zeros out cost (`Q.setIdentity(); q.setZero();` etc.), so under Mehrotra the restoration linear solve receives an all-zero / identity-cost system with no feasibility pressure. The result is `dx = 0, du = 0`, restoration "applies a step" but does not move toward feasibility.
 
-This is the **most likely contributor to ADR 0002's race_cars 9.4% INFEASIBLE rate** that has not been previously identified. Restoration is supposed to be the safety net when filter line search collapses; under Mehrotra (the recommended strategy for nonlinear NMPC per `DEBUG_README.md` "Feasible Stagnation" section), the safety net is silently disabled.
+This is a generic MiniSolver restoration bug. Restoration is supposed to be the safety net when filter line search collapses; under Mehrotra (the recommended strategy for nonlinear NMPC per `DEBUG_README.md` "Feasible Stagnation" section), the safety net is silently disabled.
 
 The fix is one of:
 - Remove the `if (... != MEHROTRA)` guard (apply quadratic penalty regardless).
@@ -669,8 +669,8 @@ This is the same mechanism ADR 0002 lists as needing-implementation for the f-ty
 | --- | --- | --- |
 | `#11 Fused Riccati dispatch — is_fused_riccati_integrator_compatible 未被 riccati.h 调用` | pending | Confirmed: `riccati.h:393` does call it, but this might be the recent fix — needs verify against backlog date |
 | `#12 Mehrotra alpha_aff L1 soft fraction-to-boundary 覆盖检查` | pending | Related to N-THEORY-3 above — split α_aff would naturally cover this |
-| race_cars 9.4% INFEASIBLE root cause | pending | This review identifies N-THEORY-5 (Mehrotra restoration skip) as a strong candidate; recommend testing |
-| quadrotor_nav precision gap | pending | N-MOD-2 (no scaling) plus N-THEORY-1/N-THEORY-3 are the most plausible joint causes |
+| External benchmark convergence root cause | out of scope here | Track concrete case outcomes and root-cause hypotheses in MiniSolver-Bench; this review only records generic MiniSolver gaps |
+| External benchmark precision gap | out of scope here | Track concrete case outcomes and root-cause hypotheses in MiniSolver-Bench; this review only records generic MiniSolver gaps |
 | chain_mass priminf overshoot | deferred (ADR 0002) | Not advanced |
 
 ### New findings unique to this review (not in any prior document)
@@ -679,7 +679,7 @@ This is the same mechanism ADR 0002 lists as needing-implementation for the f-ty
 
 `N-MOD-2, N-OBS-1` are restatements of capability-adoption-plan items at higher severity (this review confirms zero progress).
 
-`N-CONV-5` is a re-verification of ADR 0002.
+`N-CONV-5` is a repository-boundary correction: case-specific benchmark validation belongs to MiniSolver-Bench.
 
 ---
 
@@ -693,7 +693,7 @@ P0 (block release / correctness-affecting):
 | N-EMBED-1 | Embedded reality | Large (CMake profile + logger callback + name-map rewrite + ARM CI) | High; matches marketing |
 | N-MOD-2 | Problem scaling | Large (already P0 in capability adoption plan) | High; explains many edge-case failures |
 | N-THEORY-4 | Inertia detection | Large (LDLT-based KKT + retry policy) | High; correctness on degenerate problems |
-| N-THEORY-5 | Mehrotra restoration | Small (remove `if (... != MEHROTRA)` or add ADR) | High; strong race_cars suspect |
+| N-THEORY-5 | Mehrotra restoration | Small (remove `if (... != MEHROTRA)` or add ADR) | High; generic restoration correctness gap |
 
 P1 (significant):
 
@@ -745,7 +745,7 @@ P2 (cleanup, hardening):
 
 If this fix ledger is worked, the suggested order (maximizing per-step risk reduction):
 
-1. **N-THEORY-5** (trivial code change, strong race_cars suspect, removes silent algorithm gap). Validate by measuring race_cars success rate before/after on existing bench.
+1. **N-THEORY-5** (trivial code change, removes silent algorithm gap). Validate with a focused local regression; cross-solver case impact belongs to MiniSolver-Bench.
 2. **N-CONV-1** (status layering — unblocks distinguishing failure modes for all subsequent debugging).
 3. **N-CONV-2 + N-NUM-1 + N-NUM-2 + N-EMBED-2 + N-RT-1 + N-CONV-4 + N-OBS-3** (small individual fixes; bundle into one "hardening" commit).
 4. **N-TEST-4 (fixed golden-reference cross-check)** — resolved by checked-in asset regression reference data.

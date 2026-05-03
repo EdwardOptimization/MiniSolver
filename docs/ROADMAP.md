@@ -69,7 +69,7 @@ fixed findings should be marked with evidence instead of deleted.
 
 | Priority | Item | Reason | Required evidence before landing |
 | --- | --- | --- | --- |
-| P2 | Design piecewise/ppoly support before implementing it. | Piecewise support is needed for fair race-cars and quadrotor benchmarks, but should not be patched into the solver hot path ad hoc. | Design note, generated-model tests, and nmpc-bench before/after data. |
+| P2 | Design piecewise/ppoly support before implementing it. | Piecewise support is a MiniModel/codegen contract and should not be patched into the solver hot path ad hoc. Concrete benchmark-case impact belongs to MiniSolver-Bench. | Design note, generated-model tests, and nmpc-bench before/after data. |
 | P2 | Continue MiniMatrix hot-path optimization only after benchmark gates are in place. | Matrix optimizations can easily increase complexity without improving full solver time. | Microbenchmark vs Eigen plus full NMPC benchmark before/after data. |
 | P2 | Defer full KKT iterative refinement until constrained benchmarks justify it. | Current direction refinement only fixes dynamics defects; full KKT refinement is useful but couples to slack/dual, soft constraints, Mehrotra, SOC, and line search. | Red test or benchmark showing stale constraint/dual directions limit convergence or accuracy, then design `DirectionRefinementMode::FULL_KKT_ITERATIVE_REFINEMENT`. |
 

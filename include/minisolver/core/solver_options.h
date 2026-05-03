@@ -155,9 +155,13 @@ struct SolverConfig {
     WarmStartRegularizationMode warm_start_regularization
         = WarmStartRegularizationMode::RESET_TO_REG_INIT;
     TerminationProfile termination_profile = TerminationProfile::STRICT_KKT;
+    // Scaling changes internal residual/cost packets only. User-facing states,
+    // controls, parameters, and reported stage costs remain in model units.
     ConstraintScalingMethod constraint_scaling = ConstraintScalingMethod::NONE;
     ObjectiveScalingMethod objective_scaling = ObjectiveScalingMethod::NONE;
     ProblemScalingMethod problem_scaling = ProblemScalingMethod::NONE;
+    // Bounds for automatic row/objective scales; keep them finite and positive
+    // so scaled residuals stay numerically useful without hiding raw magnitudes.
     double constraint_row_scale_min = 1e-4;
     double constraint_row_scale_max = 1e4;
     double objective_scale_min = 1e-4;
@@ -194,14 +198,21 @@ struct SolverConfig {
     int inertia_max_retries = 5;
 
     // --- Convergence Tolerances ---
+    // Primal feasibility tolerance in internal solver units. With constraint or
+    // problem scaling enabled, compare SolverInfo::unscaled_primal_inf for raw
+    // model-unit feasibility diagnostics.
     double tol_con = 1e-4;
-    // Stationarity / dual infeasibility tolerance for the Lagrangian residual.
+    // Stationarity / dual infeasibility tolerance for the internal Lagrangian
+    // residual. Objective scaling can change this residual magnitude by design.
     double tol_dual = 1e-4;
+    // Complementarity tolerance in the active internal slack/dual units.
     double tol_mu = 1e-5;
     // Objective Stagnation Tolerance
     // Stops the solver if the cost improvement between iterations is smaller than this value,
     // provided the solution is feasible.
     double tol_cost = 1e-6;
+    // FEASIBLE fallback bound is tol_con * feasible_tol_scale in the same
+    // internal units as tol_con; raw model feasibility is reported separately.
     double feasible_tol_scale = 10.0;
 
     // --- Line Search & Robustness ---
