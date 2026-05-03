@@ -1,7 +1,7 @@
 # API Error And Logger Boundary Design
 
-Status: API setter status phase implemented; checked getters and logger backend
-remain to be implemented.
+Status: API setter status phase and host logger backend implemented; checked
+getters and embedded no-stream logger profile remain to be implemented.
 
 Owner: MiniSolver public API and observability boundary.
 
@@ -306,11 +306,14 @@ Implemented:
 
 - Phase 1 setter status returns: `ApiStatus` is available, high-level setters
   return explicit status, and invalid setter inputs do not mutate solver state.
+- Phase 3 host logger backend: `MLOG_*` routes through a centralized backend
+  with optional callback capture, default ANSI color is disabled, and host
+  output uses newline writes instead of `std::endl`.
 
 Still deferred:
 
 - Phase 2 checked scalar getters.
-- Phase 3 central logger backend and logger-capture tests.
+- Embedded fixed-buffer/no-stream logger profile.
 - Phase 4 release documentation update after the API/logger behavior stabilizes.
 
 Future implementation must follow the evidence-driven workflow: red tests first,

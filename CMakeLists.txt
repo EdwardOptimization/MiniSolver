@@ -367,6 +367,7 @@ add_minisolver_test(test_serializer tests/test_serializer.cpp)
 add_minisolver_test(test_config_regressions tests/test_config_regressions.cpp)
 add_minisolver_test(test_barrier_residual_contract tests/test_barrier_residual_contract.cpp)
 add_minisolver_test(test_scaling_regressions tests/test_scaling_regressions.cpp)
+add_minisolver_test(test_logger tests/test_logger.cpp)
 
 # --- Quality & Regression ---
 add_minisolver_test(test_bugfixes tests/test_bugfixes.cpp)
