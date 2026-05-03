@@ -1108,7 +1108,7 @@ private:
                     if (soft_s_new < 0) {
                         soft_s_new = detail::barrier_floor(config);
                     }
-                    if (soft_dual_new < 0) {
+                    if (soft_dual_new < detail::l1_soft_dual_floor(w, config)) {
                         soft_dual_new = detail::l1_soft_dual_floor(w, config);
                     }
                     total_comp += soft_s_new * soft_dual_new;
@@ -1581,7 +1581,7 @@ private:
                     if (!MatOps::is_finite_scalar(kp.soft_s(i)) || kp.soft_s(i) <= 0.0) {
                         return false;
                     }
-                    if (w - kp.lam(i) <= config.min_barrier_slack) {
+                    if (w - kp.lam(i) <= detail::l1_soft_dual_floor(w, config)) {
                         return false;
                     }
                 }
@@ -1700,7 +1700,7 @@ private:
                         }
 
                         if (dlam > 0) {
-                            const double gap = (w - lam) - config.min_barrier_slack;
+                            const double gap = (w - lam) - detail::l1_soft_dual_floor(w, config);
                             if (gap <= 0.0) {
                                 alpha = 0.0;
                             } else {
@@ -1798,7 +1798,7 @@ private:
 
         return MatOps::is_finite_scalar(kp.s(i)) && MatOps::is_finite_scalar(kp.lam(i))
             && MatOps::is_finite_scalar(kp.soft_s(i)) && kp.s(i) > 0.0 && kp.lam(i) > 0.0
-            && (w - kp.lam(i)) > config.min_barrier_slack;
+            && (w - kp.lam(i)) > soft_dual_floor;
     }
 
 public:

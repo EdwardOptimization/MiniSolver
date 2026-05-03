@@ -127,8 +127,7 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
             if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
             }
-            const double soft_dual_i
-                = internal::positive_barrier_gap(w - lam_i, config.min_barrier_slack);
+            const double soft_dual_i = detail::positive_l1_soft_dual_gap(w - lam_i, w, config);
 
             double term_hard = s_i / lam_i;
             double term_soft = soft_s_i / soft_dual_i;
@@ -151,8 +150,7 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
             if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
             }
-            const double soft_dual_i
-                = internal::positive_barrier_gap(w - lam_i, config.min_barrier_slack);
+            const double soft_dual_i = detail::positive_l1_soft_dual_gap(w - lam_i, w, config);
 
             double r_eq = g_val_i + s_i - soft_s_i;
             double r_z = soft_s_i * soft_dual_i - mu;
@@ -252,8 +250,7 @@ void recover_dual_search_directions(Knot& kp, double mu, const minisolver::Solve
             if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
             }
-            const double soft_dual_i
-                = internal::positive_barrier_gap(w - lam_i, config.min_barrier_slack);
+            const double soft_dual_i = detail::positive_l1_soft_dual_gap(w - lam_i, w, config);
 
             double term_hard = s_i / lam_i;
             double term_soft = soft_s_i / soft_dual_i;

@@ -109,7 +109,7 @@ struct WarmStartKernel {
                     const double soft_s = kp.soft_s(i);
                     const double soft_dual = w - lam;
                     if (std::isfinite(soft_s) && std::isfinite(soft_dual) && soft_s > 0.0
-                        && soft_dual > config.min_barrier_slack) {
+                        && soft_dual > l1_soft_dual_floor(w, config)) {
                         total_gap += soft_s * soft_dual;
                         ++total_pairs;
                     }

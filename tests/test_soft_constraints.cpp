@@ -4,6 +4,7 @@
  *        between interface-based and manual-slack implementations.
  */
 #include "minisolver/algorithms/initialization.h"
+#include "minisolver/solver/riccati.h"
 #include "minisolver/solver/solver.h"
 #include <array>
 #include <cmath>
@@ -182,6 +183,34 @@ TEST(SoftConstraintTest, L1TinyWeightInitializationStaysFinite)
     EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-14);
     EXPECT_NEAR(kp.soft_s(0) * (SoftModel::constraint_weights[0] - kp.lam(0)), mu, 1e-14);
     EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.soft_s(0), 0.0, 1e-8);
+}
+
+TEST(SoftConstraintTest, L1BarrierDerivativeUsesSharedSoftDualFloor)
+{
+    SoftModel::constraint_types[0] = 1;
+    SoftModel::constraint_weights[0] = 1e-7;
+
+    SolverConfig config;
+    config.min_barrier_slack = 1e-12;
+
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.s(0) = 1.0;
+    kp.lam(0) = SoftModel::constraint_weights[0] - 1.5e-12;
+    kp.soft_s(0) = 1.0;
+    kp.C(0, 0) = 1.0;
+
+    RiccatiWorkspace<Knot> workspace;
+    compute_barrier_derivatives<Knot, SoftModel>(kp, 1e-10, config, workspace);
+
+    const double soft_dual_floor
+        = detail::l1_soft_dual_floor(SoftModel::constraint_weights[0], config);
+    const double expected_sigma = 1.0 / (kp.s(0) / kp.lam(0) + kp.soft_s(0) / soft_dual_floor);
+
+    EXPECT_NEAR(kp.Q_bar(0, 0) - kp.Q(0, 0), expected_sigma, 1e-15)
+        << "Riccati barrier derivatives must use the same L1 soft-dual floor as "
+           "initialization/restoration.";
 }
 
 TEST(SoftConstraintTest, L2_Convergence)

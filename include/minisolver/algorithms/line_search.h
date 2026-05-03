@@ -646,7 +646,7 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                         dphi -= mu * kp.dsoft_s(i) / kp.soft_s(i);
                     }
                     const double soft_dual = w - kp.lam(i);
-                    if (soft_dual > config.min_barrier_slack) {
+                    if (soft_dual > detail::l1_soft_dual_floor(w, config)) {
                         dphi += mu * kp.dlam(i) / soft_dual;
                     }
                     dphi += w * kp.dsoft_s(i);
