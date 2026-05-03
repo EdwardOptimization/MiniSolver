@@ -1937,7 +1937,7 @@ public:
         for (int k = 0; k <= N; ++k) {
             traj[k].dx.setZero();
             traj[k].du.setZero();
-            traj[k].ds.setConstant(-1.0e12); // force fraction-to-boundary alpha collapse
+            traj[k].ds.fill(-1.0e12); // force fraction-to-boundary alpha collapse
             traj[k].dlam.setZero();
             traj[k].dsoft_s.setZero();
             traj[k].r_bar.setZero();
