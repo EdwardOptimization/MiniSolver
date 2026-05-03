@@ -1,8 +1,9 @@
-# ADR 0002: Filter Line Search Switching Condition (Deferred)
+# ADR 0002: Filter Line Search Switching Condition
 
 Date: 2026-04-20
 
-Status: **Deferred** — known gap, not implementing now
+Status: **Implemented for f/h-type switching** — Pareto-frontier filter history
+remains deferred
 
 ## Context
 
@@ -92,23 +93,23 @@ norm as a user option. The MAX-norm `PrimInf` used in MiniSolver's iter
 log is a display/diagnostic quantity, not the algorithm's acceptance
 quantity — the two metrics can diverge and that is expected.
 
-## Why defer
+## Original Defer Analysis
 
-1. **Current behavior is IPOPT-algorithmically correct.** An f-type step
+This was the original reason for deferring the implementation. It is kept as
+history because it documents why naive fixes were rejected.
+
+1. **The observed chain_mass overshoot was not itself a failure.** An f-type step
    that temporarily grows the max-norm of one component is exactly what
    the switching mechanism allows. chain_mass reaches `Viol ≈ 4e-11`
    without intervention; the overshoot is an artifact of inspecting
    max-norm per-iter, not a convergence failure.
 
-2. **MiniSolver's current formula handles h-type alone, not f-type.**
-   That is a real architectural gap but has not demonstrated itself as a
-   user-facing failure. It may be the mechanism behind race_cars'
-   9.4% INFEASIBLE rate (known via bench) or quadrotor_nav's precision
-   gap vs acados — but this is unconfirmed.
+2. **MiniSolver's old formula handled h-type alone, not f-type.**
+   That was a real architectural gap but had not yet demonstrated itself as a
+   user-facing failure.
 
-3. **Implementation cost is substantial** (~30–50 LoC spread across
-   `line_search.h`, `solver_options.h`, and requires a new `∇φᵀd`
-   computation path that MiniSolver currently does not have):
+3. **Implementation cost was nontrivial** because it required a new `∇φᵀd`
+   computation path:
    - Add `compute_grad_phi_times_d(active, N, mu, config)` that evaluates
      the directional derivative of the barrier objective along the search
      direction `(dx, du, ds, dsoft_s)` — needs contributions from:
@@ -123,53 +124,45 @@ quantity — the two metrics can diverge and that is expected.
    - Skip `filter.push_back(...)` on f-type acceptance
    - Unit tests covering both types
 
-4. **Benefit/cost not yet justified by data.** No current bench case has
-   been proven to fail because of the missing switching — chain_mass
-   succeeds, and the overshoot is IPOPT-legal.
+4. **Benefit/cost was not justified by data at the time.** No current bench
+   case had been proven to fail because of the missing switching.
 
 ## Decision
 
-Do not implement the switching condition in the current iteration cycle.
-Document the gap here. Revisit when one of the following triggers fires:
+Implement the switching condition inside `LineSearchType::FILTER`, not as a new
+public strategy. The user-facing config remains `SolverConfig`; the filter
+acceptor internally classifies accepted trial points as:
 
-### Reopen triggers
+- **f-type**: near-feasible and satisfying the switching condition. The trial
+  must pass Armijo sufficient decrease on the filter objective and does not
+  augment the filter history.
+- **h-type**: all other accepted filter steps. The existing sufficient-decrease
+  and filter-entry checks apply, and accepted steps augment the filter.
 
-- **race_cars 9.4% INFEASIBLE rate** is investigated and the failure
-  cascade is traced to an acceptance decision that IPOPT's switching
-  would have classified as f-type (i.e., we accepted a step in
-  near-feasible regime that over-shot and triggered restoration / failure
-  on the next iter).
+The implementation keeps fixed-size storage and uses the already available
+cost/barrier directional derivative. No solve-time allocation or public plugin
+surface is added.
 
-- **quadrotor_nav precision gap vs acados** (`avg_abs_n = 4e-2` vs
-  acados's `5e-5`) is investigated and traced to systematic iterate
-  bias from OR-degenerate sufficient decrease in the near-feasible
-  regime.
+`N-THEORY-2` remains deferred: the filter history is still a fixed-capacity
+ring buffer rather than a Pareto frontier. That should be revisited only after
+the current f/h-type behavior has benchmark coverage on harder NMPC cases.
 
-- **A new NMPC model** is added to the bench suite that exhibits a user-
-  visible failure (not just a max-norm overshoot) attributable to
-  this gap.
-
-- **Future MiniSolver maintainers encounter a convergence bug** where
-  the root-cause analysis matches the OR-degeneracy pattern.
-
-## Consequences of keeping the status quo
+## Consequences
 
 ### Positive
 
-- No code to write, review, test.
-- No new config options to explain to users.
-- No risk of breaking the many currently-passing ctest/bench cases with
-  a fix whose tradeoffs are not yet understood (Phase 3 showed all three
-  naive fixes broke something).
+- The near-feasible objective-progress path now follows the standard f-type
+  Armijo route instead of the weaker h-type OR condition.
+- f-type accepted steps no longer pollute the filter history.
+- The existing h-type route remains unchanged for feasibility-driven steps.
+- No new user-facing strategy object or plugin layer was added.
 
 ### Negative
 
-- Race_cars / quadrotor_nav gaps vs acados remain unexplained (may or may
-  not be this gap; unknown until reopened).
-- Future users who trace a convergence oscillation to this mechanism will
-  need to rediscover the analysis (mitigation: this ADR).
-- MiniSolver is not strictly "Wächter-Biegler-correct"; theoretical
-  convergence guarantees for near-feasible regimes may not hold.
+- The ring-buffer filter is still a bounded engineering approximation, not a
+  full Pareto-frontier certificate.
+- Harder benchmarks may still need additional globalization tuning before this
+  path should be claimed as production-grade.
 
 ## References
 

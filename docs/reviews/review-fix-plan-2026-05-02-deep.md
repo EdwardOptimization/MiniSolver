@@ -58,7 +58,7 @@ Validation recorded before opening this ledger:
 | **N-TEST-4** No fixed golden-reference cross-check in this repo. | fixed | [`tests/reference/asset_regression_reference_data.h`](../../tests/reference/asset_regression_reference_data.h) stores fixed golden references; [`tests/test_asset_regressions.cpp`](../../tests/test_asset_regressions.cpp) compares MiniSolver against those references for kinematic bicycle and 3D double-integrator cases. | The golden values were generated once offline and checked in, so MiniSolver no longer depends on CasADi/IPOPT to configure or run tests. Broader multi-solver comparison remains the responsibility of MiniSolver-Bench. |
 | **N-MOD-1** MiniModel DSL has no unit/dimension checking. NMPC formulations mixing m / rad / N are accepted silently; bad scaling explains many edge-case failures. | partly-confirmed | [`tests/minimodel/test_model_safety.py`](../../tests/minimodel/test_model_safety.py) covers lightweight modeling safety: undeclared symbols, missing dynamics, soft-weight validation, and early quadratic-constraint dimension errors. Full physical unit checking is still deferred and should pair with N-MOD-2 scaling. | Lightweight modeling safety is in place. Do not add a full unit system until the scaling design defines how units feed solver normalization. |
 | **N-DEG-1** Riccati small-NU freeze produces silent zero-control direction; user receives "OPTIMAL" status with frozen `du[i] = 0`. | fixed | [`linear_solve_result.h`](../../include/minisolver/algorithms/linear_solve_result.h), [`riccati.h`](../../include/minisolver/solver/riccati.h), [`riccati_solver.h`](../../include/minisolver/algorithms/riccati_solver.h), [`solver.h`](../../include/minisolver/solver/solver.h), [`test_riccati.cpp`](../../tests/test_riccati.cpp), [`test_status.cpp`](../../tests/test_status.cpp). | Fixed by surfacing the freeze fallback through `LinearSolveResult` and `SolverInfo::degraded_step`, avoiding the earlier `last_solve_degraded()` side channel. A focused Riccati test and end-to-end `SolverInfo` test cover the diagnostic. Broader SOC/restoration/factorization counters remain part of the diagnostics backlog under N-OBS-1. |
-| **N-THEORY-1** Filter line search missing three Wächter-Biegler 2006 §2.3 mechanisms; ADR 0002 only documents one (switching condition). Also missing: `θ_max` filter sentinel (Eqn 21), f-type acceptance must NOT augment filter. | partly-confirmed | [`line_search.h`](../../include/minisolver/algorithms/line_search.h), [`test_line_search.cpp`](../../tests/test_line_search.cpp), [`globalization-mehrotra-theory-plan.md`](../architecture/globalization-mehrotra-theory-plan.md). Red baseline: `LineSearchTest.FilterRejectsTrialAboveThetaMax` accepted `alpha=1` for a huge-violation trial due only to objective decrease. | `theta_max` gate is fixed with `filter_theta_max_factor`. Remaining sub-items are still design-required: f-type/h-type classification, f-type filter-augmentation skip, and switching condition. |
+| **N-THEORY-1** Filter line search missing three Wächter-Biegler 2006 §2.3 mechanisms; ADR 0002 only documents one (switching condition). Also missing: `θ_max` filter sentinel (Eqn 21), f-type acceptance must NOT augment filter. | fixed | [`line_search.h`](../../include/minisolver/algorithms/line_search.h), [`test_line_search.cpp`](../../tests/test_line_search.cpp), [`globalization-mehrotra-theory-plan.md`](../architecture/globalization-mehrotra-theory-plan.md). Red baselines: `LineSearchTest.FilterRejectsTrialAboveThetaMax` accepted `alpha=1` for a huge-violation trial; `LineSearchTest.FilterFTypeUsesArmijoAndDoesNotAugmentFilter` accepted a full step through the weak h-type OR condition and added a filter entry. | Fixed with `theta_max`, internal f/h-type classification, f-type Armijo, and h-type-only filter augmentation. N-THEORY-2 remains deferred for Pareto-frontier filter history. |
 | **N-THEORY-2** Filter ring buffer overwrites oldest entries after 1024 accepted steps, breaking "monotone over all history" certificate property. | deferred-design | [`line_search.h:377, 681-687`](../../include/minisolver/algorithms/line_search.h). Test `LineSearchTest.FilterHistoryWrapsAtFixedCapacity` documents but does not assert certificate preservation. [`globalization-mehrotra-theory-plan.md`](../architecture/globalization-mehrotra-theory-plan.md) explains why Pareto frontier should wait until N-THEORY-1 stabilizes. | Defer code until filter f-type/h-type semantics are stable; then switch to fixed-capacity Pareto pruning with a focused over-capacity regression. |
 | **N-THEORY-3** Mehrotra `α_aff` is a single primal+dual fraction-to-boundary, not split into `α_aff_p` / `α_aff_d`. Produces conservative `μ_aff` and slower barrier reduction. | fixed | [`solver.h`](../../include/minisolver/solver/solver.h), [`test_bugfixes.cpp`](../../tests/test_bugfixes.cpp). Red baseline: `BugfixTest.MehrotraAffineMuUsesSeparatePrimalAndDualStepLengths` failed with `mu_aff=0.1875` instead of the split-step value near zero. | Fixed by adding an internal `FractionToBoundaryResult`, splitting affine primal/dual step lengths, and evaluating `mu_aff` with primal slack steps and dual multiplier steps separately. |
 
@@ -101,20 +101,17 @@ Current recommended sequence after the May 3 status re-anchor:
    route through a central backend. Serializer remains out of scope.
 3. **N-MOD-2**: continue scaling from
    [`scaling-normalization-design.md`](../architecture/scaling-normalization-design.md).
-   Stage 0 and automatic row scaling are done for hand-written and
-   MiniModel-generated models. Next steps are variable/objective scaling design
-   and scale-aware tolerance documentation.
-4. **N-THEORY-1** remaining filter theory: f-type/h-type classification,
-   f-type filter-augmentation skip, and switching condition. Keep
-   `LineSearchType::FILTER` as the user-facing config.
-5. **N-THEORY-2** Pareto-frontier filter history, after N-THEORY-1 semantics
+   Stage 0 through the conservative `RUIZ_EQUILIBRATION` profile are done. Next
+   steps are coordinate-level variable scaling only if benchmark evidence
+   justifies the extra complexity.
+4. **N-THEORY-2** Pareto-frontier filter history, after N-THEORY-1 semantics
    are stable.
-6. **N-EMBED-1** embedded profile: logger/exception/container boundaries, ARM
+5. **N-EMBED-1** embedded profile: logger/exception/container boundaries, ARM
    cross-compile, and binary-size measurement. This is a release-readiness item,
    not a solver-algorithm blocker.
-7. **N-NUM-3 / N-NUM-4 / N-PREC-2**: normalize initialization/restoration
+6. **N-NUM-3 / N-NUM-4 / N-PREC-2**: normalize initialization/restoration
    tolerances and tolerance documentation after the scaling contract is known.
-8. **N-THEORY-4** inertia detection: defer until benchmark evidence or real
+7. **N-THEORY-4** inertia detection: defer until benchmark evidence or real
    solver failures show regularization escalation is insufficient.
 
 Already resolved after this ledger was opened: **N-THEORY-5**, **N-CONV-1**,
@@ -126,8 +123,8 @@ dependency or scope. **N-NUM-1** was reclassified as an invalid-invariant /
 over-defensive-code correction. **N-THEORY-3** was resolved with split affine
 primal/dual step lengths. **N-THEORY-6** was resolved for the default
 multiple-shooting merit path; rollout-mode analytic derivatives remain a
-separate deferred design item. **N-THEORY-1** now has the `theta_max` gate; its
-f-type/switching sub-items remain open.
+separate deferred design item. **N-THEORY-1** was resolved with `theta_max`,
+f/h-type classification, f-type Armijo, and h-type-only filter augmentation.
 
 Items not on this critical path remain deferred-design candidates:
 **N-PREC-1**, **N-API-2**, **N-API-3**, **N-DEP-2**, and serializer cleanup.

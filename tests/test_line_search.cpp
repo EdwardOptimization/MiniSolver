@@ -285,6 +285,57 @@ struct FilterThetaMaxModel {
     }
 };
 
+struct FilterSwitchingModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, double, IntegratorType)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = static_cast<T>(100.0) - static_cast<T>(100.0) * kp.x(0)
+            + static_cast<T>(99.999) * kp.x(0) * kp.x(0);
+        kp.q(0) = static_cast<T>(-100.0) + static_cast<T>(199.998) * kp.x(0);
+        kp.r.setZero();
+        kp.Q(0, 0) = static_cast<T>(199.998);
+        kp.R.setZero();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = 0.0;
+        kp.C.setZero();
+        kp.D.setZero();
+    }
+};
+
 struct L2ResidualFilterModel {
     static const int NX = 1;
     static const int NU = 1;
@@ -761,6 +812,77 @@ TEST(LineSearchTest, FilterRejectsTrialAboveThetaMax)
 
     EXPECT_EQ(alpha, 0.0)
         << "Filter must reject trials whose violation exceeds theta_max even if phi decreases.";
+}
+
+TEST(LineSearchTest, FilterFTypeUsesArmijoAndDoesNotAugmentFilter)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 3;
+    config.line_search_tau = 1.0;
+    config.line_search_backtrack_factor = 0.5;
+    config.enable_soc = false;
+    config.eta_suff_descent = 1e-4;
+
+    using Model = FilterSwitchingModel;
+    FilterLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 0.0;
+    active[0].dx(0) = 1.0;
+    active[0].s(0) = 1e-8;
+    active[0].lam(0) = 1.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_GT(result.alpha, 0.0);
+    EXPECT_LT(result.alpha, 1.0)
+        << "Near-feasible f-type steps should use Armijo sufficient decrease, not the weaker "
+           "filter OR condition.";
+    EXPECT_EQ(ls.filter_size(), 0u) << "Accepted f-type steps must not augment the filter.";
+}
+
+TEST(LineSearchTest, FilterHTypeAcceptanceStillAugmentsFilter)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.line_search_tau = 1.0;
+    config.enable_soc = false;
+
+    using Model = FilterSwitchingModel;
+    FilterLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 0.0;
+    active[0].dx(0) = 1.0;
+    active[0].s(0) = 1.0; // not near-feasible, so this is h-type.
+    active[0].lam(0) = 1.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_GT(result.alpha, 0.0);
+    EXPECT_EQ(ls.filter_size(), 1u) << "Accepted h-type steps should still augment the filter.";
 }
 
 TEST(LineSearchTest, MeritAcceptanceUsesTrueResidualNotQpResidual)

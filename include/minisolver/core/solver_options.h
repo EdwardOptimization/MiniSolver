@@ -229,7 +229,8 @@ struct SolverConfig {
     double slack_reset_trigger = 1e-3; // Only reset if step is VERY small
     double warm_start_slack_init = 1e-6;
 
-    // Globalization
+    // Globalization. eta_suff_descent is used by f-type filter steps as the
+    // Armijo coefficient for objective-barrier decrease.
     double soc_trigger_alpha = 0.5;
     double merit_nu_init = 1000.0;
     double eta_suff_descent = 1e-4;

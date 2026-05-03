@@ -124,10 +124,8 @@ the same commit unless a test proves they are inseparable.
   generation, and selection rules. Reopen only after real deployments show that
   threshold overrides are not enough.
 
-- **Filter line-search switching condition (IPOPT §2.3 Eqn. 19-20) not implemented.**
-  `FilterLineSearch::is_acceptable` uses only the sufficient-decrease / filter rule
-  (Wächter-Biegler Eqn. 18). Near-feasible iterates hit OR-degeneracy; IPOPT's
-  solution is a separate Armijo path for f-type steps gated on a switching
-  condition. Gap is documented in [ADR 0002](adr/0002-filter-line-search-switching.md);
-  reopen triggers include race_cars 9.4% failure root-cause and quadrotor_nav
-  precision gap investigation.
+- **Filter Pareto-frontier history is deferred.**
+  `FilterLineSearch` now has `theta_max`, f/h-type switching, f-type Armijo, and
+  h-type-only filter augmentation. The remaining theory gap is that filter
+  history is still a fixed-capacity ring buffer rather than a Pareto-frontier
+  certificate. See [ADR 0002](adr/0002-filter-line-search-switching.md).

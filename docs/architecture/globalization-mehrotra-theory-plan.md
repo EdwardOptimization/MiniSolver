@@ -2,7 +2,7 @@
 
 Date: 2026-05-03
 
-Status: design accepted, code changes must be split by item
+Status: N-THEORY-3, N-THEORY-6, and N-THEORY-1 implemented; N-THEORY-2 deferred
 
 Related:
 
@@ -39,7 +39,7 @@ Local source survey:
   `sigma`, `alpha_prim`, and `alpha_dual`, matching the standard primal-dual IPM
   distinction between primal and dual step lengths.
 
-MiniSolver currently has:
+MiniSolver previously had:
 
 - `FilterLineSearch::is_acceptable()` with sufficient decrease plus filter
   entries, but no `theta_max` sentinel, no f-type/h-type switch, and no f-type
@@ -136,15 +136,14 @@ Red tests:
 
 ### N-THEORY-1: Filter Theory Completion
 
-Classification: design-required.
+Classification: implemented except Pareto-frontier history.
 
 Sub-items:
 
-1. Add `theta_max` rejection. This is a small, testable safety gate.
-2. Add f-type/h-type classification and skip filter augmentation for f-type
+1. Done: `theta_max` rejection.
+2. Done: f-type/h-type classification and skip filter augmentation for f-type
    accepted steps.
-3. Add the switching condition only after the f-type derivative or model
-   decrease metric is available. This likely shares machinery with N-THEORY-6.
+3. Done: switching condition using the filter objective directional derivative.
 
 Implementation shape:
 
@@ -156,11 +155,9 @@ Implementation shape:
 
 Red tests:
 
-- `theta_max` rejects a trial that would otherwise satisfy a stale filter entry.
-- f-type accepted step does not augment the filter.
-- h-type accepted step still augments the filter.
-- Switching condition is covered by a focused nonlinear constraint case or a
-  benchmark evidence case before enabling it by default.
+- `LineSearchTest.FilterRejectsTrialAboveThetaMax`.
+- `LineSearchTest.FilterFTypeUsesArmijoAndDoesNotAugmentFilter`.
+- `LineSearchTest.FilterHTypeAcceptanceStillAugmentsFilter`.
 
 ### N-THEORY-2: Pareto Frontier Filter
 
@@ -193,17 +190,17 @@ Red test:
    standard-route correctness/performance improvement.
 2. N-THEORY-6 analytic merit directional derivative for merit line search.
 3. N-THEORY-1a `theta_max` gate.
-4. N-THEORY-1b f-type/h-type acceptance and filter augmentation rules.
-5. N-THEORY-1c switching condition, sharing derivative/model-decrease machinery
-   from N-THEORY-6.
-6. N-THEORY-2 Pareto-frontier filter, after filter semantics are stable.
+4. Done: N-THEORY-1b f-type/h-type acceptance and filter augmentation rules.
+5. Done: N-THEORY-1c switching condition using derivative machinery from
+   N-THEORY-6.
+6. Deferred: N-THEORY-2 Pareto-frontier filter, after more hard NMPC benchmark
+   evidence.
 
 ## Deferred Decisions
 
-- Whether filter theory completion becomes a separate `GlobalizationMode` inside
-  `SolverConfig` or remains the implementation of `LineSearchType::FILTER`.
-  Default: keep it internal until a benchmark shows a need to select old vs new
-  behavior.
+- Whether the fixed-capacity ring buffer should become a Pareto-frontier filter
+  history. Default: keep ring-buffer storage until a benchmark shows the
+  capacity/certificate limitation matters in practice.
 - Whether merit analytic derivative should support rollout mode in the first
   pass. Default: multiple-shooting only first, because default MiniSolver uses
   `enable_line_search_rollout = false`.

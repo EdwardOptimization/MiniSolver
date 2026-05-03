@@ -482,10 +482,25 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
     using typename Base::TrajectoryType;
 
     static constexpr size_t FILTER_CAPACITY = 1024;
+    static constexpr double FILTER_THETA_MIN_FACTOR = 1.0e-4;
+    static constexpr double FILTER_SWITCHING_DELTA = 1.0;
+    static constexpr double FILTER_SWITCHING_S_THETA = 1.1;
+    static constexpr double FILTER_SWITCHING_S_PHI = 2.3;
+
+    enum class AcceptedStepType { HType, FType };
+
+    struct FilterAcceptance {
+        bool accepted = false;
+        AcceptedStepType type = AcceptedStepType::HType;
+    };
+
     std::array<std::pair<double, double>, FILTER_CAPACITY> filter {};
     size_t filter_size_ = 0;
     size_t filter_next_ = 0;
     TrajArray soc_scratch_ {};
+    bool filter_bounds_initialized_ = false;
+    double theta_min_ = 0.0;
+    double theta_max_ = 0.0;
 
     std::pair<double, double> compute_metrics(
         const TrajArray& t, int N, double mu, const SolverConfig& config)
@@ -583,11 +598,94 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         return { theta, phi };
     }
 
-    bool is_acceptable(
+    double compute_phi_directional_derivative(
+        const TrajArray& t, int N, double mu, const SolverConfig& config) const
+    {
+        double dphi = 0.0;
+        constexpr int NC = Model::NC;
+        constexpr int NX = Model::NX;
+        constexpr int NU = Model::NU;
+
+        for (int k = 0; k <= N; ++k) {
+            const auto& kp = t[k];
+            for (int j = 0; j < NX; ++j) {
+                dphi += kp.q(j) * kp.dx(j);
+            }
+            if (k < N) {
+                for (int j = 0; j < NU; ++j) {
+                    dphi += kp.r(j) * kp.du(j);
+                }
+            }
+
+            for (int i = 0; i < NC; ++i) {
+                if (kp.s(i) > config.min_barrier_slack) {
+                    dphi -= mu * kp.ds(i) / kp.s(i);
+                }
+
+                double w = 0.0;
+                int type = 0;
+                if constexpr (NC > 0) {
+                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
+                        type = Model::constraint_types[i];
+                        w = Model::constraint_weights[i];
+                    }
+                }
+
+                double g_dir = kp.ds(i);
+                for (int j = 0; j < NX; ++j) {
+                    g_dir += kp.C(i, j) * kp.dx(j);
+                }
+                if (k < N) {
+                    for (int j = 0; j < NU; ++j) {
+                        g_dir += kp.D(i, j) * kp.du(j);
+                    }
+                }
+
+                if (type == 1 && w > 1e-6) {
+                    if (kp.soft_s(i) > config.min_barrier_slack) {
+                        dphi -= mu * kp.dsoft_s(i) / kp.soft_s(i);
+                    }
+                    const double soft_dual = w - kp.lam(i);
+                    if (soft_dual > config.min_barrier_slack) {
+                        dphi += mu * kp.dlam(i) / soft_dual;
+                    }
+                    dphi += w * kp.dsoft_s(i);
+                } else if (type == 2 && w > 1e-6) {
+                    const double residual = detail::true_constraint_value<Model>(kp, i) + kp.s(i);
+                    dphi += w * residual * g_dir;
+                }
+            }
+        }
+        return dphi;
+    }
+
+    void initialize_filter_bounds(double theta_0, const SolverConfig& config)
+    {
+        if (filter_bounds_initialized_) {
+            return;
+        }
+        const double reference_theta = std::max(1.0, theta_0);
+        theta_min_ = FILTER_THETA_MIN_FACTOR * reference_theta;
+        theta_max_ = config.filter_theta_max_factor * reference_theta;
+        filter_bounds_initialized_ = true;
+    }
+
+    bool is_f_type(double theta_0, double alpha, double dphi) const
+    {
+        if (theta_0 > theta_min_ || !(dphi < 0.0) || alpha <= 0.0) {
+            return false;
+        }
+
+        const double lhs = alpha * std::pow(-dphi, FILTER_SWITCHING_S_PHI);
+        const double rhs
+            = FILTER_SWITCHING_DELTA * std::pow(std::max(0.0, theta_0), FILTER_SWITCHING_S_THETA);
+        return std::isfinite(lhs) && std::isfinite(rhs) && lhs > rhs;
+    }
+
+    bool is_h_type_acceptable(
         double theta, double phi, double theta_0, double phi_0, const SolverConfig& config)
     {
-        const double theta_max = config.filter_theta_max_factor * std::max(1.0, theta_0);
-        if (theta > theta_max) {
+        if (theta > theta_max_) {
             return false;
         }
 
@@ -612,6 +710,25 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
             }
         }
         return true;
+    }
+
+    FilterAcceptance check_acceptance(double theta, double phi, double theta_0, double phi_0,
+        double alpha, double dphi, const SolverConfig& config)
+    {
+        FilterAcceptance result;
+        if (theta > theta_max_) {
+            return result;
+        }
+
+        if (is_f_type(theta_0, alpha, dphi)) {
+            result.type = AcceptedStepType::FType;
+            result.accepted = (phi <= phi_0 + config.eta_suff_descent * alpha * dphi);
+            return result;
+        }
+
+        result.type = AcceptedStepType::HType;
+        result.accepted = is_h_type_acceptable(theta, phi, theta_0, phi_0, config);
+        return result;
     }
 
     bool try_soc_correction(const TrajArray& active, TrajArray& candidate,
@@ -676,7 +793,8 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         }
 
         const auto m_soc = compute_metrics(candidate, N, mu, config);
-        const bool accepted = is_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config);
+        const bool accepted
+            = is_h_type_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config);
         if (accepted && config.print_level >= PrintLevel::DEBUG) {
             MLOG_DEBUG("SOC Accepted.");
         }
@@ -690,6 +808,9 @@ public:
     {
         filter_size_ = 0;
         filter_next_ = 0;
+        filter_bounds_initialized_ = false;
+        theta_min_ = 0.0;
+        theta_max_ = 0.0;
     }
 
     // IPOPT §3.1: φ = cost − μ·Σ log(s) — filter entries recorded under the
@@ -710,6 +831,8 @@ public:
         auto m_0 = compute_metrics(active, N, mu, config);
         double theta_0 = m_0.first;
         double phi_0 = m_0.second;
+        initialize_filter_bounds(theta_0, config);
+        const double dphi = compute_phi_directional_derivative(active, N, mu, config);
 
         // Fraction to Boundary
         double alpha
@@ -722,6 +845,7 @@ public:
         int ls_iter = 0;
         bool soc_attempted = false;
         LineSearchResult result;
+        AcceptedStepType accepted_type = AcceptedStepType::HType;
 
         while (ls_iter < config.line_search_max_iters) {
             if (!config.enable_line_search_rollout) {
@@ -764,8 +888,11 @@ public:
             }
 
             auto m_alpha = compute_metrics(candidate, N, mu, config);
-            if (is_acceptable(m_alpha.first, m_alpha.second, theta_0, phi_0, config)) {
+            const FilterAcceptance acceptance = check_acceptance(
+                m_alpha.first, m_alpha.second, theta_0, phi_0, alpha, dphi, config);
+            if (acceptance.accepted) {
                 accepted = true;
+                accepted_type = acceptance.type;
             }
 
             // SOC Logic
@@ -782,6 +909,7 @@ public:
                 result.soc_accepted = soc_accepted;
                 result.soc_rejected = !soc_accepted;
                 if (accepted) {
+                    accepted_type = AcceptedStepType::HType;
                     break;
                 }
             }
@@ -795,12 +923,14 @@ public:
 
         if (accepted) {
             trajectory.swap();
-            if (filter_size_ < FILTER_CAPACITY) {
-                filter[filter_size_] = { theta_0, phi_0 };
-                ++filter_size_;
-            } else {
-                filter[filter_next_] = { theta_0, phi_0 };
-                filter_next_ = (filter_next_ + 1) % FILTER_CAPACITY;
+            if (accepted_type == AcceptedStepType::HType) {
+                if (filter_size_ < FILTER_CAPACITY) {
+                    filter[filter_size_] = { theta_0, phi_0 };
+                    ++filter_size_;
+                } else {
+                    filter[filter_next_] = { theta_0, phi_0 };
+                    filter_next_ = (filter_next_ + 1) % FILTER_CAPACITY;
+                }
             }
         } else {
             result.alpha = 0.0;
