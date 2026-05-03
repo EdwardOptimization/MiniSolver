@@ -71,8 +71,30 @@ def test_quad_constraint_dimension_errors_are_reported_early():
     expect_value_error(q_mismatch, "Dimension mismatch")
 
 
+def test_model_name_validation_rejects_invalid_cpp_type_names():
+    def keyword_model_name():
+        OptimalControlModel("class")
+
+    def invalid_identifier_model_name():
+        OptimalControlModel("bad-model")
+
+    expect_value_error(keyword_model_name, "C++")
+    expect_value_error(invalid_identifier_model_name, "valid C++ identifier")
+
+
+def test_soft_constraint_loss_validation_is_explicit():
+    def invalid_loss():
+        model = OptimalControlModel("InvalidSoftLossModel")
+        x = model.state("x")
+        model.subject_to(x <= 0, weight=1.0, loss="Huber")
+
+    expect_value_error(invalid_loss, "L1 or L2")
+
+
 if __name__ == "__main__":
     test_rejects_undeclared_symbols_in_model_expressions()
     test_generate_requires_explicit_dynamics_for_every_state()
     test_soft_constraint_weight_validation_is_explicit()
     test_quad_constraint_dimension_errors_are_reported_early()
+    test_model_name_validation_rejects_invalid_cpp_type_names()
+    test_soft_constraint_loss_validation_is_explicit()

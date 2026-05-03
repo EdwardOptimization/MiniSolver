@@ -30,10 +30,11 @@ CPP_GENERATED_RESERVED_PREFIXES = (
 
 class OptimalControlModel:
     def __init__(self, name="Model"):
-        self.name = name
         self.states = []
         self.controls = []
         self.parameters = []
+        self._validate_cpp_identifier("model", name)
+        self.name = name
         
         # Dynamics: map state_symbol -> expr
         self.dynamics_rhs = {}
@@ -280,6 +281,8 @@ class OptimalControlModel:
                 weight_value = 0.0
 
             if weight_value > 0.0:
+                if loss not in ("L1", "L2"):
+                    raise ValueError("soft constraint loss must be L1 or L2")
                 self.soft_constraints.append({
                     'index': idx,
                     'type': loss,
