@@ -144,7 +144,7 @@ enum class TerminationProfile {
     ACCEPTABLE_NMPC,
 
     // Exit after one SQP/IPM iteration and let postsolve classify the resulting iterate.
-    // This is the config-driven replacement for the legacy enable_rti shortcut.
+    // This is the config-driven RTI entry point.
     RTI_FIXED_ITERATION
 };
 
@@ -267,11 +267,6 @@ struct SolverConfig {
                                                         // curvature
 
     DirectionRefinementMode direction_refinement = DirectionRefinementMode::NONE;
-
-    // Legacy SQP-RTI shortcut. Prefer termination_profile = RTI_FIXED_ITERATION
-    // for new code; this bool is kept so older configs and snapshots retain
-    // their behavior.
-    bool enable_rti = false;
 
     // Line Search Logic
     // PURE IPM: Disable rollout by default. Trust the linearization.

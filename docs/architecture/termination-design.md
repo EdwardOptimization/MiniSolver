@@ -207,8 +207,8 @@ Implemented:
   separately from `max_barrier_complementarity_residual`.
 - `TerminationKernel` consumes an internal `TerminationSnapshot`.
 - `SolverConfig::termination_profile` selects the internal termination mode.
-- `TerminationProfile::RTI_FIXED_ITERATION` mirrors legacy `enable_rti` behavior
-  without requiring users to enable the legacy flag.
+- `TerminationProfile::RTI_FIXED_ITERATION` is the single RTI-style fixed
+  iteration configuration entry point.
 - `SolverInfo` and `TerminationReason` expose the final residual snapshot and
   loop stop reason through `get_info()`.
 

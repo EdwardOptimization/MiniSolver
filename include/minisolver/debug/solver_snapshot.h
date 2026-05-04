@@ -145,7 +145,6 @@ struct SnapshotLoadOptions {
     X_BOOL(enable_profiling)                                                                       \
     X_ENUM(hessian_approximation)                                                                  \
     X_ENUM(direction_refinement)                                                                   \
-    X_BOOL(enable_rti)                                                                             \
     X_BOOL(enable_line_search_rollout)                                                             \
     X_BOOL(enable_defect_correction)                                                               \
     X_BOOL(enable_corrector)                                                                       \

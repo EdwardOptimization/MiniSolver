@@ -121,7 +121,6 @@ SolverConfig base_config()
     config.default_dt = Dt;
     config.line_search_type = LineSearchType::FILTER;
     config.enable_line_search_rollout = false;
-    config.enable_rti = false;
     config.enable_profiling = false;
     config.barrier_strategy = BarrierStrategy::ADAPTIVE;
     config.hessian_approximation = HessianApproximation::OBJECTIVE_HESSIAN_ONLY;

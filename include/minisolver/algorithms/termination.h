@@ -19,8 +19,7 @@ struct TerminationSnapshot {
 struct TerminationKernel {
     static bool uses_fixed_iteration_profile(const SolverConfig& config)
     {
-        return config.enable_rti
-            || config.termination_profile == TerminationProfile::RTI_FIXED_ITERATION;
+        return config.termination_profile == TerminationProfile::RTI_FIXED_ITERATION;
     }
 
     static bool check_convergence(const SolverConfig& config, const TerminationSnapshot& snapshot)

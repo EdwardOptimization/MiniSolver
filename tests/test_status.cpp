@@ -260,7 +260,7 @@ TEST(StatusTest, RtiFixedIterationProfileStopsAfterOneIteration)
     const SolverInfo& info = solver.get_info();
 
     EXPECT_EQ(solver.get_iteration_count(), 1)
-        << "RTI_FIXED_ITERATION should be selected through SolverConfig without enable_rti.";
+        << "RTI_FIXED_ITERATION should be selected through SolverConfig.";
     EXPECT_EQ(info.loop_status, SolverStatus::UNSOLVED);
     EXPECT_EQ(info.termination_reason, TerminationReason::FIXED_ITERATION);
     EXPECT_EQ(info.iterations, 1);

@@ -184,7 +184,7 @@ TEST(AdvancedFeaturesTest, GaussNewtonOption)
 TEST(AdvancedFeaturesTest, SQP_RTI)
 {
     SolverConfig config;
-    config.enable_rti = true;
+    config.termination_profile = TerminationProfile::RTI_FIXED_ITERATION;
     config.max_iters = 1; // RTI usually does 1 iter
     config.print_level = PrintLevel::NONE;
 

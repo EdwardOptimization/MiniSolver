@@ -23,9 +23,10 @@ same solver instance + shifted business trajectory + small parameter/state chang
   -> converge in a small number of full SQP/IPM iterations
 ```
 
-This is distinct from `enable_rti=true`. RTI intentionally exits after a fixed
-single iteration. Warm-start should make ordinary `solve()` converge quickly
-when the previous solution is already a good initial guess.
+This is distinct from `TerminationProfile::RTI_FIXED_ITERATION`. RTI
+intentionally exits after a fixed single iteration. Warm-start should make
+ordinary `solve()` converge quickly when the previous solution is already a good
+initial guess.
 
 ## Evidence From Mature Systems
 

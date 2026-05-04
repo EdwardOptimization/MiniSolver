@@ -424,7 +424,7 @@ For a library targeted at embedded robotics where errors must be detected progra
 
 #### N-API-2 (P2) — `SolverConfig` has 50+ fields without preset profiles
 
-[`solver_options.h`](../../include/minisolver/core/solver_options.h) lines 113-228. The capability-adoption-plan P1 "Solver Profiles" item proposes `Reference / Default / Speed / Robust` presets. Today users must manually configure `barrier_strategy`, `inertia_strategy`, `line_search_type`, `enable_soc`, `enable_corrector`, `enable_aggressive_barrier`, `enable_slack_reset`, `enable_feasibility_restoration`, `enable_defect_correction`, `enable_line_search_rollout`, `enable_rti`, `direction_refinement`, `hessian_approximation`, etc. plus tolerances. The example in [`examples/01_car_tutorial/main.cpp`](../../examples/01_car_tutorial/main.cpp) sets only 5 fields, which is the typical usage but does not cover important configurations.
+[`solver_options.h`](../../include/minisolver/core/solver_options.h) lines 113-228. The capability-adoption-plan P1 "Solver Profiles" item proposes `Reference / Default / Speed / Robust` presets. Today users must manually configure `barrier_strategy`, `inertia_strategy`, `line_search_type`, `termination_profile`, `enable_soc`, `enable_corrector`, `enable_aggressive_barrier`, `enable_slack_reset`, `enable_feasibility_restoration`, `enable_defect_correction`, `enable_line_search_rollout`, `direction_refinement`, `hessian_approximation`, etc. plus tolerances. The example in [`examples/01_car_tutorial/main.cpp`](../../examples/01_car_tutorial/main.cpp) sets only 5 fields, which is the typical usage but does not cover important configurations.
 
 #### N-API-3 (P2) — No explicit `set_warm_start_*` API; users mutate `trajectory[k].*` directly
 

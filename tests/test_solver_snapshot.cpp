@@ -112,7 +112,6 @@ SolverConfig MakeNonDefaultConfig()
 
     config.hessian_approximation = HessianApproximation::EXACT;
     config.direction_refinement = DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT;
-    config.enable_rti = true;
     config.enable_line_search_rollout = true;
 
     config.enable_defect_correction = false;

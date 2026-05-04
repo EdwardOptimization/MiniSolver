@@ -17,7 +17,6 @@ inline SolverConfig make_reference_solver_config()
     config.enable_corrector = false;
     config.enable_aggressive_barrier = false;
     config.direction_refinement = DirectionRefinementMode::NONE;
-    config.enable_rti = false;
     config.enable_line_search_rollout = false;
     config.enable_slack_reset = false;
     config.enable_feasibility_restoration = false;

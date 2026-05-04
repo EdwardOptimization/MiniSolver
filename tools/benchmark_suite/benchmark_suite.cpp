@@ -234,7 +234,7 @@ int main()
     SolverConfig c8;
     c8.integrator = IntegratorType::EULER_EXPLICIT;
     c8.max_iters = 1;
-    c8.enable_rti = true;
+    c8.termination_profile = TerminationProfile::RTI_FIXED_ITERATION;
     c8.print_level = PrintLevel::NONE;
     cases.push_back({ "SQP_RTI", "Euler + Single Iteration", c8 });
 
@@ -254,7 +254,7 @@ int main()
         Result r = run_case(c);
 
         std::string status_str = r.success ? "OK" : "FAIL";
-        if (c.config.enable_rti) {
+        if (c.config.termination_profile == TerminationProfile::RTI_FIXED_ITERATION) {
             status_str = "RTI"; // RTI always "completes"
         }
 
