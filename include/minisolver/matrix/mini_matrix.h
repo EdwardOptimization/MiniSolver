@@ -582,15 +582,22 @@ private:
         inv_D.fill(T(0));
         success = true;
 
-        struct OuterBody {
-            MiniLDLT& self;
-            const MiniMatrix<T, N, N>& A;
-            inline void operator()(int j)
-            {
-                self.template compute_column<UnrollRow, UnrollInner>(A, j);
-            }
-        } body = { *this, A };
-        matrix::ForRange<UnrollOuter, N>::run(body);
+        if constexpr (UnrollOuter) {
+            // Keep tiny-factorization indices compile-time constants all the way down.
+            // Passing a runtime j into statically unrolled prefix/suffix loops triggers
+            // GCC array-bounds false positives and obscures the intended fixed-size path.
+            compute_columns_static<UnrollRow, UnrollInner, 0>(A);
+        } else {
+            struct OuterBody {
+                MiniLDLT& self;
+                const MiniMatrix<T, N, N>& A;
+                inline void operator()(int j)
+                {
+                    self.template compute_column<UnrollRow, UnrollInner>(A, j);
+                }
+            } body = { *this, A };
+            matrix::ForRange<false, N>::run(body);
+        }
     }
 
     template <bool UnrollRow, bool UnrollInner>
@@ -638,6 +645,104 @@ private:
         } inner_body = { *this, i, j, sum };
         matrix::PrefixRange<UnrollInner, N>::run(j, inner_body);
         L(i, j) = (A(i, j) - sum) * inv_D[j];
+    }
+
+    template <bool UnrollRow, bool UnrollInner, int J>
+    void compute_columns_static(const MiniMatrix<T, N, N>& A)
+    {
+        if constexpr (J < N) {
+            compute_column_static<UnrollRow, UnrollInner, J>(A);
+            compute_columns_static<UnrollRow, UnrollInner, J + 1>(A);
+        }
+    }
+
+    template <bool UnrollRow, bool UnrollInner, int J>
+    void compute_column_static(const MiniMatrix<T, N, N>& A)
+    {
+        if (!success) {
+            return;
+        }
+
+        T diag_sum = T(0);
+        if constexpr (UnrollInner) {
+            accumulate_diag_static<J, 0>(diag_sum);
+        } else {
+            for (int k = 0; k < J; ++k) {
+                diag_sum += L(J, k) * L(J, k) * D[k];
+            }
+        }
+
+        D[J] = A(J, J) - diag_sum;
+        if (D[J] <= T(0)) {
+            success = false;
+            return;
+        }
+        inv_D[J] = T(1) / D[J];
+        L(J, J) = T(1);
+
+        if constexpr (UnrollRow) {
+            compute_rows_static<UnrollInner, J, J + 1>(A);
+        } else {
+            for (int i = J + 1; i < N; ++i) {
+                compute_row_static<UnrollInner, J>(A, i);
+            }
+        }
+    }
+
+    template <int J, int K> void accumulate_diag_static(T& sum)
+    {
+        if constexpr (K < J) {
+            sum += L(J, K) * L(J, K) * D[K];
+            accumulate_diag_static<J, K + 1>(sum);
+        }
+    }
+
+    template <bool UnrollInner, int J, int I> void compute_rows_static(const MiniMatrix<T, N, N>& A)
+    {
+        if constexpr (I < N) {
+            compute_row_static<UnrollInner, J, I>(A);
+            compute_rows_static<UnrollInner, J, I + 1>(A);
+        }
+    }
+
+    template <bool UnrollInner, int J, int I> void compute_row_static(const MiniMatrix<T, N, N>& A)
+    {
+        T sum = T(0);
+        if constexpr (UnrollInner) {
+            accumulate_row_static<I, J, 0>(sum);
+        } else {
+            for (int k = 0; k < J; ++k) {
+                sum += L(I, k) * L(J, k) * D[k];
+            }
+        }
+        L(I, J) = (A(I, J) - sum) * inv_D[J];
+    }
+
+    template <bool UnrollInner, int J> void compute_row_static(const MiniMatrix<T, N, N>& A, int i)
+    {
+        T sum = T(0);
+        if constexpr (UnrollInner) {
+            struct InnerBody {
+                MiniLDLT& self;
+                int i;
+                T& sum;
+                inline void operator()(int k) { sum += self.L(i, k) * self.L(J, k) * self.D[k]; }
+            } inner_body = { *this, i, sum };
+            matrix::PrefixRange<true, J>::run(J, inner_body);
+        } else {
+            for (int k = 0; k < J; ++k) {
+                sum += L(i, k) * L(J, k) * D[k];
+            }
+        }
+        L(i, J) = (A(i, J) - sum) * inv_D[J];
+    }
+
+    template <int I, int J, int K> void accumulate_row_static(T& sum)
+    {
+        if constexpr (K < J) {
+            sum += L(I, K) * L(J, K) * D[K];
+            accumulate_row_static<I, J, K + 1>(sum);
+        }
     }
 
 public:
