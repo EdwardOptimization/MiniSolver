@@ -268,9 +268,10 @@ struct SolverConfig {
 
     DirectionRefinementMode direction_refinement = DirectionRefinementMode::NONE;
 
-    // SQP-RTI Mode
-    bool enable_rti = false; // If true, solve() performs only 1 SQP iteration (or config.max_iters)
-    // and reuses linearization if possible (requires more state storage)
+    // Legacy SQP-RTI shortcut. Prefer termination_profile = RTI_FIXED_ITERATION
+    // for new code; this bool is kept so older configs and snapshots retain
+    // their behavior.
+    bool enable_rti = false;
 
     // Line Search Logic
     // PURE IPM: Disable rollout by default. Trust the linearization.
@@ -283,11 +284,12 @@ struct SolverConfig {
     bool enable_corrector = true;
     bool enable_aggressive_barrier = true; // Allow aggressive mu reduction based on step size
 
-    // Feasibility Logic (Heuristics)
-    // Disabled by default for PURE IPM behavior. Enable only if needed.
-    bool enable_slack_reset = true; // Enable by default for robustness
-    bool enable_feasibility_restoration = true; // Enable by default
-    bool enable_soc = true; // Enable SOC by default for robust handling of nonlinearities
+    // Feasibility and globalization recovery heuristics enabled by default for
+    // robust NMPC behavior. The reference config disables these explicitly when
+    // a minimal primal-dual IPM path is needed for debugging or regression.
+    bool enable_slack_reset = true;
+    bool enable_feasibility_restoration = true;
+    bool enable_soc = true;
 };
 
 }

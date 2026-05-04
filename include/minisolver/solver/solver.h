@@ -1157,16 +1157,6 @@ private:
             traj, trajectory.candidate(), N, context_.solve.mu, context_.solve.reg, config);
     }
 
-    bool should_stop_after_line_search_(
-        const TrajArray& /*traj*/, double /*alpha*/, double /*max_dual_inf*/) const
-    {
-        // After line search, primal data belongs to the accepted trajectory, while the dual
-        // infeasibility metric still belongs to the pre-line-search Riccati solve. Do not combine
-        // those snapshots to certify OPTIMAL. The next iteration or postsolve() will evaluate
-        // fresh residuals on a single consistent iterate.
-        return false;
-    }
-
     void update_metrics_after_globalization_(double max_dual_inf)
     {
         // For outer-loop heuristics (e.g. cost stagnation), store feasibility of the *current*
@@ -1988,13 +1978,9 @@ private:
             return globalization.status;
         }
 
-        // Final Convergence Check using Step Size and Residuals.
-        // Avoids wasting a full derivative computation in next step if we are already done.
-        if (should_stop_after_line_search_(
-                trajectory.active(), globalization.alpha, max_dual_inf)) {
-            return SolverStatus::OPTIMAL;
-        }
-
+        // Do not certify convergence immediately after line search: the accepted
+        // primal trajectory and pre-line-search dual residual belong to different
+        // snapshots. The next iteration or postsolve() refreshes both on one iterate.
         update_metrics_after_globalization_(max_dual_inf);
         return SolverStatus::UNSOLVED;
     }

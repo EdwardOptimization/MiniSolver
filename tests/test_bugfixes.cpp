@@ -55,11 +55,6 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         return s.check_convergence(residuals, max_dual_inf);
     }
-    static bool should_stop_after_line_search(
-        Solver& s, const typename Solver::TrajArray& traj, double alpha, double max_dual_inf)
-    {
-        return s.should_stop_after_line_search_(traj, alpha, max_dual_inf);
-    }
     static void print_iteration_log(Solver& s, double alpha, bool header)
     {
         s.print_iteration_log(alpha, header);
@@ -1091,14 +1086,14 @@ TEST(BugfixTest, RiccatiUsesFusedKernelWhenIntegratorMatches)
 }
 
 // =============================================================================
-// IMPROVEMENT DEMOS — before/after comparison for each fix
+// BUGFIX REGRESSIONS — before/after comparisons for fixed behavior
 // =============================================================================
 
-// --- Demo 1: slack_reset mu ---
+// --- Regression 1: slack_reset mu ---
 // Shows: with decayed mu (1e-5) and mu_init=1.0, the old code (mu_init/s)
 // pumps lam*s to ~1.0 (5 orders off the central path). The fix (mu/s)
 // lands lam*s on ~mu = 1e-5.
-TEST(ImprovementDemo, SlackReset_ComplementarityGap)
+TEST(BugfixRegression, SlackReset_ComplementarityGap)
 {
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
@@ -1150,19 +1145,13 @@ TEST(ImprovementDemo, SlackReset_ComplementarityGap)
         old_comp += std::abs(traj_old[k].lam(0) * traj_old[k].s(0) - 1e-5);
     }
 
-    std::cerr << "[Demo 1] slack_reset complementarity gap:\n"
-              << "  old (mu_init/s): |lam*s - mu| = " << old_comp << "\n"
-              << "  fix (mu/s):      |lam*s - mu| = " << fix_comp << "\n"
-              << "  improvement:     " << old_comp / std::max(fix_comp, 1e-30)
-              << "x closer to central path\n";
-
     // The fix should be at least 1000x closer to the central path.
     EXPECT_LT(fix_comp, old_comp / 1000.0);
 }
 
-// --- Demo 2: set_config backend ---
+// --- Regression 2: set_config backend ---
 // Shows: backend is preserved across set_config calls.
-TEST(ImprovementDemo, SetConfig_BackendPreserved)
+TEST(BugfixRegression, SetConfig_BackendPreserved)
 {
     SolverConfig conf;
     conf.print_level = PrintLevel::NONE;
@@ -1176,16 +1165,13 @@ TEST(ImprovementDemo, SetConfig_BackendPreserved)
 
     bool preserved = (solver.get_config().backend == Backend::GPU_MPX);
 
-    std::cerr << "[Demo 2] set_config backend preserved: "
-              << (preserved ? "YES" : "NO (backend overwritten)") << "\n";
-
     EXPECT_TRUE(preserved);
 }
 
-// --- Demo 3: integrator mismatch warning ---
+// --- Regression 3: integrator mismatch warning ---
 // Shows: when model's generated_integrator != config.integrator, a warning
 // is emitted at construction (previously silent).
-TEST(ImprovementDemo, IntegratorMismatch_WarningEmitted)
+TEST(BugfixRegression, IntegratorMismatch_WarningEmitted)
 {
     SolverConfig conf;
     conf.print_level = PrintLevel::NONE;
@@ -1200,17 +1186,13 @@ TEST(ImprovementDemo, IntegratorMismatch_WarningEmitted)
 
     bool warned = !output.empty();
 
-    std::cerr << "[Demo 3] integrator mismatch warning: "
-              << (warned ? "EMITTED" : "MISSING (silent)") << "\n"
-              << "  logger output: \"" << output << "\"\n";
-
     EXPECT_TRUE(warned) << "No warning emitted for integrator mismatch";
 }
 
-// --- Demo 4: Mehrotra mu_aff L1 soft ---
+// --- Regression 4: Mehrotra mu_aff L1 soft ---
 // Shows: mu_aff with L1 soft pair included vs excluded.
 // The old code only counted hard pairs; the fix adds soft_s * (w - lam).
-TEST(ImprovementDemo, MehrotraMuAff_L1SoftPairImpact)
+TEST(BugfixRegression, MehrotraMuAff_L1SoftPairImpact)
 {
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
@@ -1257,12 +1239,6 @@ TEST(ImprovementDemo, MehrotraMuAff_L1SoftPairImpact)
     }
     double ratio = mu_aff_with_soft / std::max(mu_aff_hard_only, 1e-30);
 
-    std::cerr << "[Demo 4] Mehrotra mu_aff with L1 soft constraints:\n"
-              << "  hard-only (old):  mu_aff = " << mu_aff_hard_only << "\n"
-              << "  with soft (new):  mu_aff = " << mu_aff_with_soft << "\n"
-              << "  ratio (new/old):  " << ratio << "\n"
-              << "  sigma impact:     old sigma = (old/mu)^3, new sigma = (new/mu)^3\n";
-
     // The fix should produce a mu_aff that's significantly larger than hard-only
     // when L1 soft pairs are present.
     EXPECT_GT(ratio, 1.1) << "mu_aff barely changed — soft pair contribution negligible";
@@ -1275,7 +1251,7 @@ TEST(ImprovementDemo, MehrotraMuAff_L1SoftPairImpact)
 // This test verifies the guard works: even if the user tries to set u_N,
 // it remains 0 and terminal cost is correct.
 // =============================================================================
-TEST(ImprovementDemo, TerminalCost_UGuardProtectsAgainstPhantom)
+TEST(BugfixRegression, TerminalCost_UGuardProtectsAgainstPhantom)
 {
     constexpr int N = 3;
     SolverConfig config;
@@ -1306,12 +1282,6 @@ TEST(ImprovementDemo, TerminalCost_UGuardProtectsAgainstPhantom)
     // If the guard were missing, u_N=100 → cost = 100.
     double guard_rejected_u_n = (solver.get_control(N, 0) == 0.0);
 
-    std::cerr << "[Demo 5] Terminal u_N guard:\n"
-              << "  tried set_control_guess(N, 0, 100): "
-              << (guard_rejected_u_n ? "REJECTED (correct)" : "ACCEPTED (bug)") << "\n"
-              << "  u_N actual = " << solver.get_control(N, 0) << "\n"
-              << "  terminal cost = " << terminal_cost << "\n";
-
     EXPECT_TRUE(guard_rejected_u_n) << "set_control_guess should reject stage >= N";
     EXPECT_NEAR(terminal_cost, 0.0, 1e-12) << "terminal cost should be 0 (u_N = 0)";
 }
@@ -1323,9 +1293,9 @@ TEST(ImprovementDemo, TerminalCost_UGuardProtectsAgainstPhantom)
 // This enforces proportional decrease: larger steps must achieve larger
 // absolute reductions. Simple decrease accepts any epsilon improvement.
 //
-// Demo: compare acceptance thresholds for a tiny merit reduction.
+// Regression: compare acceptance thresholds for a tiny merit reduction.
 // =============================================================================
-TEST(ImprovementDemo, MeritLS_ArmijoRejectsTinyImprovement)
+TEST(BugfixRegression, MeritLS_ArmijoRejectsTinyImprovement)
 {
     double phi_0 = 1.0;
     double c1 = 1e-4;
@@ -1338,11 +1308,6 @@ TEST(ImprovementDemo, MeritLS_ArmijoRejectsTinyImprovement)
         bool simple = (phi_alpha < phi_0);
         double armijo_threshold = phi_0 * (1.0 - c1 * alpha); // 0.9999
         bool armijo = (phi_alpha <= armijo_threshold);
-
-        std::cerr << "[Demo 6a] alpha=1.0, phi_alpha=0.9999999:\n"
-                  << "  simple decrease: " << (simple ? "ACCEPT" : "REJECT") << "\n"
-                  << "  Armijo threshold=" << armijo_threshold << ": "
-                  << (armijo ? "ACCEPT" : "REJECT") << "\n";
 
         EXPECT_TRUE(simple);
         EXPECT_FALSE(armijo) << "Armijo should reject tiny improvement at alpha=1";
@@ -1357,11 +1322,6 @@ TEST(ImprovementDemo, MeritLS_ArmijoRejectsTinyImprovement)
         double armijo_threshold = phi_0 * (1.0 - c1 * alpha); // 0.999999
         bool armijo = (phi_alpha <= armijo_threshold);
 
-        std::cerr << "[Demo 6b] alpha=0.01, phi_alpha=0.9999:\n"
-                  << "  simple decrease: " << (simple ? "ACCEPT" : "REJECT") << "\n"
-                  << "  Armijo threshold=" << armijo_threshold << ": "
-                  << (armijo ? "ACCEPT" : "REJECT") << "\n";
-
         EXPECT_TRUE(simple);
         EXPECT_TRUE(armijo) << "Armijo should accept when decrease is proportional to alpha";
     }
@@ -1375,11 +1335,6 @@ TEST(ImprovementDemo, MeritLS_ArmijoRejectsTinyImprovement)
         double armijo_threshold = phi_0 * (1.0 - c1 * alpha);
         bool armijo = (phi_alpha <= armijo_threshold);
 
-        std::cerr << "[Demo 6c] alpha=1.0, phi_alpha=0.5:\n"
-                  << "  simple decrease: " << (simple ? "ACCEPT" : "REJECT") << "\n"
-                  << "  Armijo threshold=" << armijo_threshold << ": "
-                  << (armijo ? "ACCEPT" : "REJECT") << "\n";
-
         EXPECT_TRUE(simple);
         EXPECT_TRUE(armijo);
     }
@@ -1387,7 +1342,7 @@ TEST(ImprovementDemo, MeritLS_ArmijoRejectsTinyImprovement)
 
 // Real solver comparison: MERIT + Armijo vs MERIT + simple decrease.
 // Run the same non-trivial problem twice, measure iterations and final cost.
-TEST(ImprovementDemo, MeritLS_ArmijoVsSimpleDecrease_Iterations)
+TEST(BugfixRegression, MeritLS_ArmijoVsSimpleDecrease_Iterations)
 {
     constexpr int N = 5;
 
@@ -1414,11 +1369,6 @@ TEST(ImprovementDemo, MeritLS_ArmijoVsSimpleDecrease_Iterations)
 
     auto [iters_armijo, cost_armijo] = run_solver(1e-4); // Armijo on
     auto [iters_simple, cost_simple] = run_solver(0.0); // simple decrease
-
-    std::cerr << "[Demo 7] Merit LS: Armijo vs simple decrease\n"
-              << "  simple decrease: " << iters_simple << " iters, cost=" << cost_simple << "\n"
-              << "  Armijo (c1=1e-4): " << iters_armijo << " iters, cost=" << cost_armijo << "\n"
-              << "  iter reduction:   " << (iters_simple - iters_armijo) << " fewer iters\n";
 
     // Both must converge to similar cost (within 1%).
     EXPECT_NEAR(cost_armijo, cost_simple, std::abs(cost_simple) * 0.01)
@@ -1803,62 +1753,6 @@ TEST(BugfixTest, L1SlackResetKeepsDualInsideBoxAndCentralPathWhenWeightIsSmall)
         EXPECT_NEAR(traj[k].soft_s(0) * soft_dual, config.mu_init, 1e-10)
             << "slack_reset must preserve L1 soft complementarity";
     }
-}
-
-TEST(BugfixTest, PostLineSearchStopRejectsStaleFeasibilitySnapshot)
-{
-    SolverConfig config;
-    config.mu_final = 1e-6;
-    config.tol_con = 1e-8;
-    config.tol_dual = 1e-8;
-
-    using Solver = MiniSolver<BugTestModel, 10>;
-    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
-
-    Solver solver(1, Backend::CPU_SERIAL, config);
-    Access::mu(solver) = 1e-8;
-
-    auto& traj = Access::get_trajectory(solver);
-    for (int k = 0; k <= 1; ++k) {
-        traj[k].dx.setZero();
-        traj[k].du.setZero();
-        traj[k].g_val(0) = 10.0;
-        traj[k].s(0) = 0.0;
-    }
-    traj[0].f_resid(0) = 0.0;
-    traj[1].x(0) = 0.0;
-
-    EXPECT_FALSE(Access::should_stop_after_line_search(solver, traj, 1.0, /*max_dual_inf=*/0.0))
-        << "post-line-search early stop must not trust a stale pre-line-search feasibility "
-           "snapshot when the accepted trajectory is infeasible";
-}
-
-TEST(BugfixTest, PostLineSearchStopDoesNotUseStaleDualShortcut)
-{
-    SolverConfig config;
-    config.mu_final = 1e-6;
-    config.tol_con = 1e-8;
-    config.tol_dual = 1e-8;
-
-    using Solver = MiniSolver<BugTestModel, 10>;
-    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
-
-    Solver solver(1, Backend::CPU_SERIAL, config);
-    Access::mu(solver) = 1e-8;
-
-    auto& traj = Access::get_trajectory(solver);
-    for (int k = 0; k <= 1; ++k) {
-        traj[k].dx.setZero();
-        traj[k].du.setZero();
-        traj[k].g_val(0) = -1.0;
-        traj[k].s(0) = 1.0;
-    }
-    traj[0].f_resid(0) = 0.0;
-    traj[1].x(0) = 0.0;
-
-    EXPECT_FALSE(Access::should_stop_after_line_search(solver, traj, 1.0, 0.0))
-        << "post-line-search early OPTIMAL would combine the accepted primal trajectory "
-           "with stale pre-line-search dual residuals";
 }
 
 namespace {
