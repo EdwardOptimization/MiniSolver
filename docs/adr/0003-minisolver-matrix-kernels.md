@@ -33,10 +33,9 @@ Introduce `include/minisolver/matrix/` as the owner of the custom matrix backend
   kernel dispatch and platform override thresholds;
 - `matrix/static_for.h`: C++11-compatible static unroll utility.
 
-Remove the old `include/minisolver/core/mini_matrix.h` and
-`include/minisolver/core/matrix_defs.h` entry points. Solver code, templates, and
-tracked generated models must include the new `minisolver/matrix/*` headers
-directly.
+Remove the old `include/minisolver/core/` matrix entry points. Solver code,
+templates, and tracked generated models must include the new
+`minisolver/matrix/*` headers directly.
 
 The kernel layer uses a bounded static-unroll policy: small fixed-size work items
 are unrolled at compile time, larger work falls back to ordinary loops. This

@@ -29,6 +29,7 @@ evidence logs, and design decisions separate so each file has a clear role.
 | [`matrix/`](matrix/) | MiniMatrix policy, tuning, and benchmark notes. |
 | [`reviews/`](reviews/) | Static/deep review artifacts and evidence-driven follow-up plans. |
 | [`testing/`](testing/) | Test matrix, coverage gaps, and test process documents. |
+| [`archive/`](archive/) | Historical notes kept for context; not authoritative current guidance. |
 
 ## Conventions
 
