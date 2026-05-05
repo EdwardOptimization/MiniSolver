@@ -253,6 +253,69 @@ TEST(ConfigRegressionTest, SetConfigRejectsInvalidConfigWithoutMutation)
     EXPECT_GT(solver.get_config().reg_scale_down, 1.0);
 }
 
+TEST(ConfigRegressionTest, SetConfigRejectsInvalidGlobalizationParameters)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+    MiniSolver<BugTestModel, 10> solver(3, Backend::CPU_SERIAL, conf);
+
+    auto expect_invalid = [&](const SolverConfig& invalid) {
+        const SolverConfig before = solver.get_config();
+        EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+        EXPECT_DOUBLE_EQ(solver.get_config().armijo_c1, before.armijo_c1);
+        EXPECT_DOUBLE_EQ(solver.get_config().filter_gamma_theta, before.filter_gamma_theta);
+        EXPECT_DOUBLE_EQ(solver.get_config().soc_trigger_alpha, before.soc_trigger_alpha);
+    };
+
+    SolverConfig invalid = solver.get_config();
+    invalid.armijo_c1 = -1e-4;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.armijo_c1 = 1.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.eta_suff_descent = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.eta_suff_descent = 1.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.filter_gamma_theta = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.filter_gamma_phi = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.filter_theta_max_factor = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.soc_trigger_alpha = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.barrier_inf_cost = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.restoration_mu = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.restoration_reg = -1e-2;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.tol_cost = -1e-8;
+    expect_invalid(invalid);
+}
+
 TEST(ConfigRegressionTest, SetConfigRejectsInvalidEnumValues)
 {
     SolverConfig conf;

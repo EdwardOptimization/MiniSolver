@@ -491,6 +491,9 @@ private:
             return result(SnapshotStatus::TruncatedFile);
         }
         snapshot.status = static_cast<SolverStatus>(status_raw);
+        if (!valid_solver_status(snapshot.status)) {
+            return result(SnapshotStatus::InvalidSnapshot);
+        }
 
         snapshot.dt_traj.assign(static_cast<std::size_t>(snapshot.N), 0.0);
         if (!read_bytes(in, snapshot.dt_traj.data(), sizeof(double) * snapshot.dt_traj.size())) {

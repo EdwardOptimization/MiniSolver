@@ -50,6 +50,26 @@ enum class ApiStatus {
     InvalidArgument = 8
 };
 
+inline bool valid_solver_status(SolverStatus status)
+{
+    switch (status) {
+    case SolverStatus::UNSOLVED:
+    case SolverStatus::OPTIMAL:
+    case SolverStatus::FEASIBLE:
+    case SolverStatus::INFEASIBLE:
+    case SolverStatus::MAX_ITER:
+    case SolverStatus::STEP_TOO_SMALL:
+    case SolverStatus::INSUFFICIENT_PROGRESS:
+    case SolverStatus::LINEAR_SOLVE_FAILED:
+    case SolverStatus::RESTORATION_FAILED:
+    case SolverStatus::INVALID_INPUT:
+    case SolverStatus::NUMERICAL_ERROR:
+        return true;
+    default:
+        return false;
+    }
+}
+
 inline const char* status_to_string(SolverStatus status)
 {
     switch (status) {

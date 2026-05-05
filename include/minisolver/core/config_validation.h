@@ -281,6 +281,46 @@ namespace detail {
         if (status != ApiStatus::OK) {
             return status;
         }
+        status = validate_open_unit_interval_config_value(conf.filter_gamma_theta);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_open_unit_interval_config_value(conf.filter_gamma_phi);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.filter_theta_max_factor);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_half_open_unit_interval_config_value(conf.armijo_c1);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_nonnegative_finite_config_value(conf.tol_cost);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.barrier_inf_cost);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_unit_interval_config_value(conf.soc_trigger_alpha);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_open_unit_interval_config_value(conf.eta_suff_descent);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.restoration_mu);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_nonnegative_finite_config_value(conf.restoration_reg);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
         status = validate_unit_interval_config_value(conf.restoration_alpha);
         if (status != ApiStatus::OK) {
             return status;
