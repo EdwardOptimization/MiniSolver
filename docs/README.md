@@ -19,6 +19,8 @@ evidence logs, and design decisions separate so each file has a clear role.
   status layering and postsolve precedence.
 - [Termination Design](architecture/termination-design.md): residual semantics
   for `OPTIMAL`, `FEASIBLE`, barrier `mu`, and `SolverInfo`.
+- [Snapshot And Replay Design](architecture/snapshot-replay-design.md): debug
+  snapshot scope, failure-capture pattern, and model fingerprint contract.
 
 ## Directories
 
