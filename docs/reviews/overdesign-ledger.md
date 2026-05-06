@@ -102,7 +102,12 @@ dynamics-dominant NMPC problems. Prefer documentation and diagnostics until a
 benchmark or failing case justifies a stronger policy.
 
 Evidence: `docs/architecture/solver-refactor-plan.md` records full KKT
-refinement as deferred.
+refinement as deferred. `tests/test_features.cpp::FeaturesTest.
+DefectRolloutRefinementKeepsConstrainedDirectionConsistent` anchors the
+runtime contract that with rollout refinement enabled and the upper control
+bound strongly active for the majority of the horizon, the solver still
+reaches OPTIMAL/FEASIBLE without violating bounds, dropping interior
+slacks, or producing infinite/negative duals.
 
 ### OD-006: Full KKT Iterative Refinement
 
