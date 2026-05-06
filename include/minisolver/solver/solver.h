@@ -599,6 +599,45 @@ public:
         return ApiStatus::OK;
     }
 
+    // Set the L1 soft-constraint slack (`soft_s`) at stage k for constraint idx.
+    // Use this when warm-starting an L1 soft-constrained model where the user
+    // wants to seed the soft slack alongside the hard slack/dual guesses. For L2
+    // soft constraints and hard constraints this setter still validates inputs
+    // but the solver does not consume `soft_s` for those cases.
+    ApiStatus set_soft_slack_guess(int stage, int idx, double value)
+    {
+        if (stage > N || stage < 0) {
+            return ApiStatus::InvalidStage;
+        }
+        if (idx >= NC || idx < 0) {
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value)) {
+            return ApiStatus::NonFiniteValue;
+        }
+        trajectory[stage].soft_s(idx) = value;
+        return ApiStatus::OK;
+    }
+
+    // Warm-start aliases. These document intent at the call site for repeated
+    // MPC solves that reuse the previous primal-dual iterate; the underlying
+    // semantics are identical to `set_slack_guess` / `set_dual_guess` /
+    // `set_soft_slack_guess`.
+    ApiStatus set_warm_start_slack(int stage, int idx, double value)
+    {
+        return set_slack_guess(stage, idx, value);
+    }
+
+    ApiStatus set_warm_start_dual(int stage, int idx, double value)
+    {
+        return set_dual_guess(stage, idx, value);
+    }
+
+    ApiStatus set_warm_start_soft_slack(int stage, int idx, double value)
+    {
+        return set_soft_slack_guess(stage, idx, value);
+    }
+
     std::vector<double> get_slack(int stage) const
     {
         if (stage > N || stage < 0) {

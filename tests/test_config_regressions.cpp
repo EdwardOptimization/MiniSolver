@@ -139,7 +139,39 @@ TEST(ConfigRegressionTest, ApiSettersReturnExplicitStatusAndDoNotMutate)
     EXPECT_DOUBLE_EQ(solver.get_slack(0, 0), 1.0);
     EXPECT_DOUBLE_EQ(solver.get_dual(0, 0), 1.0);
 
+    // Soft-slack and warm-start aliases must validate the same invariants.
+    EXPECT_EQ(solver.set_soft_slack_guess(3, 0, 4.0), ApiStatus::InvalidStage);
+    EXPECT_EQ(solver.set_soft_slack_guess(0, 1, 4.0), ApiStatus::InvalidIndex);
+    EXPECT_EQ(solver.set_soft_slack_guess(0, 0, std::numeric_limits<double>::infinity()),
+        ApiStatus::NonFiniteValue);
+
+    EXPECT_EQ(solver.set_warm_start_slack(3, 0, 4.0), ApiStatus::InvalidStage);
+    EXPECT_EQ(solver.set_warm_start_dual(0, 1, 4.0), ApiStatus::InvalidIndex);
+    EXPECT_EQ(solver.set_warm_start_soft_slack(0, 0, std::numeric_limits<double>::quiet_NaN()),
+        ApiStatus::NonFiniteValue);
+
     EXPECT_EQ(solver.set_dt(std::numeric_limits<double>::quiet_NaN()), ApiStatus::NonFiniteValue);
+}
+
+TEST(ConfigRegressionTest, WarmStartAliasesMatchUnderlyingGuessSetters)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    MiniSolver<ApiStatusTestModel, 3> solver(2, Backend::CPU_SERIAL, config);
+
+    ASSERT_EQ(solver.set_warm_start_slack(0, 0, 7.5), ApiStatus::OK);
+    ASSERT_EQ(solver.set_warm_start_dual(1, 0, 0.25), ApiStatus::OK);
+    ASSERT_EQ(solver.set_warm_start_soft_slack(0, 0, 2.0), ApiStatus::OK);
+
+    EXPECT_DOUBLE_EQ(solver.get_slack(0, 0), 7.5);
+    EXPECT_DOUBLE_EQ(solver.get_dual(1, 0), 0.25);
+
+    // The warm-start aliases must be byte-identical to the underlying guess
+    // setters: writing through the alias and through the underlying setter on
+    // a different stage must leave both stages with the requested values.
+    ASSERT_EQ(solver.set_slack_guess(1, 0, 7.5), ApiStatus::OK);
+    EXPECT_DOUBLE_EQ(solver.get_slack(1, 0), solver.get_slack(0, 0));
 }
 
 TEST(ConfigRegressionTest, CheckedScalarGettersReportInvalidAccess)
