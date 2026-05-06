@@ -71,6 +71,16 @@ constexpr std::streamoff SnapshotFirstConfigBoolOffset()
     return SnapshotHeaderBytes() + 408;
 }
 
+constexpr std::streamoff SnapshotLineSearchTypeOffset()
+{
+    return SnapshotHeaderBytes() + 252;
+}
+
+constexpr std::streamoff SnapshotLineSearchMaxItersOffset()
+{
+    return SnapshotHeaderBytes() + 256;
+}
+
 constexpr std::streamoff SnapshotStatusOffset()
 {
     return SnapshotHeaderBytes() + 424;
@@ -427,11 +437,10 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotConfigAtomically)
 {
     MiniSolver<CarModel, 10> solverA(2, Backend::CPU_SERIAL);
     using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
-    auto snapshot = SnapshotIO::capture_snapshot(solverA);
-    snapshot.config.reg_scale_up = 1.0;
 
     std::string filename = MakeUniqueTestFilename("test_invalid_config_snapshot", ".bin");
-    ASSERT_EQ(SnapshotIO::save_snapshot(filename, snapshot).status, SnapshotStatus::OK);
+    ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
+    ASSERT_TRUE(OverwriteInt32At(filename, SnapshotLineSearchMaxItersOffset(), 0));
 
     SolverConfig preserved;
     preserved.mu_init = 0.321;
@@ -449,11 +458,10 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotConfigEnumAtomically)
 {
     MiniSolver<CarModel, 10> solverA(2, Backend::CPU_SERIAL);
     using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
-    auto snapshot = SnapshotIO::capture_snapshot(solverA);
-    snapshot.config.line_search_type = static_cast<LineSearchType>(99);
 
     std::string filename = MakeUniqueTestFilename("test_invalid_enum_config_snapshot", ".bin");
-    ASSERT_EQ(SnapshotIO::save_snapshot(filename, snapshot).status, SnapshotStatus::OK);
+    ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
+    ASSERT_TRUE(OverwriteInt32At(filename, SnapshotLineSearchTypeOffset(), 99));
 
     SolverConfig preserved;
     preserved.mu_init = 0.321;
@@ -465,6 +473,28 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotConfigEnumAtomically)
     EXPECT_EQ(solverB.get_config().line_search_type, preserved.line_search_type);
 
     std::remove(filename.c_str());
+}
+
+TEST(SolverSnapshotTest, SaveRejectsInvalidSnapshotConfig)
+{
+    MiniSolver<CarModel, 10> solver(2, Backend::CPU_SERIAL);
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+
+    auto expect_invalid_config_save = [&](auto mutate, const char* stem) {
+        auto snapshot = SnapshotIO::capture_snapshot(solver);
+        mutate(snapshot);
+        const std::string filename = MakeUniqueTestFilename(stem, ".bin");
+        EXPECT_EQ(
+            SnapshotIO::save_snapshot(filename, snapshot).status, SnapshotStatus::InvalidConfig);
+        EXPECT_FALSE(FileExists(filename));
+        std::remove(filename.c_str());
+    };
+
+    expect_invalid_config_save(
+        [](auto& snapshot) { snapshot.config.reg_scale_up = 1.0; }, "test_invalid_config_save");
+    expect_invalid_config_save(
+        [](auto& snapshot) { snapshot.config.line_search_type = static_cast<LineSearchType>(99); },
+        "test_invalid_config_enum_save");
 }
 
 TEST(SolverSnapshotTest, SaveRejectsInvalidSnapshotStatusAndRuntimeMetadata)

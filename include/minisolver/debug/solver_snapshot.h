@@ -415,6 +415,9 @@ private:
         if (static_cast<int>(snapshot.trajectory.size()) != snapshot.N + 1) {
             return SnapshotStatus::InvalidSnapshot;
         }
+        if (detail::validate_solver_config(snapshot.config) != ApiStatus::OK) {
+            return SnapshotStatus::InvalidConfig;
+        }
         if (!std::isfinite(snapshot.total_cost) || !std::isfinite(snapshot.mu)
             || !std::isfinite(snapshot.reg)) {
             return SnapshotStatus::NonFiniteData;
