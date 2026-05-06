@@ -158,6 +158,35 @@ scalar getters use `(int stage, int idx, double& out)` overloads and return
 `ApiStatus` so production code can distinguish "value retrieved" from "stage
 out of range".
 
+### SolverConfig Preset Profiles
+
+`include/minisolver/core/solver_config_profiles.h` exposes four named factory
+functions so callers can document intent at the call site instead of hand-
+configuring strategy fields:
+
+```cpp
+SolverConfig cfg = minisolver::make_default_config();   // production default
+SolverConfig cfg = minisolver::make_reference_config(); // correctness baseline
+SolverConfig cfg = minisolver::make_speed_config();     // throughput-oriented
+SolverConfig cfg = minisolver::make_robust_config();    // ill-conditioned NMPC
+```
+
+* `make_reference_config` -- correctness-first baseline (MERIT line search,
+  MONOTONE barrier, no SOC / restoration / direction refinement). Used as the
+  regression-test reference.
+* `make_default_config` -- default-constructed `SolverConfig` (FILTER line
+  search, ADAPTIVE barrier, restoration on, SOC off, no direction refinement).
+* `make_speed_config` -- low `max_iters`, `ACCEPTABLE_NMPC` termination,
+  aggressive barrier, no SOC / restoration. Designed for warm-started MPC
+  loops.
+* `make_robust_config` -- MEHROTRA + filter + SOC + restoration +
+  RUIZ_EQUILIBRATION problem scaling + dynamics-defect rollout refinement +
+  tighter `mu_final`. Designed for one-shot solves on poorly-scaled problems.
+
+Profiles only override solver-strategy fields; integration / cost / model
+parameters stay at `SolverConfig` defaults so callers can layer their own
+overrides on top.
+
 ### Solve-Time Allocation Discipline
 
 The default `SolverConfig` is allocation-free during `solve()`. Two flags can
