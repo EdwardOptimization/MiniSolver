@@ -196,6 +196,56 @@ implementation. Other possible implementations include:
 current extraction. Introduce it only when a second restoration implementation
 or a focused correctness/debuggability issue needs a narrow recovery contract.
 
+## Line-Search Rollout Semantics
+
+MiniSolver's canonical globalization path is multiple-shooting SQP/IPM:
+
+```text
+trial = z + alpha * dz
+```
+
+where `z` contains the state, control, slack, soft-slack, and dual trajectory.
+The trial point is evaluated with the true model, and dynamics defects remain
+part of the filter/merit residual. This is the theory-clean path for the current
+barrier/filter multiple-shooting solver, and it is the default:
+
+```cpp
+config.enable_line_search_rollout = false;
+```
+
+`enable_line_search_rollout=true` is intentionally narrower. It is a
+dynamics-projection heuristic:
+
+```text
+x_0^trial = x_0
+u_k^trial = u_k + alpha * du_k
+s/lam/soft_s move by alpha*d
+x_{k+1}^trial = f(x_k^trial, u_k^trial)
+```
+
+This can reduce dynamics defects and be useful for experiments, but it is not
+the same algorithmic object as the canonical multiple-shooting line-search step.
+It is also not a standard iLQR/DDP single-shooting rollout, which would use a
+closed-loop control update such as:
+
+```text
+u_k^trial = u_k + alpha * k_k + K_k * (x_k^trial - x_k)
+```
+
+The current rollout option mixes a multiple-shooting direction with a
+single-shooting-style state projection. Treat it as optional diagnostic or
+benchmark behavior, not as the reference SQP/IPM path.
+
+Design implications:
+
+- Keep the default `false`.
+- Do not tune core convergence claims around rollout-enabled behavior.
+- SOC is disabled under rollout mode because the current SOC correction is
+  defined for multiple-shooting candidate updates.
+- If a real single-shooting/iLQR route is needed later, add it as an explicit
+  mode with its own control-space rollout, acceptance semantics, and tests
+  rather than extending this heuristic in place.
+
 ## SOC Route
 
 Second-order correction (SOC) is a globalization feature, not model semantics.

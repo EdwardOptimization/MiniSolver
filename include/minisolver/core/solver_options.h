@@ -271,7 +271,15 @@ struct SolverConfig {
     DirectionRefinementMode direction_refinement = DirectionRefinementMode::NONE;
 
     // Line Search Logic
-    // PURE IPM: Disable rollout by default. Trust the linearization.
+    //
+    // Canonical MiniSolver globalization is multiple-shooting: evaluate trial
+    // points on z + alpha * dz and keep dynamics defects in the merit/filter
+    // residual. Keep rollout disabled for a theory-clean SQP/IPM path.
+    //
+    // When enabled, rollout is only a dynamics-projection heuristic: x0 is
+    // fixed, u/s/lam/soft_s move by alpha*d, and states are re-integrated. It
+    // is not a standard multiple-shooting line search and not an iLQR/DDP
+    // rollout of the form u + alpha*k + K*(x_rollout - x_nominal).
     bool enable_line_search_rollout = false;
 
     // Riccati Logic

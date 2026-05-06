@@ -82,10 +82,13 @@ public:
                 candidate[k].p = active[k].p;
             }
         } else {
-            // Single-shooting rollout trial point:
-            // - keep x0 fixed
-            // - apply the step to u/s/lam/soft_s
-            // - propagate x forward via the integrator to maintain dynamic consistency
+            // Dynamics-projection heuristic, not the canonical multiple-shooting
+            // line-search point z + alpha*dz:
+            // - keep x0 fixed;
+            // - apply the multiple-shooting step to u/s/lam/soft_s;
+            // - re-integrate states to reduce dynamics defects.
+            // This is also not an iLQR/DDP rollout: it does not apply
+            // u + alpha*k + K*(x_rollout - x_nominal).
             candidate[0].x = active[0].x;
             for (int k = 0; k <= N; ++k) {
                 if (k < N) {
@@ -347,10 +350,13 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                 detail::evaluate_model_stage<Model>(candidate[k], config, current_dt, k == N);
             }
         } else {
-            // Single-shooting rollout trial point:
-            // - keep x0 fixed
-            // - apply the step to u/s/lam/soft_s
-            // - propagate x forward via the integrator to maintain dynamic consistency
+            // Dynamics-projection heuristic, not the canonical multiple-shooting
+            // line-search point z + alpha*dz:
+            // - keep x0 fixed;
+            // - apply the multiple-shooting step to u/s/lam/soft_s;
+            // - re-integrate states to reduce dynamics defects.
+            // This is also not an iLQR/DDP rollout: it does not apply
+            // u + alpha*k + K*(x_rollout - x_nominal).
             candidate[0].x = active[0].x;
             for (int k = 0; k <= N; ++k) {
                 if (k < N) {
@@ -866,6 +872,11 @@ public:
                     detail::evaluate_model_stage<Model>(candidate[k], config, current_dt, k == N);
                 }
             } else {
+                // Dynamics-projection heuristic, not the canonical
+                // multiple-shooting line-search point z + alpha*dz. This
+                // re-integrates states after applying the multiple-shooting
+                // control/slack/dual step; it is not an iLQR/DDP rollout with
+                // u + alpha*k + K*(x_rollout - x_nominal).
                 candidate[0].x = active[0].x;
                 for (int k = 0; k <= N; ++k) {
                     if (k < N) {
