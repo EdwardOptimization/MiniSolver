@@ -411,6 +411,8 @@ add_minisolver_test(test_config_regressions tests/test_config_regressions.cpp)
 add_minisolver_test(test_barrier_residual_contract tests/test_barrier_residual_contract.cpp)
 add_minisolver_test(test_scaling_regressions tests/test_scaling_regressions.cpp)
 add_minisolver_test(test_replay_corpus tests/test_replay_corpus.cpp)
+add_dependencies(test_replay_corpus minisolver_test_models)
+target_include_directories(test_replay_corpus PRIVATE ${TEST_GENERATED_DIR})
 add_minisolver_test(test_logger tests/test_logger.cpp)
 
 # --- Quality & Regression ---
