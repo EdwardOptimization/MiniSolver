@@ -1,7 +1,8 @@
 # API Error And Logger Boundary Design
 
-Status: API setter/getter status phases, host logger backend, and embedded
-no-stream logger profile implemented; release documentation pass remains.
+Status: API setter/getter status phases, host logger backend, embedded
+no-stream logger profile, and Phase 4 release documentation pass all
+implemented.
 
 Owner: MiniSolver public API and observability boundary.
 
@@ -322,10 +323,15 @@ Implemented:
   `true`, and silences stdout/stderr fallback when no callback is installed.
   `test_logger_no_stream` compiles the same logger test source under that
   define so the embedded path stays validated.
+- Phase 4 release documentation: README "Embedded Deployment" now documents
+  the embedded logger profile, the `ApiStatus` setter/getter contract, and
+  the zero-malloc allocation boundary. `docs/testing/testing-matrix.md`
+  mirrors the corresponding test obligations.
 
-Still deferred:
-
-- Phase 4 release documentation update after the API/logger behavior stabilizes.
+Still deferred: nothing in the API/logger boundary scope. Future logger work
+(fixed-buffer formatter to replace `ostringstream`, structured iteration log
+buffer, ARM cross-compile coverage) belongs to the embedded-readiness track
+under N-EMBED-1.
 
 Future implementation must follow the evidence-driven workflow: red tests first,
 one behavior group per commit, full CTest before push.

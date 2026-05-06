@@ -136,6 +136,41 @@ MiniSolver includes a one-click build script that handles dependency checking, c
 3.  Define `USE_CUSTOM_MATRIX` to remove `Eigen3` dependency.
 4.  Compile with `-O3`. **No external libraries required.**
 
+### Embedded Logger Profile
+
+For hard real-time / MCU targets where `<iostream>` is unwanted:
+
+* CMake option `MINISOLVER_DISABLE_STREAM_LOGGER=ON` drops `<iostream>` from
+  `minisolver/core/logger.h`, removes the `std::cout`/`std::cerr` fallback, and
+  defaults `LoggerConfig::silent_fallback` to `true`. Install a `LogCallback`
+  if you need messages (for example to route into a UART buffer).
+* Runtime knob `LoggerConfig::silent_fallback` (default `false`) drops messages
+  with no callback installed, even at error level. Use this when you want host
+  builds to behave like the embedded profile without a recompile.
+* Compile-time `MINISOLVER_LOG_LEVEL=MLOG_LEVEL_NONE` removes every `MLOG_*`
+  call entirely.
+
+### API Error Contract
+
+Public setters return `ApiStatus`. `ApiStatus::OK` means the value was
+accepted; any other value means the solver state was not mutated. Checked
+scalar getters use `(int stage, int idx, double& out)` overloads and return
+`ApiStatus` so production code can distinguish "value retrieved" from "stage
+out of range".
+
+### Solve-Time Allocation Discipline
+
+The default `SolverConfig` is allocation-free during `solve()`. Two flags can
+break that contract; they are intentionally opt-in for diagnostics:
+
+* `SolverConfig::print_level >= PrintLevel::ITER` enables the iteration log,
+  which currently uses `std::stringstream` for header/row formatting.
+* `SolverConfig::enable_profiling = true` records timing samples through
+  dynamically-sized buffers.
+
+`test_memory` enforces zero-malloc with both flags off across the supported
+line-search and integrator combinations.
+
 -----
 
 ## 📂 Project Structure

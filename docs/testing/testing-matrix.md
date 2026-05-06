@@ -77,6 +77,10 @@ Out of scope for this matrix:
 | Zero dynamic allocation during production `solve()` | `test_memory` with profiling/logging disabled and multiple line-search modes |
 | Profiling/logging | Explicitly not part of the zero-malloc guarantee unless converted to fixed buffers |
 | Solver snapshot/replay | Round-trip config, trajectory, soft slacks, backend policy, model fingerprint, and atomic failure behavior |
+| Logger callback contract | `test_logger` covers callback capture, default config, and `silent_fallback` runtime behavior |
+| Embedded no-stream logger profile | `test_logger_no_stream` compiles the same logger test with `MINISOLVER_DISABLE_STREAM_LOGGER` defined to keep `<iostream>` out and silence stream fallbacks |
+| API error contract | `test_config_regressions` and `test_status` cover `ApiStatus` returns for setters, checked scalar getters, and constructor validation |
+| Line-search backtracking visibility | `test_line_search` asserts `SolverInfo::line_search_backtracking_count` accumulates on strongly nonlinear merit cases |
 
 ## CI Commands
 
