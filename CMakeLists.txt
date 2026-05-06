@@ -41,6 +41,11 @@ option(MINISOLVER_BUILD_TESTS "Build MiniSolver tests" ON)
 option(MINISOLVER_BUILD_EXAMPLES "Build MiniSolver examples" ON)
 option(MINISOLVER_BUILD_TOOLS "Build MiniSolver tools and local benchmarks" ON)
 option(MINISOLVER_FETCH_DEPS "Fetch missing third-party dependencies during configure" ON)
+option(MINISOLVER_DISABLE_STREAM_LOGGER
+    "Embedded profile: drop <iostream> from logger.h and silence stdout/stderr fallback" OFF)
+if(MINISOLVER_DISABLE_STREAM_LOGGER)
+    add_compile_definitions(MINISOLVER_DISABLE_STREAM_LOGGER)
+endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-O3 -Wall -Wextra)
@@ -415,6 +420,12 @@ add_minisolver_test(test_replay_corpus tests/test_replay_corpus.cpp)
 add_dependencies(test_replay_corpus minisolver_test_models)
 target_include_directories(test_replay_corpus PRIVATE ${TEST_GENERATED_DIR})
 add_minisolver_test(test_logger tests/test_logger.cpp)
+
+# Embedded no-stream logger profile coverage. Compiles the same logger test
+# source with MINISOLVER_DISABLE_STREAM_LOGGER defined so the embedded code
+# path stays validated without polluting the host build.
+add_minisolver_test(test_logger_no_stream tests/test_logger.cpp)
+target_compile_definitions(test_logger_no_stream PRIVATE MINISOLVER_DISABLE_STREAM_LOGGER)
 
 # --- Quality & Regression ---
 add_minisolver_test(test_bugfixes tests/test_bugfixes.cpp)

@@ -1,8 +1,11 @@
 #pragma once
 
-#include <iostream>
 #include <sstream>
 #include <string>
+
+#if !defined(MINISOLVER_DISABLE_STREAM_LOGGER)
+#include <iostream>
+#endif
 
 namespace minisolver {
 
@@ -14,6 +17,15 @@ struct LoggerConfig {
     LogCallback callback = nullptr;
     void* user = nullptr;
     bool enable_color = false;
+    // When true, log messages with no callback installed are silently dropped
+    // instead of being written to stdout/stderr. The embedded compile-time
+    // profile MINISOLVER_DISABLE_STREAM_LOGGER defaults this to true so the
+    // header keeps no <iostream> dependency on hard real-time targets.
+#if defined(MINISOLVER_DISABLE_STREAM_LOGGER)
+    bool silent_fallback = true;
+#else
+    bool silent_fallback = false;
+#endif
 };
 
 inline LoggerConfig& mutable_logger_config()
@@ -71,6 +83,16 @@ inline void log_message(LogLevel level, const std::string& message)
         return;
     }
 
+    if (config.silent_fallback) {
+        return;
+    }
+
+#if defined(MINISOLVER_DISABLE_STREAM_LOGGER)
+    // No-stream embedded profile: with no callback and silent_fallback=false the
+    // message is still dropped, since <iostream> is not available here.
+    (void)level;
+    (void)message;
+#else
     std::ostream& out = (level == LogLevel::Error) ? std::cerr : std::cout;
     if (config.enable_color && level != LogLevel::Info) {
         out << log_level_color(level) << '[' << log_level_label(level) << "]\033[0m " << message
@@ -79,6 +101,7 @@ inline void log_message(LogLevel level, const std::string& message)
     }
 
     out << '[' << log_level_label(level) << "] " << message << '\n';
+#endif
 }
 
 } // namespace minisolver

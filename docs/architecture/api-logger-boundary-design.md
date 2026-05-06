@@ -1,7 +1,7 @@
 # API Error And Logger Boundary Design
 
-Status: API setter/getter status phases and host logger backend implemented;
-embedded no-stream logger profile remains to be implemented.
+Status: API setter/getter status phases, host logger backend, and embedded
+no-stream logger profile implemented; release documentation pass remains.
 
 Owner: MiniSolver public API and observability boundary.
 
@@ -315,10 +315,16 @@ Implemented:
 - Phase 3 host logger backend: `MLOG_*` routes through a centralized backend
   with optional callback capture, default ANSI color is disabled, and host
   output uses newline writes instead of `std::endl`.
+- Phase 3b embedded no-stream logger profile: `LoggerConfig::silent_fallback`
+  is a runtime knob (default `false`). The CMake option
+  `MINISOLVER_DISABLE_STREAM_LOGGER` (default `OFF`) drops `<iostream>` from
+  the logger header on hard real-time targets, defaults `silent_fallback` to
+  `true`, and silences stdout/stderr fallback when no callback is installed.
+  `test_logger_no_stream` compiles the same logger test source under that
+  define so the embedded path stays validated.
 
 Still deferred:
 
-- Embedded fixed-buffer/no-stream logger profile.
 - Phase 4 release documentation update after the API/logger behavior stabilizes.
 
 Future implementation must follow the evidence-driven workflow: red tests first,
