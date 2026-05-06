@@ -1005,6 +1005,7 @@ private:
         if (result.soc_rejected) {
             context_.info.soc_reject_count++;
         }
+        context_.info.line_search_backtracking_count += result.backtracks;
     }
 
     void prepare_direction_workspace_()

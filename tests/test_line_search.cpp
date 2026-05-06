@@ -590,6 +590,34 @@ TEST(LineSearchTest, MeritFunctionBacktracking)
     }
 }
 
+TEST(LineSearchTest, MeritBacktrackingAccumulatesIntoSolverInfo)
+{
+    // Strongly nonlinear g(x) = x^4 - 1 with x0 = 2 violates the constraint by 15
+    // and forces the merit line search to backtrack. SolverInfo must surface the
+    // total backtracking count so users can diagnose poor scaling or step quality
+    // without re-running with debug prints.
+    constexpr int N = 1;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::MERIT;
+    config.max_iters = 20;
+    config.enable_feasibility_restoration = true;
+    config.merit_nu_init = 1000.0;
+
+    MiniSolver<MeritModel, 10> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_initial_state("x", 2.0);
+
+    const SolverStatus status = solver.solve();
+    const SolverInfo& info = solver.get_info();
+
+    EXPECT_GE(info.line_search_backtracking_count, 1)
+        << "Strong nonlinear violation must trigger at least one merit backtrack. "
+           "status="
+        << status_to_string(status);
+    EXPECT_LE(info.line_search_backtracking_count, config.line_search_max_iters * config.max_iters)
+        << "Backtracking count must respect max iters bounds.";
+}
+
 TEST(LineSearchTest, FilterRejectsPureL2KktResidualIncrease)
 {
     constexpr int N = 0;

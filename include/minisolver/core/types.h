@@ -193,6 +193,10 @@ struct SolverInfo {
     int soc_reject_count = 0;
     int restoration_attempt_count = 0;
     int restoration_success_count = 0;
+    // Total number of line-search backtracking refinements consumed across all
+    // outer iterations of the last solve(). Useful for diagnosing slow-step or
+    // poorly-scaled problems before resorting to a scaling profile.
+    int line_search_backtracking_count = 0;
     bool constraint_scaling_active = false;
     bool objective_scaling_active = false;
     bool problem_scaling_active = false;
@@ -221,6 +225,7 @@ struct SolverInfo {
         soc_reject_count = 0;
         restoration_attempt_count = 0;
         restoration_success_count = 0;
+        line_search_backtracking_count = 0;
         constraint_scaling_active = false;
         objective_scaling_active = false;
         problem_scaling_active = false;
@@ -232,6 +237,10 @@ struct LineSearchResult {
     bool soc_attempted = false;
     bool soc_accepted = false;
     bool soc_rejected = false;
+    // Number of backtracking refinements consumed by this search invocation.
+    // Zero means the first trial step was accepted; line_search_max_iters - 1
+    // is the worst case, line_search_max_iters means the search failed.
+    int backtracks = 0;
 
     constexpr LineSearchResult() = default;
     constexpr explicit LineSearchResult(double alpha_value)

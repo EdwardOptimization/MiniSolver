@@ -473,10 +473,14 @@ public:
         if (accepted) {
             trajectory.swap();
         } else {
-            return LineSearchResult(0.0); // Fail
+            LineSearchResult fail(0.0);
+            fail.backtracks = ls_iter;
+            return fail;
         }
 
-        return LineSearchResult(alpha);
+        LineSearchResult ok(alpha);
+        ok.backtracks = ls_iter;
+        return ok;
     }
 };
 
@@ -945,10 +949,12 @@ public:
             }
         } else {
             result.alpha = 0.0;
+            result.backtracks = ls_iter;
             return result; // Fail
         }
 
         result.alpha = alpha;
+        result.backtracks = ls_iter;
         return result;
     }
 };

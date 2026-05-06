@@ -65,6 +65,7 @@ void expect_finite_info(const SolverInfo& info)
     EXPECT_GE(info.restoration_attempt_count, 0);
     EXPECT_GE(info.restoration_success_count, 0);
     EXPECT_GE(info.degraded_riccati_freeze_count, 0);
+    EXPECT_GE(info.line_search_backtracking_count, 0);
 }
 
 template <typename Solver> double total_unscaled_cost(const Solver& solver)
