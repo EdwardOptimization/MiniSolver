@@ -8,6 +8,8 @@ evidence logs, and design decisions separate so each file has a clear role.
 - [Roadmap](ROADMAP.md): milestone-level project direction and completed work.
 - [Testing Matrix](testing/testing-matrix.md): what must be tested per commit and
   what belongs in benchmark/nightly coverage.
+- [Replay Corpus Plan](testing/replay-corpus-plan.md): in-repository
+  correctness/replay scenarios and metrics.
 - [Solver Refactor Plan](architecture/solver-refactor-plan.md): canonical solve
   route, phase boundaries, and refactor rules.
 - [Agent Harness](architecture/agent-harness.md): project-specific agent rules
