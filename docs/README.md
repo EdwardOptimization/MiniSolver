@@ -29,7 +29,7 @@ evidence logs, and design decisions separate so each file has a clear role.
 | [`adr/`](adr/) | Accepted or deferred architectural decisions. ADRs should be stable and concise. |
 | [`architecture/`](architecture/) | Larger design plans and implementation roadmaps. |
 | [`matrix/`](matrix/) | MiniMatrix policy, tuning, and benchmark notes. |
-| [`reviews/`](reviews/) | Static/deep review artifacts and evidence-driven follow-up plans. |
+| [`reviews/`](reviews/) | Static/deep review artifacts, evidence-driven follow-up plans, and overdesign decisions. |
 | [`testing/`](testing/) | Test matrix, coverage gaps, and test process documents. |
 | [`archive/`](archive/) | Historical notes kept for context; not authoritative current guidance. |
 
