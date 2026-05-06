@@ -114,7 +114,7 @@ struct SnapshotLoadOptions {
     X_DOUBLE(regularization_step)                                                                  \
     X_DOUBLE(singular_threshold)                                                                   \
     X_DOUBLE(huge_penalty)                                                                         \
-    X_INT(inertia_max_retries)                                                                     \
+    X_INT(linear_solve_max_attempts)                                                               \
     X_DOUBLE(tol_con)                                                                              \
     X_DOUBLE(tol_dual)                                                                             \
     X_DOUBLE(tol_mu)                                                                               \
@@ -157,7 +157,7 @@ template <typename Model, int MAX_N> class SolverSnapshotIO {
 public:
     using SolverType = MiniSolver<Model, MAX_N>;
     static constexpr std::array<char, 8> kMagic = { 'M', 'S', 'N', 'A', 'P', '0', '1', '\0' };
-    static constexpr std::uint32_t kFormatVersion = 1;
+    static constexpr std::uint32_t kFormatVersion = 2;
 
     struct Snapshot {
         SolverConfig config;
@@ -246,13 +246,17 @@ private:
         return write_pod(out, raw);
     }
 
-    static bool read_bool(std::ifstream& in, bool& value)
+    static bool read_bool(std::ifstream& in, bool& value, bool& invalid_encoding)
     {
         std::uint8_t raw = 0;
         if (!read_pod(in, raw)) {
             return false;
         }
-        value = (raw != 0);
+        if (raw > 1u) {
+            invalid_encoding = true;
+            return false;
+        }
+        value = (raw == 1u);
         return true;
     }
 
@@ -290,13 +294,13 @@ private:
         return ok;
     }
 
-    static bool read_config(std::ifstream& in, SolverConfig& cfg)
+    static bool read_config(std::ifstream& in, SolverConfig& cfg, bool& invalid_bool_encoding)
     {
         bool ok = true;
 #define MS_SNAPSHOT_READ_ENUM(field) ok = ok && read_enum(in, cfg.field);
 #define MS_SNAPSHOT_READ_INT(field) ok = ok && read_int(in, cfg.field);
 #define MS_SNAPSHOT_READ_DOUBLE(field) ok = ok && read_pod(in, cfg.field);
-#define MS_SNAPSHOT_READ_BOOL(field) ok = ok && read_bool(in, cfg.field);
+#define MS_SNAPSHOT_READ_BOOL(field) ok = ok && read_bool(in, cfg.field, invalid_bool_encoding);
         MINISOLVER_SNAPSHOT_CONFIG_FIELDS(MS_SNAPSHOT_READ_ENUM, MS_SNAPSHOT_READ_INT,
             MS_SNAPSHOT_READ_DOUBLE, MS_SNAPSHOT_READ_BOOL)
 #undef MS_SNAPSHOT_READ_ENUM
@@ -415,6 +419,10 @@ private:
             || !std::isfinite(snapshot.reg)) {
             return SnapshotStatus::NonFiniteData;
         }
+        if (!valid_solver_status(snapshot.status) || snapshot.iterations < 0 || snapshot.mu <= 0.0
+            || snapshot.reg < 0.0) {
+            return SnapshotStatus::InvalidSnapshot;
+        }
         for (double dt : snapshot.dt_traj) {
             if (!std::isfinite(dt)) {
                 return SnapshotStatus::NonFiniteData;
@@ -480,8 +488,10 @@ private:
         }
 
         snapshot.N = static_cast<int>(horizon);
-        if (!read_config(in, snapshot.config)) {
-            return result(SnapshotStatus::TruncatedFile);
+        bool invalid_bool_encoding = false;
+        if (!read_config(in, snapshot.config, invalid_bool_encoding)) {
+            return result(invalid_bool_encoding ? SnapshotStatus::InvalidSnapshot
+                                                : SnapshotStatus::TruncatedFile);
         }
 
         std::int32_t status_raw = 0;

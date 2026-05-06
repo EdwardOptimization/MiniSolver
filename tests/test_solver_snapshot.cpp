@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio> // for remove()
 #include <fstream>
 #include <gtest/gtest.h>
@@ -34,6 +35,45 @@ bool FileExists(const std::string& filename)
 {
     std::ifstream in(filename, std::ios::binary);
     return in.good();
+}
+
+bool OverwriteByteAt(const std::string& filename, std::streamoff offset, std::uint8_t value)
+{
+    std::fstream file(filename, std::ios::in | std::ios::out | std::ios::binary);
+    if (!file.good()) {
+        return false;
+    }
+    file.seekp(offset);
+    file.put(static_cast<char>(value));
+    return file.good();
+}
+
+bool OverwriteInt32At(const std::string& filename, std::streamoff offset, std::int32_t value)
+{
+    std::fstream file(filename, std::ios::in | std::ios::out | std::ios::binary);
+    if (!file.good()) {
+        return false;
+    }
+    file.seekp(offset);
+    file.write(reinterpret_cast<const char*>(&value), static_cast<std::streamsize>(sizeof(value)));
+    return file.good();
+}
+
+constexpr std::streamoff SnapshotHeaderBytes()
+{
+    return 8 + 2 * static_cast<std::streamoff>(sizeof(std::uint32_t))
+        + 5 * static_cast<std::streamoff>(sizeof(std::int32_t))
+        + static_cast<std::streamoff>(sizeof(std::uint64_t));
+}
+
+constexpr std::streamoff SnapshotFirstConfigBoolOffset()
+{
+    return SnapshotHeaderBytes() + 408;
+}
+
+constexpr std::streamoff SnapshotStatusOffset()
+{
+    return SnapshotHeaderBytes() + 424;
 }
 
 SolverConfig MakeNonDefaultConfig()
@@ -75,7 +115,7 @@ SolverConfig MakeNonDefaultConfig()
     config.regularization_step = 1e-5;
     config.singular_threshold = 1e-6;
     config.huge_penalty = 9e8;
-    config.inertia_max_retries = 3;
+    config.linear_solve_max_attempts = 3;
 
     config.tol_con = 2e-3;
     config.tol_dual = 3e-3;
@@ -427,15 +467,55 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotConfigEnumAtomically)
     std::remove(filename.c_str());
 }
 
+TEST(SolverSnapshotTest, SaveRejectsInvalidSnapshotStatusAndRuntimeMetadata)
+{
+    MiniSolver<CarModel, 10> solver(2, Backend::CPU_SERIAL);
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+
+    auto expect_invalid_save = [&](auto mutate, const char* stem) {
+        auto snapshot = SnapshotIO::capture_snapshot(solver);
+        mutate(snapshot);
+        const std::string filename = MakeUniqueTestFilename(stem, ".bin");
+        EXPECT_EQ(
+            SnapshotIO::save_snapshot(filename, snapshot).status, SnapshotStatus::InvalidSnapshot);
+        EXPECT_FALSE(FileExists(filename));
+        std::remove(filename.c_str());
+    };
+
+    expect_invalid_save([](auto& snapshot) { snapshot.status = static_cast<SolverStatus>(12345); },
+        "test_invalid_status_save");
+    expect_invalid_save(
+        [](auto& snapshot) { snapshot.iterations = -1; }, "test_invalid_iterations_save");
+    expect_invalid_save([](auto& snapshot) { snapshot.mu = 0.0; }, "test_invalid_mu_save");
+    expect_invalid_save([](auto& snapshot) { snapshot.reg = -1.0; }, "test_invalid_reg_save");
+}
+
 TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotStatusAtomically)
 {
     MiniSolver<CarModel, 10> solverA(2, Backend::CPU_SERIAL);
     using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
-    auto snapshot = SnapshotIO::capture_snapshot(solverA);
-    snapshot.status = static_cast<SolverStatus>(12345);
-
     std::string filename = MakeUniqueTestFilename("test_invalid_status_snapshot", ".bin");
-    ASSERT_EQ(SnapshotIO::save_snapshot(filename, snapshot).status, SnapshotStatus::OK);
+    ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
+    ASSERT_TRUE(OverwriteInt32At(filename, SnapshotStatusOffset(), 12345));
+
+    SolverConfig preserved;
+    preserved.mu_init = 0.321;
+    MiniSolver<CarModel, 10> solverB(1, Backend::CPU_SERIAL, preserved);
+    SnapshotResult load_result = SnapshotIO::load_case(filename, solverB);
+    EXPECT_EQ(load_result.status, SnapshotStatus::InvalidSnapshot);
+    EXPECT_EQ(solverB.get_horizon(), 1);
+    EXPECT_DOUBLE_EQ(solverB.get_config().mu_init, 0.321);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SolverSnapshotTest, LoadRejectsInvalidBooleanEncoding)
+{
+    MiniSolver<CarModel, 10> solverA(2, Backend::CPU_SERIAL);
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    std::string filename = MakeUniqueTestFilename("test_invalid_bool_snapshot", ".bin");
+    ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
+    ASSERT_TRUE(OverwriteByteAt(filename, SnapshotFirstConfigBoolOffset(), 2u));
 
     SolverConfig preserved;
     preserved.mu_init = 0.321;

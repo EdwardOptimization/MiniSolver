@@ -190,7 +190,7 @@ namespace detail {
             return status;
         }
         if (conf.max_iters < 0 || conf.line_search_max_iters < 0 || conf.max_restoration_iters < 0
-            || conf.inertia_max_retries < 0 || conf.newton_config.max_iters < 0) {
+            || conf.linear_solve_max_attempts < 1 || conf.newton_config.max_iters < 0) {
             return ApiStatus::InvalidArgument;
         }
         if (conf.line_search_type != LineSearchType::NONE && conf.line_search_max_iters <= 0) {
@@ -265,6 +265,33 @@ namespace detail {
         if (conf.reg_scale_down <= 1.0) {
             return ApiStatus::InvalidArgument;
         }
+        status = validate_nonnegative_finite_config_value(conf.regularization_step);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_nonnegative_finite_config_value(conf.singular_threshold);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.huge_penalty);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.tol_con);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.tol_dual);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.tol_mu);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        if (conf.feasible_tol_scale < 1.0) {
+            return ApiStatus::InvalidArgument;
+        }
         status = validate_positive_finite_config_value(conf.min_barrier_slack);
         if (status != ApiStatus::OK) {
             return status;
@@ -305,7 +332,15 @@ namespace detail {
         if (status != ApiStatus::OK) {
             return status;
         }
+        status = validate_nonnegative_finite_config_value(conf.slack_reset_trigger);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
         status = validate_unit_interval_config_value(conf.soc_trigger_alpha);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.merit_nu_init);
         if (status != ApiStatus::OK) {
             return status;
         }

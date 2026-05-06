@@ -316,6 +316,66 @@ TEST(ConfigRegressionTest, SetConfigRejectsInvalidGlobalizationParameters)
     expect_invalid(invalid);
 }
 
+TEST(ConfigRegressionTest, SetConfigRejectsInvalidNumericalControlParameters)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+    MiniSolver<BugTestModel, 10> solver(3, Backend::CPU_SERIAL, conf);
+
+    auto expect_invalid = [&](const SolverConfig& invalid) {
+        const SolverConfig before = solver.get_config();
+        EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+        EXPECT_EQ(solver.get_config().linear_solve_max_attempts, before.linear_solve_max_attempts);
+        EXPECT_DOUBLE_EQ(solver.get_config().tol_con, before.tol_con);
+        EXPECT_DOUBLE_EQ(solver.get_config().huge_penalty, before.huge_penalty);
+    };
+
+    SolverConfig invalid = solver.get_config();
+    invalid.linear_solve_max_attempts = 0;
+    expect_invalid(invalid);
+
+    SolverConfig single_attempt = solver.get_config();
+    single_attempt.linear_solve_max_attempts = 1;
+    EXPECT_EQ(solver.set_config(single_attempt), ApiStatus::OK);
+    EXPECT_EQ(solver.get_config().linear_solve_max_attempts, 1);
+
+    invalid = solver.get_config();
+    invalid.tol_con = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.tol_dual = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.tol_mu = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.feasible_tol_scale = 0.5;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.slack_reset_trigger = -1e-3;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.merit_nu_init = 0.0;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.singular_threshold = -1e-4;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.regularization_step = -1e-6;
+    expect_invalid(invalid);
+
+    invalid = solver.get_config();
+    invalid.huge_penalty = 0.0;
+    expect_invalid(invalid);
+}
+
 TEST(ConfigRegressionTest, SetConfigRejectsInvalidEnumValues)
 {
     SolverConfig conf;

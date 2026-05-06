@@ -192,10 +192,12 @@ struct SolverConfig {
     double reg_scale_down = 2.0;
     double regularization_step = 1e-6; // Step size for regularization
 
-    // Inertia Tuning
+    // Linear solve retry tuning. This is a total attempt count: 1 means the
+    // current regularization is tried once with no retry; later attempts may
+    // increase regularization after failed factorizations.
     double singular_threshold = 1e-4; // For IGNORE_SINGULAR
     double huge_penalty = 1e9; // Penalty for frozen directions
-    int inertia_max_retries = 5;
+    int linear_solve_max_attempts = 5;
 
     // --- Convergence Tolerances ---
     // Primal feasibility tolerance in internal solver units. With constraint or

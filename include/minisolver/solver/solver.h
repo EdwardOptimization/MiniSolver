@@ -972,18 +972,18 @@ private:
     bool solve_linear_system_with_retries_(
         TrajArray& traj, double target_mu, const TrajArray* affine_traj, bool clamp_reg_to_min)
     {
-        bool success = false;
-        for (int try_count = 0; try_count < config.inertia_max_retries; ++try_count) {
+        for (int attempt = 0; attempt < config.linear_solve_max_attempts; ++attempt) {
             const LinearSolveResult linear_result = linear_solver->solve(traj, N, target_mu,
                 context_.solve.reg, config.inertia_strategy, config, affine_traj);
             record_linear_solver_diagnostics_(linear_result);
-            success = linear_result.ok;
-            if (success) {
-                break;
+            if (linear_result.ok) {
+                return true;
             }
-            increase_regularization_after_failed_solve_(clamp_reg_to_min);
+            if (attempt + 1 < config.linear_solve_max_attempts) {
+                increase_regularization_after_failed_solve_(clamp_reg_to_min);
+            }
         }
-        return success;
+        return false;
     }
 
     void record_linear_solver_diagnostics_(const LinearSolveResult& result)

@@ -238,7 +238,7 @@ int main()
     // Enable dynamics-defect rollout refinement for Mehrotra to handle ill-conditioning near
     // solution.
     c3.direction_refinement = DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT;
-    c3.inertia_max_retries = 2; // Allow some retries if factorization fails
+    c3.linear_solve_max_attempts = 2; // Allow one retry if factorization fails
     c3.filter_gamma_theta = 1e-5; // Relax filter slightly
     results.push_back(run_test("ExtBicycle (Mehrotra)", c3));
 

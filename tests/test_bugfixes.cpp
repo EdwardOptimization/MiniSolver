@@ -1970,7 +1970,7 @@ TEST(BugfixTest, MehrotraDoesNotUpdateMuWhenCorrectorSolveFails)
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
-    config.inertia_max_retries = 1;
+    config.linear_solve_max_attempts = 2;
     config.max_iters = 1;
     config.mu_init = 1e-1;
 
@@ -1982,7 +1982,7 @@ TEST(BugfixTest, MehrotraDoesNotUpdateMuWhenCorrectorSolveFails)
     const SolverStatus status = solver.solve();
 
     EXPECT_EQ(status, SolverStatus::LINEAR_SOLVE_FAILED);
-    EXPECT_EQ(fake_solver_ptr->calls, 2);
+    EXPECT_EQ(fake_solver_ptr->calls, 3);
     EXPECT_EQ(solver.get_info().regularization_escalation_count, 1)
         << "Failed Riccati retries should be visible in SolverInfo diagnostics";
     EXPECT_DOUBLE_EQ(Access::mu(solver), config.mu_init)
@@ -2022,7 +2022,7 @@ TEST(BugfixTest, TinyStepRecoveryFailureReturnsRestorationFailed)
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
     config.max_iters = 1;
-    config.inertia_max_retries = 1;
+    config.linear_solve_max_attempts = 1;
     config.line_search_type = LineSearchType::NONE;
     config.enable_slack_reset = false;
     config.enable_feasibility_restoration = true;
