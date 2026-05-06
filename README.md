@@ -150,6 +150,28 @@ For hard real-time / MCU targets where `<iostream>` is unwanted:
 * Compile-time `MINISOLVER_LOG_LEVEL=MLOG_LEVEL_NONE` removes every `MLOG_*`
   call entirely.
 
+### Embedded Build Profile (`MINISOLVER_EMBEDDED_PROFILE`)
+
+When you want a one-flag MCU build instead of opting in to each knob
+individually, configure with `-DMINISOLVER_EMBEDDED_PROFILE=ON`. The bundle:
+
+* Forces `USE_CUSTOM_MATRIX=ON` and `USE_EIGEN=OFF` (no Eigen dependency).
+* Forces `MINISOLVER_DISABLE_STREAM_LOGGER=ON` and adds the compile definition
+  `MINISOLVER_LOG_LEVEL=0` so every `MLOG_*` call is removed.
+* Defines `MINISOLVER_EMBEDDED_PROFILE` so model code can guard
+  host-only diagnostics.
+* Disables `MINISOLVER_BUILD_TESTS`, `MINISOLVER_BUILD_EXAMPLES`,
+  `MINISOLVER_BUILD_TOOLS`, and `MINISOLVER_FETCH_DEPS` so the build never
+  pulls non-embedded dependencies.
+
+The profile also enables a single OBJECT target,
+`minisolver_embedded_smoke`, which instantiates a minimal MiniSolver template
+configuration. The CI job `embedded-arm-cortex-m4` cross-compiles this target
+with `cmake/toolchains/arm-cortex-m4.cmake` and runs
+`scripts/check_arm_size_budget.sh build_arm` to enforce a 256 KiB budget on
+the resulting `.o` file. Tightening or loosening that budget should be
+documented in `docs/testing/testing-matrix.md` in the same change.
+
 ### API Error Contract
 
 Public setters return `ApiStatus`. `ApiStatus::OK` means the value was

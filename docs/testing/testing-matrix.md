@@ -79,6 +79,7 @@ Out of scope for this matrix:
 | Solver snapshot/replay | Round-trip config, trajectory, soft slacks, backend policy, model fingerprint, and atomic failure behavior |
 | Logger callback contract | `test_logger` covers callback capture, default config, and `silent_fallback` runtime behavior |
 | Embedded no-stream logger profile | `test_logger_no_stream` compiles the same logger test with `MINISOLVER_DISABLE_STREAM_LOGGER` defined to keep `<iostream>` out and silence stream fallbacks |
+| Embedded ARM cross-build | CI job `embedded-arm-cortex-m4` configures with `MINISOLVER_EMBEDDED_PROFILE=ON` and `cmake/toolchains/arm-cortex-m4.cmake`, builds `minisolver_embedded_smoke`, and `scripts/check_arm_size_budget.sh` enforces a 256 KiB budget on the smoke object so embedded regressions surface before tagging a release |
 | API error contract | `test_config_regressions` and `test_status` cover `ApiStatus` returns for setters, checked scalar getters, and constructor validation |
 | Line-search backtracking visibility | `test_line_search` asserts `SolverInfo::line_search_backtracking_count` accumulates on strongly nonlinear merit cases |
 

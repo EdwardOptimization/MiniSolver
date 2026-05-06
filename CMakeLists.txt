@@ -43,6 +43,22 @@ option(MINISOLVER_BUILD_TOOLS "Build MiniSolver tools and local benchmarks" ON)
 option(MINISOLVER_FETCH_DEPS "Fetch missing third-party dependencies during configure" ON)
 option(MINISOLVER_DISABLE_STREAM_LOGGER
     "Embedded profile: drop <iostream> from logger.h and silence stdout/stderr fallback" OFF)
+option(MINISOLVER_EMBEDDED_PROFILE
+    "Bundled embedded profile: forces USE_CUSTOM_MATRIX, MINISOLVER_DISABLE_STREAM_LOGGER, MINISOLVER_LOG_LEVEL=NONE, and disables tests/examples/tools"
+    OFF)
+if(MINISOLVER_EMBEDDED_PROFILE)
+    message(STATUS "MINISOLVER_EMBEDDED_PROFILE=ON: enforcing embedded build invariants")
+    set(USE_EIGEN OFF CACHE BOOL "Use Eigen backend for linear algebra" FORCE)
+    set(USE_CUSTOM_MATRIX ON CACHE BOOL "Use custom MiniMatrix backend" FORCE)
+    set(MINISOLVER_DISABLE_STREAM_LOGGER ON CACHE BOOL
+        "Drop <iostream> from logger.h and silence stdout/stderr fallback" FORCE)
+    set(MINISOLVER_BUILD_TESTS OFF CACHE BOOL "Build MiniSolver tests" FORCE)
+    set(MINISOLVER_BUILD_EXAMPLES OFF CACHE BOOL "Build MiniSolver examples" FORCE)
+    set(MINISOLVER_BUILD_TOOLS OFF CACHE BOOL "Build MiniSolver tools and local benchmarks" FORCE)
+    set(MINISOLVER_FETCH_DEPS OFF CACHE BOOL "Fetch missing third-party dependencies" FORCE)
+    add_compile_definitions(MINISOLVER_LOG_LEVEL=0)
+    add_compile_definitions(MINISOLVER_EMBEDDED_PROFILE)
+endif()
 if(MINISOLVER_DISABLE_STREAM_LOGGER)
     add_compile_definitions(MINISOLVER_DISABLE_STREAM_LOGGER)
 endif()
@@ -243,6 +259,23 @@ target_compile_definitions(minisolver_lib INTERFACE
 
 if(TARGET gpu_backend)
     target_link_libraries(minisolver_lib INTERFACE gpu_backend)
+endif()
+
+# --- Embedded smoke target ---
+# When MINISOLVER_EMBEDDED_PROFILE is enabled we build a single object file
+# that instantiates a minimal MiniSolver template configuration. This serves
+# two purposes:
+#   1. Compile-fence the embedded profile end-to-end (no <iostream>, no
+#      exception-throwing default logger), catching ABI/stream regressions.
+#   2. Provide a stable .o artifact that the binary-size budget script can
+#      measure on the ARM Cortex-M cross build.
+if(MINISOLVER_EMBEDDED_PROFILE)
+    add_library(minisolver_embedded_smoke OBJECT cmake/embedded/smoke.cpp)
+    target_link_libraries(minisolver_embedded_smoke PRIVATE minisolver_lib)
+    set_target_properties(minisolver_embedded_smoke PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED YES
+        POSITION_INDEPENDENT_CODE OFF)
 endif()
 
 # --- Examples ---

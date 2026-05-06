@@ -118,3 +118,34 @@ jobs:
           else
             echo "benchmark_suite not found, skipping."
           fi
+
+  embedded-arm-cortex-m4:
+    name: Embedded ARM Cortex-M4 cross-build
+    needs: style-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install ARM cross-toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake make gcc-arm-none-eabi binutils-arm-none-eabi
+
+      - name: Configure embedded profile
+        run: |
+          cmake -S . -B build_arm \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/arm-cortex-m4.cmake \
+            -DMINISOLVER_EMBEDDED_PROFILE=ON \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build embedded smoke object for ARM
+        run: |
+          # minisolver_lib is INTERFACE (header-only); the smoke OBJECT target
+          # is the canonical compile-fence and size-budget anchor for the
+          # embedded profile.
+          cmake --build build_arm --target minisolver_embedded_smoke -- -j"$(nproc)"
+
+      - name: Check binary size budget
+        run: |
+          ./scripts/check_arm_size_budget.sh build_arm
