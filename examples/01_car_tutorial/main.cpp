@@ -128,12 +128,17 @@ int main(int /*argc*/, char** /*argv*/)
     solver.rollout_dynamics();
 
     std::cout << ">> Solving (Cold Start)...\n";
-    // Optional: capture inputs before solving, then persist them only if solve fails.
-    // auto pre_solve = SolverSnapshotIO<CarModel, 50>::capture_snapshot(solver);
-
+    // Debug/replay pattern: capture the pre-solve state, then persist it only if solve fails.
+    // This is an allocating debug snapshot, appropriate for examples and failure reproduction.
+    using SnapshotIO = SolverSnapshotIO<CarModel, 50>;
+    const auto pre_solve = SnapshotIO::capture_snapshot(solver);
     SolverStatus status = solver.solve();
-    // SolverSnapshotIO<CarModel, 50>::save_failure_snapshot("failed_case.msnap", pre_solve,
-    // status);
+    const SnapshotResult snapshot_result
+        = SnapshotIO::save_failure_snapshot("failed_case.msnap", pre_solve, status);
+    if (!snapshot_result) {
+        std::cerr << ">> Failed to save failure snapshot: "
+                  << snapshot_status_to_string(snapshot_result.status) << "\n";
+    }
     std::cout << ">> Final Status: " << status_to_string(status) << "\n";
 
     save_trajectory_csv("trajectory.csv", solver, dts, obs_x, obs_y, obs_rad);

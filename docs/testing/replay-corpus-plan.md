@@ -48,6 +48,31 @@ Every scenario should expose or assert the following fields when relevant:
 | Badly scaled equivalent constraints | Scaled vs unscaled feasibility reporting | `test_replay_corpus` |
 | Failure snapshot workflow | Save pre-solve state only when solve fails and reload it for replay | `test_replay_corpus` |
 
+## Current Decision From Initial Corpus
+
+The initial corpus is a correctness and replay baseline, not a license to enable
+new default algorithms.
+
+Current evidence supports:
+
+- keeping snapshot failure capture as the standard bug-report workflow;
+- requiring new solver diagnostics to appear in corpus metrics when they affect
+  solve decisions;
+- continuing to expand deterministic in-repository scenarios before adding new
+  theory features.
+
+Current evidence does not yet justify:
+
+- enabling `RUIZ_EQUILIBRATION` or other scaling modes in the default
+  `SolverConfig`;
+- implementing Pareto-frontier filter history;
+- implementing full KKT iterative refinement;
+- adding inertia-detection KKT factorization;
+- changing SOC semantics beyond already-covered regression fixes.
+
+Reopen those algorithm decisions only when a corpus case or MiniSolver-Bench
+scenario shows a concrete failure, accuracy gap, or runtime regression.
+
 ## Expansion Order
 
 1. Add a nonlinear obstacle/SOC scenario after the current SOC semantics are

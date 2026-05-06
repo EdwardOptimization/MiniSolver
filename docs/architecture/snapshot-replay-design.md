@@ -47,6 +47,23 @@ if (status != SolverStatus::OPTIMAL && status != SolverStatus::FEASIBLE) {
 `capture_snapshot()` is an allocating debug snapshot. Do not call it from a
 hard real-time control loop unless allocation is acceptable in that context.
 
+The car tutorial uses this pattern directly:
+
+```bash
+cmake --build .build --target car_demo replay_solver -j$(nproc)
+./.build/examples/01_car_tutorial/car_demo
+```
+
+If the example solve fails, it writes `failed_case.msnap`. Replay it with:
+
+```bash
+./.build/replay_solver failed_case.msnap
+```
+
+`tools/replay_solver.cpp` is intentionally model-specific: it is compiled for
+`CarModel` and `MAX_N=100`. For another generated model, build a matching replay
+tool with the same model type and a large enough `MAX_N`.
+
 ## Config Codec Contract
 
 Snapshot config read/write uses the single field table in
@@ -91,4 +108,3 @@ prove that dynamics, cost, or constraint equations are unchanged.
 
 For replay corpora and bug reports, prefer explicit fingerprints for handwritten
 models.
-
