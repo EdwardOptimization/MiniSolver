@@ -1,5 +1,6 @@
 #pragma once
 
+#include "minisolver/core/model_traits.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include "minisolver/integrator/newton_solver.h"
@@ -410,6 +411,13 @@ namespace detail {
     void dispatch_compute_dynamics(
         Knot& kp, IntegratorType type, double dt, const NewtonConfig& newton_config = {})
     {
+        if constexpr (has_generated_integrator_v<Model>) {
+            if (Model::generated_integrator == IntegratorType::DISCRETE
+                && type != IntegratorType::DISCRETE) {
+                throw std::invalid_argument(
+                    "Next(state) dynamics require IntegratorType::DISCRETE");
+            }
+        }
         if (is_implicit_integrator(type)) {
             if constexpr (has_dynamics_continuous_v<Model, double>) {
                 ImplicitIntegrator<Model>::compute_dynamics(kp, type, dt, newton_config);
@@ -427,6 +435,13 @@ namespace detail {
         const MSVec<double, Model::NU>& u, const MSVec<double, Model::NP>& p, double dt,
         IntegratorType type, const NewtonConfig& newton_config = {})
     {
+        if constexpr (has_generated_integrator_v<Model>) {
+            if (Model::generated_integrator == IntegratorType::DISCRETE
+                && type != IntegratorType::DISCRETE) {
+                throw std::invalid_argument(
+                    "Next(state) dynamics require IntegratorType::DISCRETE");
+            }
+        }
         if (is_implicit_integrator(type)) {
             if constexpr (has_dynamics_continuous_v<Model, double>) {
                 return ImplicitIntegrator<Model>::integrate(x, u, p, dt, type, newton_config);

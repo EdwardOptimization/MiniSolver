@@ -1,6 +1,6 @@
 import tempfile
 
-from common import OptimalControlModel, reject, require
+from common import Dot, OptimalControlModel, reject, require
 
 
 def generate_chain_model(integrator_type):
@@ -13,9 +13,9 @@ def generate_chain_model(integrator_type):
     #   Jx has (1,0), (2,1), so explicit Euler A misses A(2,0).
     #   (I - dt*Jx)^-1 has transitive fill-in, so implicit Riccati pattern
     #   must conservatively keep A(2,0) and B(2,0).
-    model.set_dynamics(x0, u)
-    model.set_dynamics(x1, x0)
-    model.set_dynamics(x2, x1)
+    model.subject_to(Dot(x0) == u)
+    model.subject_to(Dot(x1) == x0)
+    model.subject_to(Dot(x2) == x1)
     model.minimize(x0**2 + x1**2 + x2**2 + u**2)
 
     with tempfile.TemporaryDirectory() as tmpdir:

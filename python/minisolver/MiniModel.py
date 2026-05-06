@@ -29,6 +29,34 @@ CPP_GENERATED_RESERVED_PREFIXES = (
     "d2_", "rhs_", "scale_",
 )
 
+
+class DynamicsEquation:
+    def __init__(self, mode, state, rhs):
+        self.mode = mode
+        self.state = state
+        self.rhs = rhs
+
+
+class DynamicsRef:
+    def __init__(self, mode, state):
+        self.mode = mode
+        self.state = state
+
+    def __eq__(self, rhs):
+        return DynamicsEquation(self.mode, self.state, rhs)
+
+    def __repr__(self):
+        return f"{self.mode}({self.state})"
+
+
+def Dot(state):
+    return DynamicsRef("dot", state)
+
+
+def Next(state):
+    return DynamicsRef("next", state)
+
+
 class OptimalControlModel:
     def __init__(self, name="Model"):
         self.states = []
@@ -37,8 +65,11 @@ class OptimalControlModel:
         self._validate_cpp_identifier("model", name)
         self.name = name
         
-        # Dynamics: map state_symbol -> expr
+        # Dynamics: Dot(state) for continuous ODEs or Next(state) for direct
+        # discrete maps. The two modes intentionally cannot be mixed.
+        self.dynamics_mode = None
         self.dynamics_rhs = {}
+        self.next_state_rhs = {}
         
         # Objective
         self.objective = 0.0
@@ -127,15 +158,21 @@ class OptimalControlModel:
             return symbols[0]
         return tuple(symbols)
 
-    def set_dynamics(self, state, expr):
-        """
-        Set continuous dynamics: dot(state) = expr
-        """
-        if state not in self.states:
-            raise ValueError(f"Unknown state: {state}")
-        expr = sp.sympify(expr)
+    def _set_dynamics_equation(self, equation):
+        if equation.state not in self.states:
+            raise ValueError(f"Unknown state: {equation.state}")
+        if self.dynamics_mode is None:
+            self.dynamics_mode = equation.mode
+        elif self.dynamics_mode != equation.mode:
+            raise ValueError("Cannot mix Dot and Next dynamics in one model")
+
+        expr = sp.sympify(equation.rhs)
         self._validate_declared_symbols("dynamics", expr)
-        self.dynamics_rhs[state] = expr
+
+        rhs_map = self.dynamics_rhs if equation.mode == "dot" else self.next_state_rhs
+        if equation.state in rhs_map:
+            raise ValueError(f"Dynamics already specified for state: {equation.state}")
+        rhs_map[equation.state] = expr
 
     def _is_numeric_expr(self, expr):
         return len(sp.sympify(expr).free_symbols) == 0
@@ -264,8 +301,10 @@ class OptimalControlModel:
         add("states", [s.name for s in self.states])
         add("controls", [u.name for u in self.controls])
         add("parameters", [p.name for p in self.parameters])
+        add("dynamics_mode", self.dynamics_mode)
         for state in self.states:
-            add(f"dynamics:{state.name}", self.dynamics_rhs.get(state, 0))
+            add(f"dot:{state.name}", self.dynamics_rhs.get(state, 0))
+            add(f"next:{state.name}", self.next_state_rhs.get(state, 0))
         add("objective", self.objective)
         add("residuals", self.residuals)
         add("residual_weights", self.residual_weights)
@@ -304,6 +343,14 @@ class OptimalControlModel:
         or Dual Bounding (L1) during the solve phase.
         """
         for constraint in constraints:
+            if isinstance(constraint, DynamicsEquation):
+                self._set_dynamics_equation(constraint)
+                continue
+            if isinstance(constraint, (bool, sp.Equality)):
+                raise ValueError("Use Dot/Next dynamics syntax, e.g. Dot(state) == expr or "
+                                 "Next(state) == expr; "
+                                 "general equality constraints are not supported")
+
             expr = constraint
             if isinstance(constraint, sp.LessThan): # lhs <= rhs -> lhs - rhs <= 0
                 expr = constraint.lhs - constraint.rhs
@@ -1065,11 +1112,29 @@ class OptimalControlModel:
                 
         return code
 
-    def generate(self, output_dir="include/model", use_fused_riccati=True, integrator_type="RK4_EXPLICIT"):
-        missing_dynamics = [s.name for s in self.states if s not in self.dynamics_rhs]
+    def generate(self, output_dir="include/model", use_fused_riccati=True, integrator_type=None):
+        if integrator_type is None:
+            integrator_type = "DISCRETE" if self.dynamics_mode == "next" else "RK4_EXPLICIT"
+
+        valid_integrators = {
+            "EULER_EXPLICIT", "EULER_IMPLICIT", "RK2_EXPLICIT",
+            "RK2_IMPLICIT", "RK4_EXPLICIT", "RK4_IMPLICIT", "DISCRETE",
+        }
+        if integrator_type not in valid_integrators:
+            raise ValueError(f"Unknown integrator_type: {integrator_type}")
+
+        if self.dynamics_mode is None:
+            missing_dynamics = [s.name for s in self.states]
+        else:
+            dynamics_map = self.dynamics_rhs if self.dynamics_mode == "dot" else self.next_state_rhs
+            missing_dynamics = [s.name for s in self.states if s not in dynamics_map]
         if missing_dynamics:
             names = ", ".join(missing_dynamics)
             raise ValueError(f"Missing dynamics for state(s): {names}")
+        if self.dynamics_mode == "dot" and integrator_type == "DISCRETE":
+            raise ValueError("DISCRETE integrator requires Next(state) dynamics")
+        if self.dynamics_mode == "next" and integrator_type != "DISCRETE":
+            raise ValueError("Next(state) dynamics require integrator_type='DISCRETE'")
 
         # 1. Vectorize
         x_vec = sp.Matrix(self.states)
@@ -1089,13 +1154,18 @@ class OptimalControlModel:
         
         self.use_fused_riccati = use_fused_riccati
         
-        # 2. Dynamics (Continuous)
+        # 2. Dynamics
         dt_sym = sp.symbols('dt')
         
-        # Continuous f(x,u)
-        f_cont_list = []
-        for s in self.states:
-            f_cont_list.append(self.dynamics_rhs.get(s, 0))
+        # Continuous f(x,u) for Dot mode. Next mode is a direct discrete map and
+        # intentionally provides a zero continuous placeholder only for generic
+        # interfaces that are not used by the DISCRETE dispatch path.
+        if self.dynamics_mode == "dot":
+            f_cont_list = [self.dynamics_rhs[s] for s in self.states]
+            x_next_direct = None
+        else:
+            f_cont_list = [0 for _ in self.states]
+            x_next_direct = sp.Matrix([self.next_state_rhs[s] for s in self.states])
         f_cont = sp.Matrix(f_cont_list)
         
         # Helper for variable substitution
@@ -1111,38 +1181,45 @@ class OptimalControlModel:
         # discrete Jacobian computation happen in the integrator module.
         integrators = {}
 
-        # Euler Explicit
-        x_next_euler = x_vec + dt_sym * f_cont
-        integrators['EULER_EXPLICIT'] = x_next_euler
+        if self.dynamics_mode == "dot":
+            # Euler Explicit
+            x_next_euler = x_vec + dt_sym * f_cont
+            integrators['EULER_EXPLICIT'] = x_next_euler
 
-        # RK2 Explicit (Heun's / Midpoint)
-        k1_rk2 = f_cont
-        k2_rk2 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk2, u_vec)
-        x_next_rk2 = x_vec + dt_sym * k2_rk2
-        integrators['RK2_EXPLICIT'] = x_next_rk2
+            # RK2 Explicit (Heun's / Midpoint)
+            k1_rk2 = f_cont
+            k2_rk2 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk2, u_vec)
+            x_next_rk2 = x_vec + dt_sym * k2_rk2
+            integrators['RK2_EXPLICIT'] = x_next_rk2
 
-        # RK4 Explicit
-        k1_rk4 = f_cont
-        k2_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk4, u_vec)
-        k3_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k2_rk4, u_vec)
-        k4_rk4 = get_f_subs(x_vec + dt_sym*k3_rk4, u_vec)
-        x_next_rk4 = x_vec + (dt_sym / 6.0) * (k1_rk4 + 2*k2_rk4 + 2*k3_rk4 + k4_rk4)
-        integrators['RK4_EXPLICIT'] = x_next_rk4
+            # RK4 Explicit
+            k1_rk4 = f_cont
+            k2_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk4, u_vec)
+            k3_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k2_rk4, u_vec)
+            k4_rk4 = get_f_subs(x_vec + dt_sym*k3_rk4, u_vec)
+            x_next_rk4 = x_vec + (dt_sym / 6.0) * (k1_rk4 + 2*k2_rk4 + 2*k3_rk4 + k4_rk4)
+            integrators['RK4_EXPLICIT'] = x_next_rk4
 
-        # Map implicit to explicit for the generated switch cases.
-        # The runtime ImplicitIntegrator handles the actual implicit solve.
-        integrators['EULER_IMPLICIT'] = x_next_euler
-        integrators['RK2_IMPLICIT'] = x_next_rk2
-        integrators['RK4_IMPLICIT'] = x_next_rk4
+            # Map implicit to explicit for the generated switch cases.
+            # The runtime ImplicitIntegrator handles the actual implicit solve.
+            integrators['EULER_IMPLICIT'] = x_next_euler
+            integrators['RK2_IMPLICIT'] = x_next_rk2
+            integrators['RK4_IMPLICIT'] = x_next_rk4
+        else:
+            integrators['DISCRETE'] = x_next_direct
 
         # 3. Derivatives & CSE per Integrator
-        code_compute_dyn_body = "        switch(type) {\n"
+        code_compute_dyn_body = ""
         
-        groups = [
-            (['EULER_EXPLICIT', 'EULER_IMPLICIT'], integrators['EULER_EXPLICIT']),
-            (['RK2_EXPLICIT', 'RK2_IMPLICIT'], integrators['RK2_EXPLICIT']),
-            (['RK4_EXPLICIT', 'RK4_IMPLICIT'], integrators['RK4_EXPLICIT'])
-        ]
+        if self.dynamics_mode == "dot":
+            code_compute_dyn_body = "        switch(type) {\n"
+            groups = [
+                (['EULER_EXPLICIT', 'EULER_IMPLICIT'], integrators['EULER_EXPLICIT']),
+                (['RK2_EXPLICIT', 'RK2_IMPLICIT'], integrators['RK2_EXPLICIT']),
+                (['RK4_EXPLICIT', 'RK4_IMPLICIT'], integrators['RK4_EXPLICIT'])
+            ]
+        else:
+            groups = [(['DISCRETE'], integrators['DISCRETE'])]
         
         # Track sparsity union across all integrators
         non_zeros_A = set()
@@ -1175,10 +1252,18 @@ class OptimalControlModel:
             # CSE
             repl_dyn, reduced_dyn = sp.cse([x_next_expr, A_expr, B_expr], symbols=sp.numbered_symbols("tmp_d"))
             
-            # Generate Case Statements
-            for label in labels:
-                code_compute_dyn_body += f"            case IntegratorType::{label}:\n"
-            code_compute_dyn_body += "            {\n"
+            # Generate Case Statements. DISCRETE models are direct maps, so the
+            # runtime integrator enum and dt are intentionally ignored.
+            if self.dynamics_mode == "dot":
+                for label in labels:
+                    code_compute_dyn_body += f"            case IntegratorType::{label}:\n"
+                code_compute_dyn_body += "            {\n"
+            else:
+                code_compute_dyn_body += "        // Direct discrete dynamics generated from Next(state) equations.\n"
+                code_compute_dyn_body += "        if (type != IntegratorType::DISCRETE) {\n"
+                code_compute_dyn_body += "            throw std::invalid_argument(\"Next(state) dynamics require IntegratorType::DISCRETE\");\n"
+                code_compute_dyn_body += "        }\n"
+                code_compute_dyn_body += "        (void)dt;\n"
             
             # Body
             for name, val in repl_dyn:
@@ -1216,10 +1301,14 @@ class OptimalControlModel:
                         else:
                              code_compute_dyn_body += f"                kp.B({r},{c}) = {sp.ccode(val)};\n"
 
-            code_compute_dyn_body += "                break;\n"
-            code_compute_dyn_body += "            }\n"
+            if self.dynamics_mode == "dot":
+                code_compute_dyn_body += "                break;\n"
+                code_compute_dyn_body += "            }\n"
 
-        code_compute_dyn_body += "        }"
+        if self.dynamics_mode == "dot":
+            code_compute_dyn_body += "            case IntegratorType::DISCRETE:\n"
+            code_compute_dyn_body += "                throw std::invalid_argument(\"DISCRETE integrator requires Next(state) dynamics\");\n"
+            code_compute_dyn_body += "        }"
 
         # 3.2 Continuous Jacobians for implicit integrators
         # Compute Jx = df/dx and Ju = df/du symbolically from f_cont.
@@ -1366,11 +1455,72 @@ class OptimalControlModel:
             code_dyn_cont += f"        xdot({i}) = {sp.ccode(f_cont[i])};\n"
         code_dyn_cont += "        return xdot;\n"
 
+        if self.dynamics_mode == "dot":
+            code_integrate = """        switch(type) {
+            case IntegratorType::EULER_EXPLICIT:
+                return x_in + dynamics_continuous(x_in, u_in, p_in) * dt;
+
+            case IntegratorType::RK2_EXPLICIT:
+            {
+               auto k1 = dynamics_continuous(x_in, u_in, p_in);
+               auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
+               return x_in + k2 * dt;
+            }
+
+            case IntegratorType::EULER_IMPLICIT:
+            {
+                // Simple Fixed-Point Iteration for x_next = x + f(x_next, u) * dt
+                MSVec<T, NX> x_next = x_in; // Guess
+                for(int i=0; i<5; ++i) {
+                    x_next = x_in + dynamics_continuous(x_next, u_in, p_in) * dt;
+                }
+                return x_next;
+            }
+
+            case IntegratorType::RK2_IMPLICIT:
+            {
+                // Implicit Midpoint: k = f(x + 0.5*dt*k). x_next = x + dt*k
+                MSVec<T, NX> k = dynamics_continuous(x_in, u_in, p_in); // Guess k0
+                for(int i=0; i<5; ++i) {
+                    k = dynamics_continuous<T>(x_in + k * (0.5 * dt), u_in, p_in);
+                }
+                return x_in + k * dt;
+            }
+
+            case IntegratorType::RK4_EXPLICIT:
+            case IntegratorType::RK4_IMPLICIT:
+            {
+               auto k1 = dynamics_continuous(x_in, u_in, p_in);
+               auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
+               auto k3 = dynamics_continuous<T>(x_in + k2 * (0.5 * dt), u_in, p_in);
+               auto k4 = dynamics_continuous<T>(x_in + k3 * dt, u_in, p_in);
+               return x_in + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
+            }
+
+            case IntegratorType::DISCRETE:
+                throw std::invalid_argument("DISCRETE integrator requires Next(state) dynamics");
+        }
+        throw std::invalid_argument("Unsupported integrator type");
+"""
+        else:
+            code_integrate = ""
+            code_integrate += "        if (type != IntegratorType::DISCRETE) {\n"
+            code_integrate += "            throw std::invalid_argument(\"Next(state) dynamics require IntegratorType::DISCRETE\");\n"
+            code_integrate += "        }\n"
+            code_integrate += "        (void)dt;\n"
+            code_integrate += self._generate_unpack_block(source_kp=False, expressions=x_next_direct)
+            code_integrate += "\n        MSVec<T, NX> x_next;\n"
+            for i in range(nx):
+                code_integrate += f"        x_next({i}) = {sp.ccode(x_next_direct[i])};\n"
+            code_integrate += "        return x_next;\n"
+
         # Compute Dynamics Body
         # Note: Discrete dynamics depends on f_cont logic (and thus same symbols), 
         # plus potentially x itself (x_next = x + ...).
         # We pass f_cont and x_vec to be safe.
         dyn_exprs = [f_cont, x_vec]
+        if self.dynamics_mode == "next":
+            dyn_exprs.append(x_next_direct)
         code_compute_dyn = ""
         code_compute_dyn += self._generate_unpack_block(source_kp=True, expressions=dyn_exprs)
         code_compute_dyn += "\n"
@@ -1532,6 +1682,7 @@ class OptimalControlModel:
         content = content.replace("{{NAME_ARRAYS}}", code_names)
         content = content.replace("{{DYNAMICS_CONTINUOUS_BODY}}", code_dyn_cont)
         content = content.replace("{{JACOBIAN_CONTINUOUS_BODY}}", code_jac_body)
+        content = content.replace("{{INTEGRATE_BODY}}", code_integrate)
         content = content.replace("{{COMPUTE_DYNAMICS_BODY}}", code_compute_dyn)
         content = content.replace("{{COMPUTE_CONSTRAINTS_BODY}}", code_compute_con)
         content = content.replace("{{COMPUTE_TRUE_CONSTRAINTS_BODY}}", code_compute_true_con)
@@ -1581,7 +1732,8 @@ class OptimalControlModel:
         
         output_path = os.path.join(output_dir, file_name)
         os.makedirs(output_dir, exist_ok=True)
-        
+        content = "\n".join(line.rstrip() for line in content.splitlines()) + "\n"
+
         print(f"Generating {output_path}...")
         with open(output_path, 'w') as f:
             f.write(content)

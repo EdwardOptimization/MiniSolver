@@ -5,7 +5,7 @@ import sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "python"))
 
-from minisolver.MiniModel import OptimalControlModel
+from minisolver.MiniModel import Dot, OptimalControlModel
 
 
 def build_chain_model(name):
@@ -14,11 +14,11 @@ def build_chain_model(name):
     x0, x1, x2, x3, x4 = model.state("x0", "x1", "x2", "x3", "x4")
     u0, u1 = model.control("u0", "u1")
 
-    model.set_dynamics(x0, u0)
-    model.set_dynamics(x1, x0)
-    model.set_dynamics(x2, x1)
-    model.set_dynamics(x3, x2 + 0.25 * u1)
-    model.set_dynamics(x4, x3)
+    model.subject_to(Dot(x0) == u0)
+    model.subject_to(Dot(x1) == x0)
+    model.subject_to(Dot(x2) == x1)
+    model.subject_to(Dot(x3) == x2 + 0.25 * u1)
+    model.subject_to(Dot(x4) == x3)
 
     model.minimize(8.0 * x0**2)
     model.minimize(6.0 * x1**2)

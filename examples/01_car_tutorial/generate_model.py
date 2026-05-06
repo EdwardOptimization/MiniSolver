@@ -4,7 +4,7 @@ import os
 # Add path to MiniModel
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../python')))
 
-from minisolver.MiniModel import OptimalControlModel
+from minisolver.MiniModel import Dot, OptimalControlModel
 import sympy as sp
 if __name__ == "__main__":
     model = OptimalControlModel("CarModel")
@@ -34,10 +34,10 @@ if __name__ == "__main__":
     w_steer = model.parameter("w_steer")
     
     # 3. Dynamics
-    model.set_dynamics(x, v * sp.cos(theta))
-    model.set_dynamics(y, v * sp.sin(theta))
-    model.set_dynamics(theta, (v / L) * sp.tan(steer))
-    model.set_dynamics(v, acc)
+    model.subject_to(Dot(x) == v * sp.cos(theta))
+    model.subject_to(Dot(y) == v * sp.sin(theta))
+    model.subject_to(Dot(theta) == (v / L) * sp.tan(steer))
+    model.subject_to(Dot(v) == acc)
     
     # 4. Objectives
     model.minimize( w_pos * (x - x_ref)**2 )

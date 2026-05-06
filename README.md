@@ -63,7 +63,7 @@ Define your Optimal Control Problem (OCP) using the Python DSL. This generates t
 
 ```python
 # my_model.py
-from minisolver.MiniModel import OptimalControlModel
+from minisolver.MiniModel import Dot, OptimalControlModel
 import sympy as sp
 
 model = OptimalControlModel(name="DroneModel")
@@ -73,9 +73,9 @@ px, py, vx, vy, vz = model.state("px", "py", "vx", "vy", "vz")
 thrust = model.control("thrust")
 
 # 2. Dynamics (f(x,u))
-model.set_dynamics(px, vx)
-model.set_dynamics(py, vy)
-model.set_dynamics(vz, thrust - 9.81)
+model.subject_to(Dot(px) == vx)
+model.subject_to(Dot(py) == vy)
+model.subject_to(Dot(vz) == thrust - 9.81)
 
 # 3. Objective
 model.add_residual(px - 0.0, weight=20.0) # 0.5 * 20 * (px - 0)^2

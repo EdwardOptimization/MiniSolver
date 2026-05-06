@@ -7,7 +7,7 @@ import sympy as sp
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "python"))
 
-from minisolver.MiniModel import OptimalControlModel
+from minisolver.MiniModel import Dot, OptimalControlModel
 
 
 WHEELBASE = 0.33
@@ -40,11 +40,11 @@ if __name__ == "__main__":
     psi_error = sp.atan2(sp.sin(psi - psi_ref), sp.cos(psi - psi_ref))
     lateral = n_x * (x - x_ref) + n_y * (y - y_ref)
 
-    model.set_dynamics(x, v * sp.cos(psi))
-    model.set_dynamics(y, v * sp.sin(psi))
-    model.set_dynamics(psi, v * sp.tan(delta) / WHEELBASE)
-    model.set_dynamics(v, accel)
-    model.set_dynamics(delta, delta_rate)
+    model.subject_to(Dot(x) == v * sp.cos(psi))
+    model.subject_to(Dot(y) == v * sp.sin(psi))
+    model.subject_to(Dot(psi) == v * sp.tan(delta) / WHEELBASE)
+    model.subject_to(Dot(v) == accel)
+    model.subject_to(Dot(delta) == delta_rate)
 
     model.minimize(10.0 * (x - x_ref) ** 2)
     model.minimize(10.0 * (y - y_ref) ** 2)

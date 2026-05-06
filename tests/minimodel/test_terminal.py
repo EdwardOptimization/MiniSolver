@@ -1,13 +1,13 @@
 import tempfile
 
-from common import OptimalControlModel, compile_and_run
+from common import Dot, OptimalControlModel, compile_and_run
 
 
 def test_generated_terminal_stage_uses_x_only_projection():
     model = OptimalControlModel("TerminalProjectionModel")
     x = model.state("x")
     u = model.control("u")
-    model.set_dynamics(x, u)
+    model.subject_to(Dot(x) == u)
     model.minimize((x + u) ** 2 + 3.0 * u**2)
     model.subject_to(x + 2.0 * u - 4.0 <= 0)
     model.subject_to(u - 1.0 <= 0)

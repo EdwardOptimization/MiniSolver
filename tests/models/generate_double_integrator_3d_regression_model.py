@@ -5,7 +5,7 @@ import sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "python"))
 
-from minisolver.MiniModel import OptimalControlModel
+from minisolver.MiniModel import Dot, OptimalControlModel
 
 
 ACC_MAX = 12.0
@@ -27,12 +27,12 @@ if __name__ == "__main__":
     vy_ref = model.parameter("vy_ref")
     vz_ref = model.parameter("vz_ref")
 
-    model.set_dynamics(x, vx)
-    model.set_dynamics(y, vy)
-    model.set_dynamics(z, vz)
-    model.set_dynamics(vx, ax)
-    model.set_dynamics(vy, ay)
-    model.set_dynamics(vz, az)
+    model.subject_to(Dot(x) == vx)
+    model.subject_to(Dot(y) == vy)
+    model.subject_to(Dot(z) == vz)
+    model.subject_to(Dot(vx) == ax)
+    model.subject_to(Dot(vy) == ay)
+    model.subject_to(Dot(vz) == az)
 
     model.minimize(15.0 * (x - x_ref) ** 2)
     model.minimize(15.0 * (y - y_ref) ** 2)

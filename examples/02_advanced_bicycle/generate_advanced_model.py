@@ -4,7 +4,7 @@ import os
 # Add path to MiniModel
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../python')))
 
-from minisolver.MiniModel import OptimalControlModel
+from minisolver.MiniModel import Dot, OptimalControlModel
 import sympy as sp
 
 # -----------------------------------------------------------
@@ -72,12 +72,12 @@ w_jerk = model.parameter("w_jerk")
 # v_dot = a
 # a_dot = jerk
 
-model.set_dynamics(x, v * sp.cos(theta))
-model.set_dynamics(y, v * sp.sin(theta))
-model.set_dynamics(theta, v * kappa)
-model.set_dynamics(kappa, dkappa)
-model.set_dynamics(v, a)
-model.set_dynamics(a, jerk)
+model.subject_to(Dot(x) == v * sp.cos(theta))
+model.subject_to(Dot(y) == v * sp.sin(theta))
+model.subject_to(Dot(theta) == v * kappa)
+model.subject_to(Dot(kappa) == dkappa)
+model.subject_to(Dot(v) == a)
+model.subject_to(Dot(a) == jerk)
 
 # 4. Objective
 # Track reference
@@ -114,4 +114,3 @@ model.subject_to(-dkappa - 2.0 <= 0)
 # 6. Generate
 output_dir = os.path.join(os.path.dirname(__file__), "generated")
 model.generate(output_dir, use_fused_riccati=use_fused)
-

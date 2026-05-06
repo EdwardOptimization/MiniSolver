@@ -8,7 +8,8 @@ enum class IntegratorType {
     RK2_EXPLICIT,
     RK2_IMPLICIT,
     RK4_EXPLICIT,
-    RK4_IMPLICIT
+    RK4_IMPLICIT,
+    DISCRETE
 };
 
 enum class BarrierStrategy { MONOTONE, ADAPTIVE, MEHROTRA };

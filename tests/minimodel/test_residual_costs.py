@@ -2,14 +2,14 @@ import tempfile
 
 import sympy as sp
 
-from common import OptimalControlModel, compile_and_run, expect_value_error
+from common import Dot, OptimalControlModel, compile_and_run, expect_value_error
 
 
 def test_add_residual_generates_true_gauss_newton_hessian():
     model = OptimalControlModel("ResidualCostModel")
     x = model.state("x")
     u = model.control("u")
-    model.set_dynamics(x, u)
+    model.subject_to(Dot(x) == u)
     model.add_residual(sp.sin(x), weight=3.0)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -55,7 +55,7 @@ def test_add_residual_mixes_general_objective_and_vector_weights():
     model = OptimalControlModel("MixedResidualCostModel")
     x = model.state("x")
     u = model.control("u")
-    model.set_dynamics(x, u)
+    model.subject_to(Dot(x) == u)
     model.minimize(x**4)
     model.add_residual([sp.sin(x), u], weight=[2.0, 0.5])
 
@@ -107,7 +107,7 @@ def test_add_residual_terminal_stage_projects_controls():
     model = OptimalControlModel("TerminalResidualCostModel")
     x = model.state("x")
     u = model.control("u")
-    model.set_dynamics(x, u)
+    model.subject_to(Dot(x) == u)
     model.add_residual(x + u, weight=2.0)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -144,7 +144,7 @@ def test_add_residual_accepts_parameter_vector_weight():
     x = model.state("x")
     u = model.control("u")
     x_weight = model.parameter("x_weight")
-    model.set_dynamics(x, u)
+    model.subject_to(Dot(x) == u)
     model.add_residual([x], weight=[x_weight])
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -186,7 +186,7 @@ def test_add_residual_accepts_parameter_reference():
     u = model.control("u")
     x_ref = model.parameter("x_ref")
     x_weight = model.parameter("x_weight")
-    model.set_dynamics(x, u)
+    model.subject_to(Dot(x) == u)
     model.add_residual(x - x_ref, weight=x_weight)
 
     with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,7 +1,7 @@
 import re
 import sympy as sp
 
-from common import OptimalControlModel, expect_value_error, generate_header_text, require
+from common import Dot, OptimalControlModel, expect_value_error, generate_header_text, require
 
 
 def test_rejects_undeclared_symbols_in_model_expressions():
@@ -10,7 +10,7 @@ def test_rejects_undeclared_symbols_in_model_expressions():
         x = model.state("x")
         u = model.control("u")
         ghost = sp.symbols("ghost")
-        model.set_dynamics(x, u + ghost)
+        model.subject_to(Dot(x) == u + ghost)
 
     def undeclared_objective():
         model = OptimalControlModel("BadObjectiveModel")
@@ -34,7 +34,7 @@ def test_generate_requires_explicit_dynamics_for_every_state():
         model = OptimalControlModel("MissingDynamicsModel")
         x, y = model.state("x", "y")
         u = model.control("u")
-        model.set_dynamics(x, u)
+        model.subject_to(Dot(x) == u)
         model.minimize(x**2 + y**2)
         model.generate()
 
@@ -107,7 +107,7 @@ def test_model_fingerprint_changes_when_model_equations_change():
         model = OptimalControlModel("FingerprintModel")
         x = model.state("x")
         u = model.control("u")
-        model.set_dynamics(x, dynamics_scale * u)
+        model.subject_to(Dot(x) == dynamics_scale * u)
         model.minimize(x**2 + u**2)
         model.subject_to(x - 1.0 <= 0)
         return model

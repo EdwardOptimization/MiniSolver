@@ -114,7 +114,7 @@ namespace detail {
         return enum_is_one_of<IntegratorType, IntegratorType::EULER_EXPLICIT,
             IntegratorType::EULER_IMPLICIT, IntegratorType::RK2_EXPLICIT,
             IntegratorType::RK2_IMPLICIT, IntegratorType::RK4_EXPLICIT,
-            IntegratorType::RK4_IMPLICIT>(value);
+            IntegratorType::RK4_IMPLICIT, IntegratorType::DISCRETE>(value);
     }
 
     inline bool valid_enum(BarrierStrategy value)

@@ -1,2 +1,1 @@
-from .MiniModel import OptimalControlModel
-
+from .MiniModel import Dot, Next, OptimalControlModel

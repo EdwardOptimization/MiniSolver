@@ -1,6 +1,7 @@
 import tempfile
 
 from common import (
+    Dot,
     OptimalControlModel,
     compile_and_run,
     expect_value_error,
@@ -13,8 +14,8 @@ def test_quad_boundary_projection_codegen_uses_unique_temps():
     model = OptimalControlModel("TwoProjModel")
     x0, x1 = model.state("x0", "x1")
     u0 = model.control("u0")
-    model.set_dynamics(x0, u0)
-    model.set_dynamics(x1, 0)
+    model.subject_to(Dot(x0) == u0)
+    model.subject_to(Dot(x1) == 0)
     model.subject_to_quad(
         [[1, 0], [0, 1]], [x0, x1], center=[0, 0], rhs=1.0,
         type="outside", linearize_at_boundary=True)
@@ -41,8 +42,8 @@ def test_quad_boundary_projection_generates_soc_override():
     model = OptimalControlModel("SocProjectionModel")
     x0, x1 = model.state("x0", "x1")
     u0 = model.control("u0")
-    model.set_dynamics(x0, u0)
-    model.set_dynamics(x1, 0)
+    model.subject_to(Dot(x0) == u0)
+    model.subject_to(Dot(x1) == 0)
     model.subject_to_quad(
         [[1, 0], [0, 1]], [x0, x1], center=[0, 0], rhs=1.0,
         type="outside", linearize_at_boundary=True)
@@ -86,8 +87,8 @@ def test_quad_boundary_projection_splits_qp_and_true_residuals():
     model = OptimalControlModel("ConstraintPacketModel")
     x0, x1 = model.state("x0", "x1")
     u0 = model.control("u0")
-    model.set_dynamics(x0, u0)
-    model.set_dynamics(x1, 0)
+    model.subject_to(Dot(x0) == u0)
+    model.subject_to(Dot(x1) == 0)
     model.subject_to_quad(
         [[1, 0], [0, 1]], [x0, x1], center=[0, 0], rhs=1.0,
         type="outside", linearize_at_boundary=True)
@@ -144,7 +145,7 @@ def test_generated_model_uses_automatic_constraint_row_scaling():
     model = OptimalControlModel("GeneratedScaleModel")
     x = model.state("x")
     u = model.control("u")
-    model.set_dynamics(x, 0)
+    model.subject_to(Dot(x) == 0)
     model.subject_to(x - 1.0 <= 0)
     model.subject_to(1000.0 * (x - 1.0) <= 0)
     model.minimize(x**2 + u**2)
