@@ -51,7 +51,6 @@ was renamed to `linear_solve_max_attempts`, requires `>= 1`, and documents that
 `1` means exactly one attempt with no retry.
 
 Evidence: `445cb0c fix: tighten snapshot and linear solve config contracts`.
-
 ### OD-003: Mandatory Handwritten Model Fingerprint
 
 Proposal: Require every handwritten model to define
@@ -185,4 +184,3 @@ write files that `load_case()` would reject for invalid status or runtime
 metadata. Corrupt-file tests should patch valid binary snapshots directly.
 
 Evidence: `445cb0c fix: tighten snapshot and linear solve config contracts`.
-

@@ -273,6 +273,48 @@ For any bug, review finding, numerical change, or high-risk refactor:
 5. run neighboring tests;
 6. commit behavior and evidence together.
 
+### Overdesign Gate
+
+Use this gate before implementing review suggestions, safer-looking
+validations, new public APIs, new config knobs, or theory features.
+
+Classify the proposal first:
+
+- `hard-invariant`: protects a solver invariant that valid inputs must satisfy.
+  Examples include enum range checks, finite values, positive slack/dual
+  interior, and line-search factors in `(0, 1)`.
+- `algorithm-convention`: follows a mature solver convention but is not a
+  universal invariant. Examples include filter switching rules, Mehrotra step
+  variants, scaling profiles, and globalization profiles.
+- `modeling-choice`: constrains how a user formulates a model. Examples include
+  forcing `dt > 0`, forcing model-unit feasibility into solver status, or
+  requiring handwritten models to define replay fingerprints.
+- `product-boundary`: affects release, replay, diagnostics, logging, docs, or
+  user expectations more than solver correctness.
+
+Required questions:
+
+1. Does this protect a MiniSolver invariant, or does it restrict user modeling
+   freedom?
+2. Is there a red test, benchmark, failure trace, or mature-solver reference?
+3. Does it add public API, config surface, hot-path branches, or cross-module
+   coupling?
+4. Can docs, diagnostics, or a deferred ledger entry solve the issue with less
+   coupling?
+
+Decision rules:
+
+- `hard-invariant`: write the red test first, then fix.
+- `algorithm-convention`: research and design first; implement only with a
+  concrete failure case or benchmark target.
+- `modeling-choice`: do not add solver-core validation without explicit user
+  approval.
+- `product-boundary`: prefer docs, report fields, diagnostics, or defer before
+  adding knobs.
+
+Record rejected, deferred, docs-only, or modified review suggestions in
+`docs/reviews/overdesign-ledger.md`.
+
 ### Architecture Gate
 
 Stop before implementation if a fix:

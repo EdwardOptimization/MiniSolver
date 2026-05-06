@@ -12,6 +12,8 @@ evidence logs, and design decisions separate so each file has a clear role.
   route, phase boundaries, and refactor rules.
 - [Agent Harness](architecture/agent-harness.md): project-specific agent rules
   extracted from Codex session interventions.
+- [Review Triage Checklist](reviews/review-triage-checklist.md): classify review
+  findings before deciding fix, docs-only, defer, or reject.
 - [Solver Capability Adoption Plan](architecture/solver-capability-adoption-plan.md):
   which mature-solver ideas MiniSolver should absorb, and which are explicitly
   out of scope.
