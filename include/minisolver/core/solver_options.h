@@ -56,6 +56,21 @@ enum class ProblemScalingMethod {
     RUIZ_EQUILIBRATION
 };
 
+// Coordinate-level scaling hint. The MiniSolver instance owns per-state,
+// per-control, and per-parameter scale factors; this enum selects whether the
+// solver consumes them as a normalization hint for stationarity termination
+// metrics. The hint never rescales primal variables, dynamics Jacobians, the
+// Riccati recursion, or warm-start deltas; full coordinate equilibration in
+// that algebra-level sense is tracked separately in the scaling design doc
+// (Stage 5).
+//
+// Convention: scale_i represents the typical magnitude of coordinate i in
+// model units. With USER_SUPPLIED active, the dual-stationarity infinity norm
+// is computed as `max_i |r_i| * control_scale_i` so coordinates with large
+// natural magnitude do not dominate the convergence test for well-trimmed
+// coordinates.
+enum class CoordinateScalingMethod { NONE, USER_SUPPLIED };
+
 enum class HessianApproximation {
     EXACT, // Exact objective Hessian + constraint Hessian; dynamics Hessian is not included.
     // Objective-only curvature: exact Hessian for general minimize() terms plus
@@ -161,6 +176,16 @@ struct SolverConfig {
     ConstraintScalingMethod constraint_scaling = ConstraintScalingMethod::NONE;
     ObjectiveScalingMethod objective_scaling = ObjectiveScalingMethod::NONE;
     ProblemScalingMethod problem_scaling = ProblemScalingMethod::NONE;
+    // Coordinate-level scaling hint. The per-coordinate scale factors live on
+    // the MiniSolver instance because they are template-sized. The default
+    // NONE keeps current behaviour byte-for-byte; USER_SUPPLIED activates the
+    // weighted dual-stationarity termination metric.
+    CoordinateScalingMethod coordinate_scaling = CoordinateScalingMethod::NONE;
+    // Bounds applied at API entry to user-supplied coordinate scales. Both
+    // ends must be strictly positive and finite so the weighted norm cannot
+    // hide a non-stationary coordinate behind a tiny (or huge) scale factor.
+    double coordinate_scale_min = 1e-6;
+    double coordinate_scale_max = 1e6;
     // Bounds for automatic row/objective scales; keep them finite and positive
     // so scaled residuals stay numerically useful without hiding raw magnitudes.
     double constraint_row_scale_min = 1e-4;

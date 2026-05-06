@@ -200,6 +200,11 @@ struct SolverInfo {
     bool constraint_scaling_active = false;
     bool objective_scaling_active = false;
     bool problem_scaling_active = false;
+    // True when CoordinateScalingMethod::USER_SUPPLIED is active and at least
+    // one coordinate scale differs from 1.0; the dual-stationarity termination
+    // metric is then evaluated in scale-weighted norm. Primal variables, the
+    // Riccati recursion, and the search direction are unchanged.
+    bool coordinate_scaling_active = false;
     // RTI-lite diagnostics. `rti_lite_reused_linearization` is true when this
     // solve() call reused the previous primal-dual iterate under the RTI-lite
     // gates (see SolverConfig::enable_rti_lite). `rti_lite_linearization_age`
@@ -236,6 +241,7 @@ struct SolverInfo {
         constraint_scaling_active = false;
         objective_scaling_active = false;
         problem_scaling_active = false;
+        coordinate_scaling_active = false;
         rti_lite_reused_linearization = false;
         rti_lite_linearization_age = 0;
     }

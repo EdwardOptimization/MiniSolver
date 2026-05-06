@@ -209,6 +209,34 @@ Profiles only override solver-strategy fields; integration / cost / model
 parameters stay at `SolverConfig` defaults so callers can layer their own
 overrides on top.
 
+### Coordinate-Scaling Hint
+
+For NMPC problems with coordinates whose natural magnitudes span several
+orders of magnitude (e.g. positions vs angular rates), opt in to the
+coordinate-scaling hint:
+
+```cpp
+SolverConfig cfg = solver.get_config();
+cfg.coordinate_scaling = CoordinateScalingMethod::USER_SUPPLIED;
+solver.set_config(cfg);
+
+solver.set_state_scale("x_pos", 100.0);    // typical magnitude of x_pos
+solver.set_state_scale("theta", 0.1);      // typical magnitude of theta
+solver.set_control_scale("u_force", 1.0);  // already O(1)
+```
+
+The hint is consumed exclusively by the dual-stationarity termination metric:
+`dual_inf = max_i |r_i| * control_scale_i`. It never rescales primal
+variables, the search direction, dynamics Jacobians, or the Riccati recursion.
+`SolverInfo::coordinate_scaling_active` is `true` only when the strategy is
+`USER_SUPPLIED` *and* at least one scale differs from `1.0`. Setters validate
+each scale against `config.coordinate_scale_min/max` (defaults
+`[1e-6, 1e6]`), are finite, and return `ApiStatus`.
+
+For full state/control/parameter equilibration (which would also rescale
+`dx/du`, Jacobians, Hessians, warm-start deltas, and Riccati blocks), see the
+deferred Stage 5 section in `docs/architecture/scaling-normalization-design.md`.
+
 ### RTI-lite Warm Start
 
 For repeated MPC solves where state deltas between control cycles are small,

@@ -2,7 +2,9 @@
 
 Date: 2026-05-03
 
-Status: Stage 0 through Stage 4 implemented; coordinate scaling deferred
+Status: Stage 0 through Stage 4 implemented; Stage 5 minimal coordinate-scaling
+hint shipped (termination metric only); full coordinate equilibration still
+deferred
 
 Related:
 
@@ -378,7 +380,7 @@ Conclusion from this benchmark:
 
 This stage is deeper and should not be mixed with row scaling.
 
-Required transformations:
+Required transformations for the *full* version:
 
 - Variable scaling changes the interpretation of `dx/du`, dynamics Jacobians
   `A/B`, gradients, Hessians, bounds, warm-start deltas, and Riccati blocks.
@@ -388,7 +390,52 @@ Required transformations:
 - Least-squares residual scaling from `add_residual` should be handled at the
   MiniModel/codegen residual level, not as an after-the-fact Hessian patch.
 
-This stage needs its own red benchmark and exact transformation tests.
+The full version still needs its own red benchmark and exact transformation
+tests before it can ship.
+
+### Stage 5a: Termination-only coordinate-scaling hint (shipped)
+
+The current minimal-viable subset is a *hint* that never rescales primal
+variables, the search direction, or the Riccati recursion. It only changes
+how the dual-stationarity infinity norm is reported and compared:
+
+```cpp
+config.coordinate_scaling = CoordinateScalingMethod::USER_SUPPLIED;
+
+solver.set_state_scale("x_pos", 100.0);   // x_pos has typical magnitude ~100
+solver.set_control_scale("u_force", 1.0); // u_force is already O(1)
+```
+
+Convention: the user-supplied scale `s_i` represents the typical magnitude of
+coordinate `i` in model units. With `USER_SUPPLIED` active, the solver
+evaluates `dual_inf = max_i |r_i| * control_scale_i` so coordinates with
+naturally large gradients do not mask convergence on coordinates with small
+gradients.
+
+Contract guarantees:
+
+- `CoordinateScalingMethod::NONE` (default) keeps the legacy unweighted
+  inf-norm bit-for-bit; the `test_coordinate_scaling.NoneStrategyKeepsBaselineDualInfBitForBit`
+  test pins this guarantee.
+- API setters return `ApiStatus` and reject non-finite values, indices out of
+  range, and scales outside `[config.coordinate_scale_min,
+  config.coordinate_scale_max]` (defaults `[1e-6, 1e6]`).
+- `SolverInfo::coordinate_scaling_active` is `true` only when the strategy is
+  `USER_SUPPLIED` *and* at least one scale differs from `1.0`. All-unity
+  scales fall back to legacy semantics.
+- The hint is consumed exclusively by `compute_dual_infeasibility_` (iteration
+  loop) and the postsolve dual-residual evaluation. It does **not** change
+  Riccati, line search, SOC, restoration, or warm-start delta application.
+
+Limitations and follow-ups:
+
+- Stage 5a only weights the control-stationarity vector. State and parameter
+  scales are stored on the solver instance but currently only validated and
+  surfaced via getters; they are wired up here to keep the public API stable
+  for the eventual full-equilibration version.
+- Full coordinate equilibration (rescaling `dx/du`, `A/B`, Hessian blocks,
+  warm-start deltas, etc.) remains gated on a focused benchmark proving the
+  extra complexity is justified.
 
 ## Stage 6: Additional Scaling Kernels
 

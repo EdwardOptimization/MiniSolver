@@ -109,6 +109,12 @@ namespace detail {
             ProblemScalingMethod::RUIZ_EQUILIBRATION>(value);
     }
 
+    inline bool valid_enum(CoordinateScalingMethod value)
+    {
+        return enum_is_one_of<CoordinateScalingMethod, CoordinateScalingMethod::NONE,
+            CoordinateScalingMethod::USER_SUPPLIED>(value);
+    }
+
     inline bool valid_enum(IntegratorType value)
     {
         return enum_is_one_of<IntegratorType, IntegratorType::EULER_EXPLICIT,
@@ -162,6 +168,7 @@ namespace detail {
     X(constraint_scaling)                                                                          \
     X(objective_scaling)                                                                           \
     X(problem_scaling)                                                                             \
+    X(coordinate_scaling)                                                                          \
     X(integrator)                                                                                  \
     X(barrier_strategy)                                                                            \
     X(inertia_strategy)                                                                            \
@@ -384,6 +391,18 @@ namespace detail {
         }
         if (!finite_config_value(conf.rti_lite_max_state_delta)
             || conf.rti_lite_max_state_delta < 0.0) {
+            return ApiStatus::InvalidArgument;
+        }
+
+        status = validate_positive_finite_config_value(conf.coordinate_scale_min);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.coordinate_scale_max);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        if (conf.coordinate_scale_max < conf.coordinate_scale_min) {
             return ApiStatus::InvalidArgument;
         }
         return ApiStatus::OK;

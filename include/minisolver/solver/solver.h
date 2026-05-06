@@ -645,6 +645,119 @@ public:
         return set_soft_slack_guess(stage, idx, value);
     }
 
+    // -----------------------------------------------------------------------
+    // Coordinate-scaling hint API (Stage 5 minimal viable).
+    //
+    // The scale factors describe the *typical magnitude* of the corresponding
+    // primal coordinate in user units. They never rescale state/control/
+    // parameter values returned by getters, never alter the search direction,
+    // and never feed back into Riccati/SOC/restoration. They are consumed
+    // exclusively by the dual-stationarity termination metric when
+    // `config.coordinate_scaling == CoordinateScalingMethod::USER_SUPPLIED`.
+    //
+    // Validation: each scale must be finite and inside
+    // `[config.coordinate_scale_min, config.coordinate_scale_max]`. The
+    // defaults are 1.0 so callers that never touch this API keep the prior
+    // numerical contract bit-for-bit.
+    // -----------------------------------------------------------------------
+
+    ApiStatus set_state_scale(int idx, double value)
+    {
+        if (idx < 0 || idx >= NX) {
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value) || value < config.coordinate_scale_min
+            || value > config.coordinate_scale_max) {
+            return ApiStatus::InvalidArgument;
+        }
+        state_coord_scale_[idx] = value;
+        return ApiStatus::OK;
+    }
+
+    ApiStatus set_state_scale(const std::string& name, double value)
+    {
+        const int idx = get_state_idx(name);
+        if (idx < 0) {
+            return ApiStatus::UnknownName;
+        }
+        return set_state_scale(idx, value);
+    }
+
+    ApiStatus set_control_scale(int idx, double value)
+    {
+        if (idx < 0 || idx >= NU) {
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value) || value < config.coordinate_scale_min
+            || value > config.coordinate_scale_max) {
+            return ApiStatus::InvalidArgument;
+        }
+        control_coord_scale_[idx] = value;
+        return ApiStatus::OK;
+    }
+
+    ApiStatus set_control_scale(const std::string& name, double value)
+    {
+        const int idx = get_control_idx(name);
+        if (idx < 0) {
+            return ApiStatus::UnknownName;
+        }
+        return set_control_scale(idx, value);
+    }
+
+    ApiStatus set_parameter_scale(int idx, double value)
+    {
+        if (idx < 0 || idx >= NP) {
+            return ApiStatus::InvalidIndex;
+        }
+        if (!std::isfinite(value) || value < config.coordinate_scale_min
+            || value > config.coordinate_scale_max) {
+            return ApiStatus::InvalidArgument;
+        }
+        param_coord_scale_[idx] = value;
+        return ApiStatus::OK;
+    }
+
+    ApiStatus set_parameter_scale(const std::string& name, double value)
+    {
+        const int idx = get_param_idx(name);
+        if (idx < 0) {
+            return ApiStatus::UnknownName;
+        }
+        return set_parameter_scale(idx, value);
+    }
+
+    void reset_coordinate_scaling()
+    {
+        state_coord_scale_.fill(1.0);
+        control_coord_scale_.fill(1.0);
+        param_coord_scale_.fill(1.0);
+    }
+
+    double get_state_scale(int idx) const
+    {
+        if (idx < 0 || idx >= NX) {
+            return 1.0;
+        }
+        return state_coord_scale_[idx];
+    }
+
+    double get_control_scale(int idx) const
+    {
+        if (idx < 0 || idx >= NU) {
+            return 1.0;
+        }
+        return control_coord_scale_[idx];
+    }
+
+    double get_parameter_scale(int idx) const
+    {
+        if (idx < 0 || idx >= NP) {
+            return 1.0;
+        }
+        return param_coord_scale_[idx];
+    }
+
     std::vector<double> get_slack(int stage) const
     {
         if (stage > N || stage < 0) {
@@ -835,6 +948,7 @@ private:
         context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
         context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
         context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
+        context_.info.coordinate_scaling_active = coordinate_scaling_has_nontrivial_factors_();
     }
 
     void record_postsolve_info_(SolverStatus final_status, SolverStatus loop_status,
@@ -855,6 +969,7 @@ private:
         context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
         context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
         context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
+        context_.info.coordinate_scaling_active = coordinate_scaling_has_nontrivial_factors_();
     }
 
     void record_terminal_info_(SolverStatus final_status, SolverStatus loop_status)
@@ -869,6 +984,7 @@ private:
         context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
         context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
         context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
+        context_.info.coordinate_scaling_active = coordinate_scaling_has_nontrivial_factors_();
     }
 
     bool check_convergence(const StepResidualSummary& residuals, double max_dual)
@@ -993,14 +1109,59 @@ private:
 
     double compute_dual_infeasibility_(const TrajArray& traj) const
     {
+        // Default path: unweighted inf-norm of the control-stationarity vector.
+        // This is the legacy contract and is preserved bit-for-bit when
+        // CoordinateScalingMethod::NONE is selected.
+        if (config.coordinate_scaling != CoordinateScalingMethod::USER_SUPPLIED) {
+            double max_dual_inf = 0.0;
+            for (int k = 0; k <= N; ++k) {
+                const double r_norm = MatOps::norm_inf(traj[k].r_bar);
+                if (r_norm > max_dual_inf) {
+                    max_dual_inf = r_norm;
+                }
+            }
+            return max_dual_inf;
+        }
+
+        // USER_SUPPLIED: weight each control-stationarity component by its
+        // user-declared coordinate scale before taking the maximum. This
+        // never rescales the search direction; it only normalises the
+        // termination metric so coordinates with naturally large gradients
+        // do not mask convergence on coordinates with small gradients.
         double max_dual_inf = 0.0;
         for (int k = 0; k <= N; ++k) {
-            double r_norm = MatOps::norm_inf(traj[k].r_bar);
-            if (r_norm > max_dual_inf) {
-                max_dual_inf = r_norm;
+            const auto& kp = traj[k];
+            for (int i = 0; i < NU; ++i) {
+                const double weighted = std::abs(kp.r_bar(i)) * control_coord_scale_[i];
+                if (weighted > max_dual_inf) {
+                    max_dual_inf = weighted;
+                }
             }
         }
         return max_dual_inf;
+    }
+
+    bool coordinate_scaling_has_nontrivial_factors_() const
+    {
+        if (config.coordinate_scaling != CoordinateScalingMethod::USER_SUPPLIED) {
+            return false;
+        }
+        for (int i = 0; i < NX; ++i) {
+            if (state_coord_scale_[i] != 1.0) {
+                return true;
+            }
+        }
+        for (int i = 0; i < NU; ++i) {
+            if (control_coord_scale_[i] != 1.0) {
+                return true;
+            }
+        }
+        for (int i = 0; i < NP; ++i) {
+            if (param_coord_scale_[i] != 1.0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void increase_regularization_after_failed_solve_(bool clamp_to_min)
@@ -2256,6 +2417,27 @@ private:
             residuals.linear_ok = linear_solver->evaluate_dual_residual(trajectory.candidate(), N,
                 residuals.barrier_mu, context_.solve.reg, config.inertia_strategy, config,
                 residuals.max_dual_inf);
+            // Coordinate-scaling hint: re-evaluate the dual-stationarity inf-norm
+            // in scale-weighted units when the postsolve scratch trajectory is
+            // available. The base solver call above used the unweighted norm by
+            // contract; here we read the freshly populated r_bar back out of the
+            // candidate buffer and apply the user-supplied weights.
+            if (residuals.linear_ok
+                && config.coordinate_scaling == CoordinateScalingMethod::USER_SUPPLIED
+                && coordinate_scaling_has_nontrivial_factors_()) {
+                const TrajArray& scratch = trajectory.candidate();
+                double weighted = 0.0;
+                for (int k = 0; k <= N; ++k) {
+                    const auto& kp = scratch[k];
+                    for (int i = 0; i < NU; ++i) {
+                        const double w = std::abs(kp.r_bar(i)) * control_coord_scale_[i];
+                        if (w > weighted) {
+                            weighted = w;
+                        }
+                    }
+                }
+                residuals.max_dual_inf = weighted;
+            }
         }
     }
 
@@ -2630,5 +2812,27 @@ private:
     bool rti_lite_have_previous_solve_ = false;
     bool rti_lite_last_solve_acceptable_ = false;
     int rti_lite_linearization_age_ = 0;
+
+    // --- Coordinate scaling hint (Stage 5 minimal viable) ---
+    // Per-coordinate scale factors in user units. The defaults are 1.0 so
+    // unconfigured solvers keep byte-for-byte parity with previous behaviour.
+    // Values are validated at API entry against config.coordinate_scale_min/max
+    // and are only consumed by termination metrics when
+    // config.coordinate_scaling == CoordinateScalingMethod::USER_SUPPLIED.
+    std::array<double, NX> state_coord_scale_ = ([] {
+        std::array<double, NX> s {};
+        s.fill(1.0);
+        return s;
+    })();
+    std::array<double, NU> control_coord_scale_ = ([] {
+        std::array<double, NU> s {};
+        s.fill(1.0);
+        return s;
+    })();
+    std::array<double, NP> param_coord_scale_ = ([] {
+        std::array<double, NP> s {};
+        s.fill(1.0);
+        return s;
+    })();
 };
 }
