@@ -129,3 +129,33 @@ the same commit unless a test proves they are inseparable.
   h-type-only filter augmentation. The remaining theory gap is that filter
   history is still a fixed-capacity ring buffer rather than a Pareto-frontier
   certificate. See [ADR 0002](adr/0002-filter-line-search-switching.md).
+
+- **Floating initial state / MHE support is deferred.**
+  MiniSolver's current core is an NMPC-oriented multiple-shooting SQP/IPM path:
+  the initial state is treated as measured problem data and the Riccati
+  direction uses `dx0 = 0`. That is the correct default for real-time control.
+  Making `x0` an optimization variable is a different profile: moving-horizon
+  estimation (MHE), smoothing, or offline estimation/planning. It should not be
+  added as a loose `floating_x0` switch in the NMPC path.
+
+  A future MHE profile should introduce explicit initial-state semantics, for
+  example:
+
+  ```text
+  InitialStateMode::FIXED                // current NMPC default
+  InitialStateMode::ESTIMATED_WITH_PRIOR // MHE / smoothing
+  ```
+
+  `ESTIMATED_WITH_PRIOR` requires an arrival/prior cost
+  `0.5 * (x0 - x_prior)^T P0 * (x0 - x_prior)`, which means carrying at least
+  one additional `NX x NX` prior information/weight matrix plus the prior state.
+  It should also support stage-0-only bounds or constraints on the estimated
+  initial state, such as physical state limits, map/geometry consistency, or a
+  confidence-region constraint around the prior. These constraints are MHE
+  problem semantics and should not be mixed with the current NMPC
+  `set_initial_state()` hard-fixing API.
+
+  This profile also changes the Riccati boundary condition, warm-start
+  semantics, and status/diagnostic interpretation. Reopen only after a concrete
+  MHE or noisy-state estimation case exists, with tests proving that optimizing
+  `x0` improves estimation quality without hiding invalid NMPC measurements.
