@@ -187,6 +187,28 @@ Profiles only override solver-strategy fields; integration / cost / model
 parameters stay at `SolverConfig` defaults so callers can layer their own
 overrides on top.
 
+### RTI-lite Warm Start
+
+For repeated MPC solves where state deltas between control cycles are small,
+opt into the RTI-lite mode to reuse the previous primal-dual iterate:
+
+```cpp
+SolverConfig cfg = solver.get_config();
+cfg.enable_rti_lite = true;
+cfg.rti_lite_max_linearization_age = 3;     // up to 3 reuses before forcing a full solve
+cfg.rti_lite_max_state_delta = 0.5;          // L2 state-delta gate (model units)
+solver.set_config(cfg);
+```
+
+When the gates pass (previous solve was acceptable, state delta < threshold,
+linearization age < budget), the next `solve()` call runs at most
+`rti_lite_max_linearization_age` SQP/IPM iterations with `ACCEPTABLE_NMPC`
+termination. If any gate fails the solver falls back to a full solve and
+resets the linearization age. `SolverInfo::rti_lite_reused_linearization`
+and `SolverInfo::rti_lite_linearization_age` report which path ran.
+`set_config()` always invalidates the RTI-lite history so a strategy change
+does not silently warm-start from an incompatible seed.
+
 ### Solve-Time Allocation Discipline
 
 The default `SolverConfig` is allocation-free during `solve()`. Two flags can

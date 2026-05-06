@@ -122,6 +122,7 @@ public:
             throw std::invalid_argument("MiniSolver constructed with invalid SolverConfig");
         }
         context_.reset_algorithmic(config.mu_init, config.reg_init);
+        rti_lite_last_x0_.setZero();
 
         dt_traj.fill(conf.default_dt);
         rebuild_solver_components_if_dirty_();
@@ -234,6 +235,12 @@ public:
             alpha_log_.reserve(static_cast<size_t>(config.max_iters));
         }
         build_state_.dirty = true;
+        // A new config can change strategies wholesale (line search, barrier,
+        // tolerances), so the previous solve's primal-dual iterate is no
+        // longer a safe RTI-lite seed. Drop the RTI-lite history.
+        rti_lite_have_previous_solve_ = false;
+        rti_lite_last_solve_acceptable_ = false;
+        rti_lite_linearization_age_ = 0;
         return ApiStatus::OK;
     }
 
@@ -1859,16 +1866,97 @@ private:
 public:
     SolverStatus solve()
     {
+        // RTI-lite preflight: under user opt-in, decide whether the upcoming
+        // solve may reuse the previous primal-dual iterate. The reuse gates
+        // are intentionally conservative (state delta + age budget + previous
+        // status) so a fall-back to the full solve happens whenever any
+        // invariant is unclear. The solver-strategy fields are temporarily
+        // overridden via an RAII guard so the caller's SolverConfig is never
+        // mutated.
+        const SolverConfig saved_config = config;
+        const bool rti_lite_reuse = rti_lite_should_reuse_();
+        if (rti_lite_reuse) {
+            apply_rti_lite_overrides_();
+        } else {
+            rti_lite_linearization_age_ = 0;
+        }
+
         if (!begin_solve_()) {
+            config = saved_config;
+            context_.info.rti_lite_reused_linearization = false;
+            context_.info.rti_lite_linearization_age = 0;
             return SolverStatus::INVALID_INPUT;
         }
         SolverStatus loop_exit_status = run_solve_loop_();
 
         // 3. Postsolve: refresh residuals and produce the final verdict.
-        return postsolve(loop_exit_status);
+        const SolverStatus final_status = postsolve(loop_exit_status);
+
+        config = saved_config;
+
+        rti_lite_record_solve_outcome_(final_status, rti_lite_reuse);
+        return final_status;
     }
 
 private:
+    // RTI-lite gates: every reuse condition must hold or we fall back to a
+    // full solve. The state-delta gate uses an L2 norm so the threshold has
+    // physical units rather than per-coordinate semantics; coordinate-level
+    // scaling will refine this once Tier 3.1 lands.
+    bool rti_lite_should_reuse_() const
+    {
+        if (!config.enable_rti_lite) {
+            return false;
+        }
+        if (!rti_lite_have_previous_solve_ || !rti_lite_last_solve_acceptable_) {
+            return false;
+        }
+        if (rti_lite_linearization_age_ >= config.rti_lite_max_linearization_age) {
+            return false;
+        }
+        const auto& x_now = trajectory[0].x;
+        double sq = 0.0;
+        for (int i = 0; i < Model::NX; ++i) {
+            const double d = x_now(i) - rti_lite_last_x0_(i);
+            sq += d * d;
+        }
+        const double delta = std::sqrt(sq);
+        return delta < config.rti_lite_max_state_delta;
+    }
+
+    void apply_rti_lite_overrides_()
+    {
+        // Reuse path: cap iterations at the linearization-age budget and
+        // accept ACCEPTABLE_NMPC quality. The user's max_iters is preserved
+        // as an upper bound so a smaller user budget still wins.
+        const int reuse_budget = std::max(1, config.rti_lite_max_linearization_age);
+        config.max_iters = std::min(config.max_iters, reuse_budget);
+        config.termination_profile = TerminationProfile::ACCEPTABLE_NMPC;
+    }
+
+    void rti_lite_record_solve_outcome_(SolverStatus final_status, bool reused)
+    {
+        const bool acceptable
+            = (final_status == SolverStatus::OPTIMAL || final_status == SolverStatus::FEASIBLE);
+
+        rti_lite_last_solve_acceptable_ = acceptable;
+        rti_lite_have_previous_solve_ = true;
+        for (int i = 0; i < Model::NX; ++i) {
+            rti_lite_last_x0_(i) = trajectory[0].x(i);
+        }
+
+        if (acceptable && reused) {
+            ++rti_lite_linearization_age_;
+        } else if (!acceptable) {
+            rti_lite_linearization_age_ = 0;
+        } else {
+            // Acceptable but not reused -- start a fresh age counter.
+            rti_lite_linearization_age_ = 0;
+        }
+        context_.info.rti_lite_reused_linearization = reused;
+        context_.info.rti_lite_linearization_age = rti_lite_linearization_age_;
+    }
+
     bool begin_solve_()
     {
         rebuild_solver_components_if_dirty_();
@@ -2535,5 +2623,12 @@ private:
 
     SolverConfig config;
     SolverBuildState build_state_;
+
+    // --- RTI-lite state ---
+    // last_x0 from the previous solve(); used for the state-delta safety gate.
+    MSVec<double, Model::NX> rti_lite_last_x0_;
+    bool rti_lite_have_previous_solve_ = false;
+    bool rti_lite_last_solve_acceptable_ = false;
+    int rti_lite_linearization_age_ = 0;
 };
 }

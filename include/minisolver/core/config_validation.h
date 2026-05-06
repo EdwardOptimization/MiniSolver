@@ -378,6 +378,14 @@ namespace detail {
             || !problem_scaling_plan_valid(conf)) {
             return ApiStatus::InvalidArgument;
         }
+
+        if (conf.rti_lite_max_linearization_age < 0) {
+            return ApiStatus::InvalidArgument;
+        }
+        if (!finite_config_value(conf.rti_lite_max_state_delta)
+            || conf.rti_lite_max_state_delta < 0.0) {
+            return ApiStatus::InvalidArgument;
+        }
         return ApiStatus::OK;
     }
 

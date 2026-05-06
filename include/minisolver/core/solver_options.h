@@ -296,6 +296,26 @@ struct SolverConfig {
     bool enable_slack_reset = true;
     bool enable_feasibility_restoration = true;
     bool enable_soc = true;
+
+    // --- RTI-lite ---
+    // RTI-lite is a safe-by-default warm-start mode for repeated MPC solves.
+    // When `enable_rti_lite=true` and the previous solve reached an acceptable
+    // verdict (OPTIMAL/FEASIBLE), the next `solve()` call reuses the previous
+    // primal-dual iterate and runs at most `rti_lite_max_linearization_age`
+    // SQP/IPM iterations under `TerminationProfile::ACCEPTABLE_NMPC`. The
+    // reuse path is gated by:
+    //   * the L2 distance between the new initial state and the previous
+    //     solved initial state must be < `rti_lite_max_state_delta`;
+    //   * the previous solve must have been acceptable;
+    //   * the linearization age must not have exceeded
+    //     `rti_lite_max_linearization_age`.
+    // If any gate fails, the solver falls back to a full SQP/IPM solve under
+    // the user-provided `max_iters` / `termination_profile` and resets the
+    // linearization age. Diagnostic counters live on `SolverInfo`
+    // (`rti_lite_reused_linearization`, `rti_lite_linearization_age`).
+    bool enable_rti_lite = false;
+    int rti_lite_max_linearization_age = 3;
+    double rti_lite_max_state_delta = 0.5;
 };
 
 }

@@ -200,6 +200,13 @@ struct SolverInfo {
     bool constraint_scaling_active = false;
     bool objective_scaling_active = false;
     bool problem_scaling_active = false;
+    // RTI-lite diagnostics. `rti_lite_reused_linearization` is true when this
+    // solve() call reused the previous primal-dual iterate under the RTI-lite
+    // gates (see SolverConfig::enable_rti_lite). `rti_lite_linearization_age`
+    // is the consecutive count of reused solves; it is reset to 0 whenever
+    // RTI-lite falls back to a full solve.
+    bool rti_lite_reused_linearization = false;
+    int rti_lite_linearization_age = 0;
 
     void reset()
     {
@@ -229,6 +236,8 @@ struct SolverInfo {
         constraint_scaling_active = false;
         objective_scaling_active = false;
         problem_scaling_active = false;
+        rti_lite_reused_linearization = false;
+        rti_lite_linearization_age = 0;
     }
 };
 
