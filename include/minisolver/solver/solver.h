@@ -1461,6 +1461,17 @@ private:
             max_barrier_complementarity_residual, avg_complementarity_gap);
     }
 
+    // Allocation contract:
+    //   * PrintLevel::NONE (default): this function early-returns BEFORE
+    //     constructing std::stringstream, so it does not perturb the zero-
+    //     malloc invariant of solve(). test_memory's
+    //     IterationLogPrintLevelNoneStaysAllocationFreeAndSilent locks this in.
+    //   * PrintLevel::ITER and higher: this function intentionally constructs
+    //     std::stringstream for header/row formatting and routes through
+    //     MLOG_INFO. This is opt-in for diagnostics and is NOT zero-malloc.
+    //     test_memory's IterationLogPrintLevelIterAllocatesAndRoutesByDesign
+    //     reverse-anchors that boundary so a future refactor cannot silently
+    //     claim PrintLevel::ITER is allocation-free.
     void print_iteration_log(double alpha, bool header = false)
     {
 // Use MLOG_INFO instead of std::cout, respecting the log level.

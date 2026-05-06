@@ -1,10 +1,12 @@
 #include "../examples/01_car_tutorial/generated/car_model.h"
 #include "kinematicbicycleregressionmodel.h"
 #include "minisolver/algorithms/line_search.h"
+#include "minisolver/core/logger.h"
 #include "minisolver/integrator/implicit_integrator.h"
 #include "minisolver/solver/solver.h"
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <iostream>
 #include <new>
@@ -479,4 +481,95 @@ TEST(MemoryTest, ZeroMalloc_ImplicitIntegrator)
     EXPECT_EQ(g_allocation_count, 0)
         << "Detected " << g_allocation_count
         << " heap allocations in implicit integrator (Euler+Midpoint+GaussLegendre)!";
+}
+
+namespace {
+
+struct IterLogProbe {
+    int count = 0;
+    bool any_iter_text = false;
+};
+
+void iter_log_probe_callback(LogLevel /*level*/, const char* message, void* user)
+{
+    auto* probe = static_cast<IterLogProbe*>(user);
+    probe->count++;
+    if (message && (std::strstr(message, "Iter") || std::strstr(message, "PrimInf"))) {
+        probe->any_iter_text = true;
+    }
+}
+
+} // namespace
+
+// Anchors the iteration-log allocation contract documented in
+// api-logger-boundary-design.md and the embedded README:
+//   * PrintLevel::NONE -- print_iteration_log() must early-return BEFORE
+//     constructing std::stringstream, route nothing through the logger,
+//     and not perturb the zero-malloc invariant of solve().
+//   * PrintLevel::ITER -- the iteration log path is intentionally allowed to
+//     allocate (std::stringstream construction + MLOG_INFO formatting). This
+//     test reverse-anchors that boundary so future refactors that claim
+//     "PrintLevel::ITER is allocation-free" still have to update it
+//     deliberately rather than silently regress.
+TEST(MemoryTest, IterationLogPrintLevelNoneStaysAllocationFreeAndSilent)
+{
+    constexpr int N = 5;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.enable_profiling = false;
+    config.max_iters = 5;
+
+    MiniSolver<CarModel, 20> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+
+    IterLogProbe probe;
+    LoggerConfig logger;
+    logger.callback = iter_log_probe_callback;
+    logger.user = &probe;
+    set_logger_config(logger);
+
+    g_allocation_count = 0;
+    g_memory_check_active = true;
+    solver.solve();
+    g_memory_check_active = false;
+
+    set_logger_config(LoggerConfig {});
+
+    EXPECT_EQ(g_allocation_count, 0) << "PrintLevel::NONE must keep solve() heap-allocation free.";
+    EXPECT_EQ(probe.count, 0)
+        << "PrintLevel::NONE must not route iteration-log messages through the logger.";
+}
+
+TEST(MemoryTest, IterationLogPrintLevelIterAllocatesAndRoutesByDesign)
+{
+    constexpr int N = 5;
+    SolverConfig config;
+    config.print_level = PrintLevel::ITER;
+    config.enable_profiling = false;
+    config.max_iters = 3;
+
+    MiniSolver<CarModel, 20> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+
+    IterLogProbe probe;
+    LoggerConfig logger;
+    logger.callback = iter_log_probe_callback;
+    logger.user = &probe;
+    logger.silent_fallback = true; // do not let messages leak to stdout
+    set_logger_config(logger);
+
+    g_allocation_count = 0;
+    g_memory_check_active = true;
+    solver.solve();
+    g_memory_check_active = false;
+
+    set_logger_config(LoggerConfig {});
+
+    EXPECT_GE(probe.count, 1)
+        << "PrintLevel::ITER must route at least one iteration message through the callback.";
+    EXPECT_TRUE(probe.any_iter_text)
+        << "Expected the iteration log to mention an iteration column header or row.";
+    EXPECT_GT(g_allocation_count, 0)
+        << "PrintLevel::ITER intentionally constructs std::stringstream; if this becomes "
+           "zero-malloc, update the documentation contract first.";
 }
