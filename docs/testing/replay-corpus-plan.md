@@ -50,6 +50,7 @@ Every scenario should expose or assert the following fields when relevant:
 | Failure snapshot workflow | Save pre-solve state only when solve fails and reload it for replay | `test_replay_corpus` |
 | Generated implicit integrator | Generated model using the implicit integrator path, not a handwritten shortcut | `test_replay_corpus` |
 | SOC nonlinear obstacle | Deterministic filter/SOC path on a nonlinear circle obstacle residual | `test_replay_corpus` |
+| Warm-start active-set transition | Two-frame solve where a parameter change forces an inactive control bound to become strongly active under reused primal-dual state | `test_replay_corpus` |
 
 ## Current Decision From Initial Corpus
 
@@ -85,8 +86,12 @@ scenario shows a concrete failure, accuracy gap, or runtime regression.
 
 ## Expansion Order
 
-1. Add warm-start active-set or constraint-status change cases once the
-   two-frame tracking baseline exposes stable diagnostics.
+1. ~~Add warm-start active-set or constraint-status change cases once the
+   two-frame tracking baseline exposes stable diagnostics.~~ Done:
+   `WarmStartActiveSetTransitionRemainsAcceptableAndExposesDualShift` covers a
+   two-frame scenario where a `x_ref` parameter change forces the upper
+   control bound to transition from inactive to strongly active while the
+   solver reuses primal-dual state with `FROM_COMPLEMENTARITY_GAP` warm start.
 2. Add end-to-end nonlinear obstacle solves when they deterministically exercise
    SOC/globalization decisions; until then, keep SOC seam coverage deterministic.
 3. Add benchmark-backed scenarios only after they are proven useful in

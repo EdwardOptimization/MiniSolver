@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -258,6 +259,67 @@ struct CorpusBadlyScaledModel {
         kp.Q(0, 0) = 2.0;
         kp.R.setIdentity();
         kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+struct CorpusBoundedTrackingModel {
+    static constexpr int NX = 1;
+    static constexpr int NU = 1;
+    static constexpr int NC = 2;
+    static constexpr int NP = 1;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = { "x_ref" };
+    static constexpr std::array<double, NC> constraint_weights = { 0.0, 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0, 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u, const MSVec<T, NP>&,
+        double dt, IntegratorType)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + u(0) * dt;
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        // u <= 0.5, -u <= 0.5  (i.e. u in [-0.5, 0.5])
+        kp.g_val(0) = kp.u(0) - static_cast<T>(0.5);
+        kp.g_val(1) = static_cast<T>(-1.0) * kp.u(0) - static_cast<T>(0.5);
+        kp.C.setZero();
+        kp.D.setZero();
+        kp.D(0, 0) = 1.0;
+        kp.D(1, 0) = -1.0;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        // Mid-weighted state and control cost so the free optimum stays well inside
+        // the bound box for small references (frame A) but the upper bound becomes
+        // binding for large references (frame B).
+        const T diff = kp.x(0) - kp.p(0);
+        const T u = kp.u(0);
+        kp.cost = static_cast<T>(5.0) * diff * diff + u * u;
+        kp.q(0) = static_cast<T>(10.0) * diff;
+        kp.r(0) = static_cast<T>(2.0) * u;
+        kp.Q(0, 0) = 10.0;
+        kp.R(0, 0) = 2.0;
+        kp.H(0, 0) = 0.0;
     }
 
     template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
@@ -522,6 +584,115 @@ TEST(ReplayCorpusTest, L1SoftConstraintConvergesWithFiniteInteriorMetrics)
         EXPECT_GT(dual, 0.0);
         EXPECT_LT(dual, CorpusL1SoftModel::constraint_weights[0]);
     }
+}
+
+TEST(ReplayCorpusTest, WarmStartActiveSetTransitionRemainsAcceptableAndExposesDualShift)
+{
+    // Active-set change scenario for the replay corpus:
+    //   Frame A: x_ref = 0.3 -- both control bounds inactive (lambda small).
+    //   Frame B: x_ref = 5.0 (large reference) -- the upper control bound u <= 0.5 must
+    //       become strongly active for many stages. Warm-start reuses primal-dual state
+    //       from Frame A, so the active set transition is exposed in SolverInfo.
+    constexpr int N = 12;
+    constexpr double dt = 0.1;
+    constexpr double x0 = 0.0;
+    constexpr int MAX_N = 16;
+    using Model = CorpusBoundedTrackingModel;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.enable_profiling = false;
+    config.max_iters = 80;
+    config.tol_con = 1e-6;
+    config.tol_dual = 1e-5;
+    config.tol_mu = 1e-7;
+    config.mu_final = 1e-8;
+    config.barrier_strategy = BarrierStrategy::ADAPTIVE;
+    config.line_search_type = LineSearchType::FILTER;
+
+    MiniSolver<Model, MAX_N> solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(dt), ApiStatus::OK);
+    ASSERT_EQ(solver.set_initial_state("x", x0), ApiStatus::OK);
+    for (int k = 0; k <= N; ++k) {
+        ASSERT_EQ(solver.set_parameter(k, "x_ref", 0.1), ApiStatus::OK);
+    }
+    solver.rollout_dynamics();
+
+    const SolverStatus status_a = solver.solve();
+    const SolverInfo info_a = solver.get_info();
+    ASSERT_TRUE(acceptable_status(status_a));
+    expect_finite_info(info_a);
+
+    // Frame A: control magnitudes are well within [-0.5, 0.5] and bound duals stay near zero.
+    double max_dual_a = 0.0;
+    double max_abs_u_a = 0.0;
+    for (int k = 0; k < N; ++k) {
+        max_abs_u_a = std::max(max_abs_u_a, std::abs(solver.get_control(k, 0)));
+        for (int c = 0; c < Model::NC; ++c) {
+            max_dual_a = std::max(max_dual_a, solver.get_dual(k, c));
+        }
+    }
+    EXPECT_LT(max_abs_u_a, 0.5 - 1e-3) << "Frame A should stay strictly inside the control bounds.";
+
+    // Reuse primal-dual state but bump x_ref so the upper bound u <= 0.5 must activate.
+    SolverConfig warm_config = solver.get_config();
+    warm_config.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    warm_config.warm_start_barrier = WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP;
+    warm_config.warm_start_regularization = WarmStartRegularizationMode::RESET_TO_REG_INIT;
+    warm_config.barrier_strategy = BarrierStrategy::ADAPTIVE;
+    warm_config.termination_profile = TerminationProfile::ACCEPTABLE_NMPC;
+    warm_config.max_iters = 40;
+    ASSERT_EQ(solver.set_config(warm_config), ApiStatus::OK);
+    for (int k = 0; k <= N; ++k) {
+        ASSERT_EQ(solver.set_parameter(k, "x_ref", 5.0), ApiStatus::OK);
+    }
+
+    const SolverStatus status_b = solver.solve();
+    const SolverInfo info_b = solver.get_info();
+    ASSERT_TRUE(acceptable_status(status_b));
+    expect_finite_info(info_b);
+    EXPECT_LE(info_b.iterations, warm_config.max_iters);
+
+    // Frame B: upper bound u <= 0.5 must be strongly active for the early stages.
+    int active_upper_count_b = 0;
+    double max_upper_dual_b = 0.0;
+    double max_lower_dual_b = 0.0;
+    double max_u_b = -std::numeric_limits<double>::infinity();
+    for (int k = 0; k < N; ++k) {
+        const double u_k = solver.get_control(k, 0);
+        max_u_b = std::max(max_u_b, u_k);
+        if (u_k > 0.5 - 1e-3) {
+            ++active_upper_count_b;
+        }
+        max_upper_dual_b = std::max(max_upper_dual_b, solver.get_dual(k, 0));
+        max_lower_dual_b = std::max(max_lower_dual_b, solver.get_dual(k, 1));
+    }
+    EXPECT_GE(active_upper_count_b, N / 2)
+        << "Frame B: with x_ref=5 over 12 steps, the upper control bound must be active "
+           "for the majority of stages.";
+    // Active-set transition certificate: the upper-bound dual must grow by at least
+    // an order of magnitude when the constraint becomes strongly active.
+    EXPECT_GT(max_upper_dual_b, std::max(10.0 * max_dual_a, 1.0))
+        << "Frame B upper-bound dual must rise sharply above the inactive baseline of frame A. "
+           "max_dual_a="
+        << max_dual_a << ", max_upper_dual_b=" << max_upper_dual_b;
+    EXPECT_LE(max_u_b, 0.5 + 1e-6)
+        << "Hard upper bound must be respected after warm-started solve.";
+    // Lower bound stays well below the upper bound across the whole transition.
+    EXPECT_LT(max_lower_dual_b, max_upper_dual_b * 0.1)
+        << "Lower bound u >= -0.5 must stay much weaker than the active upper bound.";
+
+    // Replay-corpus diagnostic snapshot for the warm-started frame B.
+    using SnapshotIO = SolverSnapshotIO<Model, MAX_N>;
+    const auto post_solve = SnapshotIO::capture_snapshot(solver);
+    const std::string filename = make_unique_filename("replay_corpus_active_set", ".msnap");
+    ASSERT_EQ(SnapshotIO::save_snapshot(filename, post_solve).status, SnapshotStatus::OK);
+    MiniSolver<Model, MAX_N> replay(N, Backend::CPU_SERIAL);
+    ASSERT_EQ(SnapshotIO::load_case(filename, replay).status, SnapshotStatus::OK);
+    EXPECT_EQ(replay.get_config().initialization, InitializationMode::REUSE_PRIMAL_DUAL);
+    EXPECT_EQ(
+        replay.get_config().warm_start_barrier, WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP);
+    std::remove(filename.c_str());
 }
 
 TEST(ReplayCorpusTest, BadScalingCaseReportsScaledAndUnscaledFeasibility)
