@@ -167,8 +167,8 @@ TEST(ScalingRegressionTest, EquivalentConstraintRowsExposeUnscaledPrimalMetricDi
     ASSERT_TRUE(std::isfinite(well_scaled.info.primal_inf));
     ASSERT_TRUE(std::isfinite(badly_scaled.info.primal_inf));
 
-    EXPECT_NEAR(well_scaled.info.primal_inf, 1.0, 1e-5);
-    EXPECT_NEAR(badly_scaled.info.primal_inf, 1000.0, 1e-2);
+    EXPECT_NEAR(well_scaled.info.primal_inf, 2.0, 1e-5);
+    EXPECT_NEAR(badly_scaled.info.primal_inf, 2000.0, 1e-2);
     EXPECT_GT(badly_scaled.info.primal_inf / well_scaled.info.primal_inf, 900.0)
         << "These two models encode the same physical feasible set. The large ratio captures "
            "the current unscaled-row limitation that N-MOD-2 must address.";
@@ -186,11 +186,11 @@ TEST(ScalingRegressionTest, AutomaticRowScalingNormalizesInternalPrimalMetric)
 
     EXPECT_EQ(report.status, SolverStatus::MAX_ITER);
     EXPECT_TRUE(report.info.constraint_scaling_active);
-    EXPECT_NEAR(report.info.primal_inf, 1.0, 1e-5)
+    EXPECT_NEAR(report.info.primal_inf, 2.0, 1e-5)
         << "Automatic row scaling should normalize equivalent constraint rows without "
            "manual model metadata.";
-    EXPECT_NEAR(report.info.unscaled_primal_inf, 1000.0, 1e-2)
-        << "Diagnostics should still expose the raw model residual.";
+    EXPECT_NEAR(report.info.unscaled_primal_inf, 2000.0, 1e-2)
+        << "Diagnostics should still expose the unscaled active IPM residual.";
 }
 
 TEST(ScalingRegressionTest, AutomaticScalingRejectsInvalidScaleBounds)
@@ -242,8 +242,8 @@ TEST(ScalingRegressionTest, ProblemScalingActivatesBoundedConstraintAndObjective
     EXPECT_TRUE(report.info.problem_scaling_active);
     EXPECT_TRUE(report.info.constraint_scaling_active);
     EXPECT_TRUE(report.info.objective_scaling_active);
-    EXPECT_NEAR(report.info.primal_inf, 1.0, 1e-5);
-    EXPECT_NEAR(report.info.unscaled_primal_inf, 1000.0, 1e-2);
+    EXPECT_NEAR(report.info.primal_inf, 2.0, 1e-5);
+    EXPECT_NEAR(report.info.unscaled_primal_inf, 2000.0, 1e-2);
 }
 
 TEST(ScalingRegressionTest, BadlyScaledBaselineExposesAvailableSolveMetrics)

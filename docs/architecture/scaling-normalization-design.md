@@ -256,8 +256,9 @@ Core rules:
 
 Implementation note: Stage 1A scales `g_val`, `g_true`, `C`, and `D` for
 internal Riccati/globalization metrics while preserving `g_unscaled` for
-diagnostics. `SolverInfo::primal_inf` is the internal metric;
-`SolverInfo::unscaled_primal_inf` exposes the raw model residual magnitude.
+diagnostics. `SolverInfo::primal_inf` is the internal active feasibility metric;
+`SolverInfo::unscaled_primal_inf` exposes the same active residual, including
+current slack variables, transformed back to model units.
 `test_scaling_regressions` covers both the unscaled baseline and automatic
 normalization. MiniModel generated models no longer emit or accept public
 `row_scale=` metadata.

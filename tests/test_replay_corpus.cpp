@@ -543,8 +543,8 @@ TEST(ReplayCorpusTest, BadScalingCaseReportsScaledAndUnscaledFeasibility)
     EXPECT_TRUE(info.problem_scaling_active);
     EXPECT_TRUE(info.constraint_scaling_active);
     EXPECT_TRUE(info.objective_scaling_active);
-    EXPECT_NEAR(info.primal_inf, 1.0, 1e-5);
-    EXPECT_NEAR(info.unscaled_primal_inf, 1000.0, 1e-2);
+    EXPECT_NEAR(info.primal_inf, 2.0, 1e-5);
+    EXPECT_NEAR(info.unscaled_primal_inf, 2000.0, 1e-2);
 }
 
 TEST(ReplayCorpusTest, FailureSnapshotWorkflowPersistsPreSolveReplayState)

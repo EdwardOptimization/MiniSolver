@@ -177,8 +177,8 @@ def test_generated_model_uses_automatic_constraint_row_scaling():
 
                 if (status != minisolver::SolverStatus::MAX_ITER) return 1;
                 if (!info.constraint_scaling_active) return 2;
-                if (std::abs(info.primal_inf - 1.0) > 1e-5) return 3;
-                if (std::abs(info.unscaled_primal_inf - 1000.0) > 1e-2) return 4;
+                if (std::abs(info.primal_inf - 2.0) > 1e-5) return 3;
+                if (std::abs(info.unscaled_primal_inf - 2000.0) > 1e-2) return 4;
                 return 0;
             }
             """,

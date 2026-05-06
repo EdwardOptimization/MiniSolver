@@ -132,6 +132,38 @@ TEST(PropertyRegressionTest, HardConstraintInitializationStaysOnCentralPath)
     }
 }
 
+TEST(PropertyRegressionTest, ViolatedHardConstraintInitializationScalesSlackWithResidual)
+{
+    using Knot = KnotPoint<double, 1, 1, 1, 0>;
+
+    SolverConfig config;
+    config.mu_init = 1e-1;
+    config.warm_start_slack_init = 1e-6;
+    config.min_barrier_slack = 1e-12;
+
+    constexpr double g = 120.0;
+
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = g;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<HardConstraintModel>(
+        kp, 0, config.mu_init, config);
+
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), config.mu_init, 1e-12);
+
+    // With g > 0 there is no positive slack that can satisfy g + s = 0.
+    // Initialization should therefore keep the barrier variables interior at
+    // the violation scale instead of putting s at the tiny floor, which would
+    // make lambda / s explode in the first Riccati/IPM system.
+    EXPECT_GE(kp.s(0), g);
+    EXPECT_LE(kp.lam(0) / kp.s(0), 10.0 * config.mu_init / (g * g));
+}
+
 TEST(PropertyRegressionTest, L1SoftInitializationStaysInsideDualBox)
 {
     using Knot = KnotPoint<double, 1, 1, 1, 0>;

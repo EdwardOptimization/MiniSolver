@@ -72,7 +72,12 @@ struct InitializationKernel {
             kp.lam(i) = std::max(barrier_floor(config), lam_val);
             kp.s(i) = mu / kp.lam(i);
         } else { // Hard Constraint
-            double s_val = std::max(initial_slack_floor(config), -g);
+            // If g <= 0, choose s ~= -g so the initial hard-constraint
+            // residual is small. If g > 0, no positive slack can satisfy
+            // g + s = 0; scale s with the violation magnitude instead of the
+            // tiny floor to keep lambda/s well-conditioned in the first IPM
+            // linear system.
+            double s_val = std::max(initial_slack_floor(config), std::abs(g));
             kp.s(i) = s_val;
             kp.lam(i) = mu / s_val;
         }
