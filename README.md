@@ -307,6 +307,44 @@ and `SolverInfo::rti_lite_linearization_age` report which path ran.
 `set_config()` always invalidates the RTI-lite history so a strategy change
 does not silently warm-start from an incompatible seed.
 
+### MiniMatrix vs Eigen Microbenchmark
+
+`tools/mini_matrix_vs_eigen_bench` measures the inner kernels exercised by
+the Riccati backward pass (GEMM and LDLT factorization) at the small fixed
+sizes typical of NMPC. Build it once per backend:
+
+```bash
+cmake -S . -B .build_custom -DUSE_CUSTOM_MATRIX=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build .build_custom --target mini_matrix_vs_eigen_bench
+./.build_custom/mini_matrix_vs_eigen_bench
+
+cmake -S . -B .build_eigen -DUSE_EIGEN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build .build_eigen --target mini_matrix_vs_eigen_bench
+./.build_eigen/mini_matrix_vs_eigen_bench
+```
+
+Reference numbers from a 2026-05-06 host run (release, native arch
+disabled, single thread; ns/iter, lower is better):
+
+```text
+kernel             4x4    6x6    8x8    12x12
+GEMM (MiniMatrix)  2.1   33.3   45.4   147.1
+GEMM (Eigen3)      2.1   19.7   87.9   212.5
+LDLT (MiniMatrix)  2.2   23.7   40.2   101.7
+LDLT (Eigen3)     38.5   74.6  121.0   251.8
+```
+
+Read with care: 4x4 GEMM ties because both backends fully unroll. Eigen
+beats MiniMatrix at 6x6 GEMM (the SIMD path kicks in earlier than the
+template-unroll budget covers); MiniMatrix already wins at 8x8/12x12
+GEMM by 1.4-2x because the unrolled `StaticFor` path keeps register
+pressure low. LDLT factorization is uniformly faster on MiniMatrix
+because Eigen's pivoting adds setup cost that does not pay off at these
+sizes. The bench is the *evidence anchor* for any future kernel tuning,
+including widening `MINISOLVER_MATRIX_STATIC_UNROLL_MAX_WORK` or adding
+SIMD to `matmul`; speculative changes without a measurable win on this
+table will not land.
+
 ### Solve-Time Allocation Discipline
 
 The default `SolverConfig` is allocation-free during `solve()`. Two flags can

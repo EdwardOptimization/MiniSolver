@@ -491,6 +491,8 @@ if(MINISOLVER_BUILD_TOOLS)
     add_minisolver_bench(warm_start_bench tools/warm_start_bench.cpp)
 
     add_minisolver_bench(scaling_bench tools/scaling_bench.cpp)
+
+    add_minisolver_bench(mini_matrix_vs_eigen_bench tools/mini_matrix_vs_eigen_bench.cpp)
 endif()
 
 if(MINISOLVER_BUILD_TESTS)
