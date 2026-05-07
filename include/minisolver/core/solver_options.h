@@ -319,6 +319,26 @@ struct SolverConfig {
     // infeasibility to this fraction of the pre-restoration value.
     double restoration_sufficient_decrease_factor = 0.9;
 
+    // Quadratic-penalty restoration scaling. The legacy implementation pinned
+    // rho = 1000.0; FIXED keeps that exact behaviour by setting rho =
+    // restoration_rho_init unconditionally. VIOLATION_ADAPTIVE re-evaluates
+    // rho per restoration sub-iteration as
+    //     rho_k = clamp(restoration_rho_init / max(theta_inf_k,
+    //                       restoration_rho_violation_floor),
+    //                   restoration_rho_min,
+    //                   restoration_rho_max)
+    // where theta_inf_k is the inf-norm of the live `g_val` packet plus
+    // slack at the start of the k-th restoration sweep. This keeps the
+    // augmented Hessian well-conditioned when the violation is large and
+    // pulls aggressively to feasibility once the violation drops, without
+    // forcing the user to retune restoration_mu / restoration_reg.
+    enum class RestorationPenaltyMode { FIXED, VIOLATION_ADAPTIVE };
+    RestorationPenaltyMode restoration_penalty_mode = RestorationPenaltyMode::FIXED;
+    double restoration_rho_init = 1000.0;
+    double restoration_rho_min = 1.0;
+    double restoration_rho_max = 1e6;
+    double restoration_rho_violation_floor = 1e-6;
+
     // --- General ---
     int max_iters = 100; // Give it enough room
     PrintLevel print_level = PrintLevel::NONE;

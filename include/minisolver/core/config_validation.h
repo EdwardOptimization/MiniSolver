@@ -380,6 +380,31 @@ namespace detail {
         if (status != ApiStatus::OK) {
             return status;
         }
+        status = validate_positive_finite_config_value(conf.restoration_rho_init);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.restoration_rho_min);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_positive_finite_config_value(conf.restoration_rho_max);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        if (conf.restoration_rho_max < conf.restoration_rho_min) {
+            return ApiStatus::InvalidArgument;
+        }
+        status = validate_positive_finite_config_value(conf.restoration_rho_violation_floor);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        if (!enum_is_one_of<SolverConfig::RestorationPenaltyMode,
+                SolverConfig::RestorationPenaltyMode::FIXED,
+                SolverConfig::RestorationPenaltyMode::VIOLATION_ADAPTIVE>(
+                conf.restoration_penalty_mode)) {
+            return ApiStatus::InvalidArgument;
+        }
         status = validate_positive_finite_config_value(conf.newton_config.tol);
         if (status != ApiStatus::OK) {
             return status;

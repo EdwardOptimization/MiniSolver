@@ -1885,7 +1885,43 @@ private:
             // This pulls the solution towards the constraint manifold more aggressively than simple
             // min-norm. This is a restoration heuristic, not a full ALADIN or augmented-Lagrangian
             // outer loop.
-            double rho = 1000.0; // Fixed quadratic restoration penalty.
+            //
+            // rho selection:
+            //   FIXED: rho = restoration_rho_init (legacy 1000.0 default).
+            //   VIOLATION_ADAPTIVE: rho = clamp(rho_init / max(theta, floor),
+            //                                  rho_min, rho_max).
+            // Adaptive mode keeps the augmented Hessian well-conditioned when
+            // theta is large and pulls aggressively to feasibility once
+            // theta drops, without retuning restoration_mu / restoration_reg.
+            double rho = config.restoration_rho_init;
+            if (config.restoration_penalty_mode
+                == SolverConfig::RestorationPenaltyMode::VIOLATION_ADAPTIVE) {
+                double theta_inf = config.restoration_rho_violation_floor;
+                for (int k = 0; k <= N; ++k) {
+                    const auto& kp = traj[k];
+                    for (int i = 0; i < NC; ++i) {
+                        const double val = std::abs(kp.g_val(i) + kp.s(i));
+                        if (val > theta_inf) {
+                            theta_inf = val;
+                        }
+                    }
+                }
+                rho = config.restoration_rho_init / theta_inf;
+                if (rho < config.restoration_rho_min) {
+                    rho = config.restoration_rho_min;
+                }
+                if (rho > config.restoration_rho_max) {
+                    rho = config.restoration_rho_max;
+                }
+                context_.info.restoration_rho_adaptive_steps++;
+            }
+            if (context_.info.restoration_rho_min_used == 0.0
+                || rho < context_.info.restoration_rho_min_used) {
+                context_.info.restoration_rho_min_used = rho;
+            }
+            if (rho > context_.info.restoration_rho_max_used) {
+                context_.info.restoration_rho_max_used = rho;
+            }
             for (int k = 0; k <= N; ++k) {
                 auto& kp = traj[k];
 

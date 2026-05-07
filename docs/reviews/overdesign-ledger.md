@@ -200,6 +200,37 @@ Evidence: Existing validation now targets specific invariant-bearing fields
 such as line-search factors, barrier floors, `linear_solve_max_attempts`, and
 core tolerances.
 
+### OD-011: Adaptive Restoration Penalty Rho
+
+Proposal: Replace the hardcoded `rho = 1000.0` quadratic-penalty rho in
+`feasibility_restoration()` with a multi-scale adaptive policy that retunes
+rho per restoration sub-iteration based on the live constraint violation.
+
+Category: algorithm-convention
+
+Decision: modify (shipped behind opt-in mode)
+
+Reason: A single hardcoded rho silently couples the augmented Hessian
+condition number to the magnitude of the user's constraint scaling. When
+violation is large the augmented Hessian becomes badly conditioned; when
+violation is small the penalty under-pulls. The fix is well-bounded:
+`SolverConfig::RestorationPenaltyMode { FIXED, VIOLATION_ADAPTIVE }` plus
+clamp parameters (`restoration_rho_init`, `restoration_rho_min`,
+`restoration_rho_max`, `restoration_rho_violation_floor`).
+`FIXED` (default) keeps the legacy 1000.0 behaviour bit-for-bit by reading
+`restoration_rho_init` directly. `VIOLATION_ADAPTIVE` selects rho per
+restoration sub-iteration as
+`clamp(rho_init / max(theta_inf, floor), rho_min, rho_max)`, exposing the
+realized work via `SolverInfo::restoration_rho_min_used`,
+`restoration_rho_max_used`, and `restoration_rho_adaptive_steps`.
+
+Evidence: `tests/test_restoration_penalty.cpp` pins the defaults, the
+validation gates (rho_init / rho_min / rho_max / violation_floor positivity,
+`rho_max >= rho_min`, enum membership), and the `SolverInfo::reset` contract.
+End-to-end behavioural coverage is deferred until a benchmarked restoration
+regression appears, since adaptive scaling only matters when feasibility
+restoration is actually triggered.
+
 ### OD-010: Snapshot Save-Side Strictness
 
 Proposal: Allow `save_snapshot()` to write invalid forensic snapshots, while

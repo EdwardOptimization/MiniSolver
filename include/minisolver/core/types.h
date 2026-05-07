@@ -225,6 +225,21 @@ struct SolverInfo {
     // RTI-lite falls back to a full solve.
     bool rti_lite_reused_linearization = false;
     int rti_lite_linearization_age = 0;
+    // Restoration penalty diagnostics. Populated only when feasibility
+    // restoration is invoked.
+    //
+    // restoration_rho_min_used / restoration_rho_max_used: extremes of the
+    // quadratic restoration penalty rho selected across all restoration
+    // sub-iterations of the last solve. With RestorationPenaltyMode::FIXED
+    // both equal restoration_rho_init; with VIOLATION_ADAPTIVE they bracket
+    // the realized adaptive scaling work.
+    //
+    // restoration_rho_adaptive_steps: number of restoration sub-iterations
+    // that actually re-evaluated rho under VIOLATION_ADAPTIVE. Zero in FIXED
+    // mode or when restoration was never triggered.
+    double restoration_rho_min_used = 0.0;
+    double restoration_rho_max_used = 0.0;
+    int restoration_rho_adaptive_steps = 0;
     // Pareto-frontier filter history diagnostics. Populated only by
     // FilterLineSearch; MeritLineSearch leaves them at zero.
     //
@@ -298,6 +313,9 @@ struct SolverInfo {
         filter_entries_pruned_total = 0;
         filter_redundant_inserts_total = 0;
         filter_max_history_size = 0;
+        restoration_rho_min_used = 0.0;
+        restoration_rho_max_used = 0.0;
+        restoration_rho_adaptive_steps = 0;
     }
 };
 
