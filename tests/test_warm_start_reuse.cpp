@@ -12,8 +12,11 @@
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include "minisolver/solver/solver.h"
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace minisolver;
 
@@ -80,8 +83,10 @@ struct WarmStartTrackingModel {
         kp.Q(1, 0) = 0.0;
         kp.Q(1, 1) = 0.2;
         kp.R(0, 0) = 0.1;
-        kp.H(0, 0) = 0.0;
-        kp.H(1, 0) = 0.0;
+        // H is MSMat<NU, NX> = 1x2 here; use setZero() to avoid index confusion
+        // (the obvious "H(1, 0) = 0" is row=1 in a 1-row matrix and runs Eigen
+        // off the end of storage).
+        kp.H.setZero();
     }
 
     template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
@@ -190,6 +195,7 @@ TEST(WarmStartReuseTest, ReuseRegularizationDoesNotDriveBelowRegMin)
         WarmStartBarrierMode::RESET_TO_MU_INIT, WarmStartRegularizationMode::DECAY_PREVIOUS_REG);
     config.reg_init = 1e-3;
     config.reg_min = 1e-6;
+    config.reg_max = 1e6;
     config.reg_scale_down = 10.0;
 
     MiniSolver<WarmStartTrackingModel, MaxN> solver(Horizon, Backend::CPU_SERIAL, config);
@@ -200,14 +206,70 @@ TEST(WarmStartReuseTest, ReuseRegularizationDoesNotDriveBelowRegMin)
     ASSERT_EQ(solver.set_initial_state("x", 0.0), ApiStatus::OK);
     ASSERT_EQ(solver.set_initial_state("v", 0.0), ApiStatus::OK);
 
+    // The legacy version of this test asserted on info.mu because info.reg
+    // did not exist; the test was effectively a typo. SolverInfo now exposes
+    // reg, so pin the actual contract: after every solve, reg is finite,
+    // never below reg_min, and never above reg_max.
     for (int run = 0; run < 5; ++run) {
         const SolverStatus status = solver.solve();
         const bool ok = (status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
         ASSERT_TRUE(ok) << "run " << run << " failed: " << status_to_string(status);
-        // Active reg never falls below the configured floor, even after many decays.
-        EXPECT_GE(solver.get_info().mu, 0.0);
-        EXPECT_TRUE(std::isfinite(solver.get_info().mu));
+        const double reg = solver.get_info().reg;
+        EXPECT_TRUE(std::isfinite(reg)) << "run " << run;
+        EXPECT_GE(reg, config.reg_min) << "run " << run;
+        EXPECT_LE(reg, config.reg_max) << "run " << run;
     }
+}
+
+// DECAY_PREVIOUS_REG must actually carry a smaller reg into the next solve
+// than RESET_TO_REG_INIT, otherwise the mode is a no-op. We compare the
+// realized reg seen at the end of a sequence of successful solves.
+TEST(WarmStartReuseTest, DecayRegModeProducesNonIncreasingRegAcrossSolves)
+{
+    SolverConfig decay = make_warm_start_config(InitializationMode::REUSE_PRIMAL_DUAL,
+        WarmStartBarrierMode::REUSE_PREVIOUS_MU, WarmStartRegularizationMode::DECAY_PREVIOUS_REG);
+    decay.reg_init = 1e-3;
+    decay.reg_min = 1e-8;
+    decay.reg_scale_down = 5.0;
+
+    SolverConfig reset = decay;
+    reset.warm_start_regularization = WarmStartRegularizationMode::RESET_TO_REG_INIT;
+
+    auto run_to_final_reg = [](const SolverConfig& cfg) {
+        MiniSolver<WarmStartTrackingModel, MaxN> solver(Horizon, Backend::CPU_SERIAL, cfg);
+        solver.set_dt(0.1);
+        double final_reg = std::numeric_limits<double>::quiet_NaN();
+        double measured_x = 0.0;
+        double measured_v = 0.0;
+        for (int step = 0; step < Steps; ++step) {
+            const double xref = 1.0 + 0.05 * static_cast<double>(step);
+            for (int k = 0; k <= Horizon; ++k) {
+                EXPECT_EQ(solver.set_parameter(k, "x_ref", xref), ApiStatus::OK);
+            }
+            EXPECT_EQ(solver.set_initial_state("x", measured_x), ApiStatus::OK);
+            EXPECT_EQ(solver.set_initial_state("v", measured_v), ApiStatus::OK);
+            const SolverStatus status = solver.solve();
+            EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE)
+                << "step " << step << ": " << status_to_string(status);
+            final_reg = solver.get_info().reg;
+            const double u0 = solver.get_control(0, 0);
+            const double clamped_u = std::max(-1.0, std::min(1.0, u0));
+            measured_x += measured_v * 0.1;
+            measured_v += clamped_u * 0.1;
+        }
+        return final_reg;
+    };
+
+    const double decay_final = run_to_final_reg(decay);
+    const double reset_final = run_to_final_reg(reset);
+
+    EXPECT_TRUE(std::isfinite(decay_final));
+    EXPECT_TRUE(std::isfinite(reset_final));
+    EXPECT_GE(decay_final, decay.reg_min);
+    EXPECT_LE(decay_final, reset_final + 1e-15)
+        << "DECAY_PREVIOUS_REG must end at a reg <= RESET_TO_REG_INIT; otherwise the warm-start "
+           "decay does nothing. decay_final="
+        << decay_final << ", reset_final=" << reset_final;
 }
 
 TEST(WarmStartReuseTest, ReuseModesAreOrthogonalToInitializationFallback)

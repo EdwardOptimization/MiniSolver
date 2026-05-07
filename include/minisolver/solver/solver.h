@@ -888,6 +888,7 @@ private:
         context_.info.complementarity_inf = residuals.max_complementarity_gap;
         context_.info.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
         context_.info.mu = residuals.barrier_mu;
+        context_.info.reg = context_.solve.reg;
         context_.info.alpha = context_.metrics.last_alpha;
         context_.info.linear_ok = true;
         context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
@@ -909,6 +910,7 @@ private:
         context_.info.complementarity_inf = residuals.max_complementarity_gap;
         context_.info.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
         context_.info.mu = residuals.barrier_mu;
+        context_.info.reg = context_.solve.reg;
         context_.info.alpha = context_.metrics.last_alpha;
         context_.info.linear_ok = residuals.linear_ok;
         context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
@@ -924,6 +926,7 @@ private:
         context_.info.termination_reason = reason_for_loop_status_(loop_status);
         context_.info.iterations = context_.solve.current_iter;
         context_.info.mu = context_.solve.mu;
+        context_.info.reg = context_.solve.reg;
         context_.info.alpha = context_.metrics.last_alpha;
         context_.info.linear_ok = false;
         context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;

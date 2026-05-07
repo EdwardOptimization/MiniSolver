@@ -180,6 +180,11 @@ struct SolverInfo {
     double complementarity_inf = 0.0;
     double barrier_centrality_inf = 0.0;
     double mu = 0.0;
+    // Active Hessian regularisation at the end of the last solve(). Mirrors
+    // the internal `context_.solve.reg` so callers can verify warm-start
+    // behaviour (REUSE_PREVIOUS_REG / DECAY_PREVIOUS_REG) and that reg is
+    // floor-clamped at SolverConfig::reg_min after a successful step.
+    double reg = 0.0;
     double alpha = 1.0;
 
     bool linear_ok = true;
@@ -287,6 +292,7 @@ struct SolverInfo {
         complementarity_inf = 0.0;
         barrier_centrality_inf = 0.0;
         mu = 0.0;
+        reg = 0.0;
         alpha = 1.0;
         linear_ok = true;
         line_search_failed = false;
