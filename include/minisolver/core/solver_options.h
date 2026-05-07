@@ -29,22 +29,39 @@ enum class InertiaStrategy {
 };
 
 // Riccati robustness mode. Controls how aggressively the backward pass
-// surfaces inertia-correction events to callers.
+// surfaces inertia-correction events to callers. Both modes share the
+// existing NMPC Riccati path - no square-root or LDLT rewrite. They only
+// differ in *which* inertia events flip SolverInfo::degraded_step.
 //
-// STANDARD (default): the legacy NMPC Riccati path. Inertia-correction
-// fallbacks (general-path regularization escalation, small-Nu freeze,
-// SATURATION / IGNORE_SINGULAR repair sweeps) execute as before. The
-// freeze-count and the new riccati_indefinite_blocks /
-// riccati_max_diagonal_perturbation diagnostics are still populated, but a
-// successful solve with non-zero inertia counters is *not* tagged as a
-// degraded step.
+// Background: the cpu_serial Riccati has four fallback paths that may
+// recover an indefinite Quu and still return ok = true:
+//   1. General-path SPD retry: the spd_solver re-factors with the
+//      regularization step added to Quu's diagonal.
+//   2. Small-Nu freeze fallback: when Nu is small and Quu cannot be
+//      factored even with regularization, freeze that knot's du via a
+//      huge_penalty diagonal anchor. This is "the legacy degraded path".
+//   3. SATURATION repair sweep: clamp negative diagonal entries to a floor.
+//   4. IGNORE_SINGULAR repair sweep: zero-out the smallest diagonal entries
+//      and use the resulting principal block.
 //
-// INERTIA_AWARE_DIAGNOSTICS: same algorithmic path; any non-zero inertia
-// correction during the backward pass also flips SolverInfo::degraded_step,
-// so monitoring code can detect numerically suspicious iterations even when
-// the linear solve itself returned ok. Use this mode when the model is
-// suspected to be near-indefinite and you want to gate downstream control
-// actions on whether the QP subproblem stayed cleanly SPD.
+// All four bump LinearSolveResult::riccati_indefinite_blocks and update
+// riccati_max_diagonal_perturbation. The freeze fallback (#2) additionally
+// sets LinearSolveResult::degraded_step, which Solver propagates to
+// SolverInfo::degraded_step in *both* modes - that path is the
+// pre-existing N-DEG-1 contract and is intentionally non-suppressible.
+//
+// STANDARD (default): only the freeze fallback (#2) escalates to
+// SolverInfo::degraded_step (via LinearSolveResult::degraded_step, the
+// legacy path). The other three fallback paths (#1, #3, #4) update the
+// counters but leave degraded_step untouched, matching the legacy
+// "successful solve" semantic for non-frozen recoveries.
+//
+// INERTIA_AWARE_DIAGNOSTICS: identical algorithm; ALL non-zero
+// riccati_indefinite_blocks (#1, #2, #3, #4) flip SolverInfo::degraded_step
+// in addition to the freeze path. Use this mode when the model is suspected
+// to be near-indefinite and you want monitoring code to gate downstream
+// control actions on whether the QP subproblem stayed cleanly SPD without
+// any inertia correction.
 //
 // SQUARE_ROOT and FACTORIZATION_MODIFY are explicit non-goals for now: the
 // current Riccati path is appropriate for NMPC and a square-root rewrite

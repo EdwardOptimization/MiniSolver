@@ -7,18 +7,25 @@
 //     SATURATION/IGNORE_SINGULAR repair).
 //   - SolverInfo::riccati_max_diagonal_perturbation reports the largest extra
 //     diagonal value added beyond the user-supplied `reg`.
-//   - RiccatiRobustMode::STANDARD never tags a successful solve with
-//     non-zero inertia counters as a degraded step.
-//   - RiccatiRobustMode::INERTIA_AWARE_DIAGNOSTICS flips degraded_step when
-//     any inertia-correction event happens, even if the linear solve
-//     succeeds, so monitoring code can gate downstream control actions.
+//   - In RiccatiRobustMode::STANDARD only the small-Nu freeze fallback
+//     escalates to SolverInfo::degraded_step (via the pre-existing N-DEG-1
+//     LinearSolveResult::degraded_step path); the other three fallback
+//     paths leave degraded_step untouched even when their counters are
+//     non-zero.
+//   - RiccatiRobustMode::INERTIA_AWARE_DIAGNOSTICS additionally flips
+//     degraded_step whenever riccati_indefinite_blocks > 0, i.e. for *any*
+//     of the four fallback paths, not only the freeze case.
 //   - Validation accepts both modes and rejects unknown enum values.
 //
-// We deliberately do not exercise a model that currently triggers the
-// fallback: such a case requires a near-indefinite Quu, which is rare and
-// not the contract under test here. What we *do* test is that on a clean
-// problem the counters stay zero in both modes, and that the config
-// validation gate is hooked up correctly.
+// Behavioural coverage of the fallback paths themselves lives in
+// tests/test_riccati.cpp (small-Nu freeze) and tests/test_status.cpp
+// (end-to-end degraded_step / degraded_riccati_freeze_count surface).
+// Here we focus on the per-mode escalation contract on a clean problem
+// (counters stay zero, both modes leave degraded_step false) and on the
+// config-validation gate. RED coverage that exercises a non-freeze
+// inertia-correction path (general-path SPD retry / SATURATION /
+// IGNORE_SINGULAR) under both modes is tracked in the gap backlog and
+// will be added once a near-indefinite Quu reproducer is in place.
 
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"

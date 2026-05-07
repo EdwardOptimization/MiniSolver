@@ -213,13 +213,22 @@ or LDLT rewrite — and only differ in how visible the existing fallbacks are:
   `SATURATION` / `IGNORE_SINGULAR` repair sweeps each bump
   `LinearSolveResult::riccati_indefinite_blocks` and update
   `riccati_max_diagonal_perturbation` whenever they fire.
-- `Solver::record_linear_solver_diagnostics_` accumulates those into
-  `SolverInfo::riccati_indefinite_blocks` and
-  `SolverInfo::riccati_max_diagonal_perturbation` for every solve, regardless
-  of the mode.
+- The small-Nu freeze fallback additionally sets
+  `LinearSolveResult::degraded_step` and bumps
+  `LinearSolveResult::degraded_riccati_freeze_count`. This is the
+  pre-existing N-DEG-1 contract: a frozen `du` is a degraded step in
+  *both* modes and cannot be suppressed.
+- `Solver::record_linear_solver_diagnostics_` accumulates the counters into
+  `SolverInfo::riccati_indefinite_blocks`,
+  `SolverInfo::riccati_max_diagonal_perturbation`, and
+  `SolverInfo::degraded_riccati_freeze_count` for every solve, regardless of
+  the mode. `SolverInfo::degraded_step` is always set when the freeze
+  fallback fires.
 - `INERTIA_AWARE_DIAGNOSTICS` additionally sets `SolverInfo::degraded_step`
-  to true whenever any inertia-correction event happened during the solve, so
-  monitoring code can gate downstream control actions on the QP staying SPD.
+  to true whenever `riccati_indefinite_blocks > 0` — i.e. any of the four
+  fallback paths fired, not only the freeze path. This is the only
+  per-mode behavioural difference; in `STANDARD` the non-freeze inertia
+  events update the counters but leave `degraded_step` untouched.
 
 Square-root and `FACTORIZATION_MODIFY` paths remain explicit non-goals until a
 benchmark-confirmed failure that this stage cannot diagnose appears. The
