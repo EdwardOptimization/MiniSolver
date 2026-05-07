@@ -237,6 +237,54 @@ For full state/control/parameter equilibration (which would also rescale
 `dx/du`, Jacobians, Hessians, warm-start deltas, and Riccati blocks), see the
 deferred Stage 5 section in `docs/architecture/scaling-normalization-design.md`.
 
+### Warm-Start Barrier and Regularization Reuse
+
+Two orthogonal opt-ins control how the previous solve's barrier parameter and
+regularization carry into the next `solve()` call:
+
+```cpp
+SolverConfig cfg = solver.get_config();
+cfg.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+cfg.warm_start_barrier = WarmStartBarrierMode::REUSE_PREVIOUS_MU;
+cfg.warm_start_regularization = WarmStartRegularizationMode::DECAY_PREVIOUS_REG;
+solver.set_config(cfg);
+```
+
+* `WarmStartBarrierMode` -- `RESET_TO_MU_INIT` (default), `REUSE_PREVIOUS_MU`,
+  or `FROM_COMPLEMENTARITY_GAP`. The latter two require
+  `InitializationMode::REUSE_PRIMAL_DUAL` and a valid stored slack/dual
+  iterate; the solver transparently falls back to `mu_init` if the iterate
+  fails validation.
+* `WarmStartRegularizationMode` -- `RESET_TO_REG_INIT` (default),
+  `REUSE_PREVIOUS_REG`, or `DECAY_PREVIOUS_REG`. Decay divides the previous
+  regularization by `config.reg_scale_down` once per solve; reuse keeps it
+  unchanged. Both are clamped to `[reg_min, reg_max]`.
+
+Benchmark evidence (custom MiniMatrix backend, double-integrator tracking
+problem, 60 neighbouring solves with horizon 20; output of
+`tools/warm_start_bench`):
+
+```text
+strategy                              avg_iters  worst_iters  avg_ms
+adaptive_primal_reset                 6.49       11           0.0077
+adaptive_pd_reset_mu                  3.53       7            0.0043
+adaptive_pd_reuse_mu                  3.53       7            0.0043
+adaptive_pd_reuse_mu_decay_reg        3.53       7            0.0043
+monotone_pd_reset_mu                  8.27       12           0.0091
+monotone_pd_reuse_mu                  3.53       7            0.0042
+monotone_pd_reuse_mu_decay_reg        3.53       7            0.0041
+```
+
+Takeaways: switching from `REUSE_PRIMAL` to `REUSE_PRIMAL_DUAL` cuts the
+average iteration count by roughly 46% on this problem; reusing mu adds an
+extra 57% on top of that under the `MONOTONE` barrier strategy. Regularization
+reuse and decay are neutral on this well-conditioned case but remain
+documented opt-ins for poorly-scaled problems where escalation cost dominates.
+The `WarmStartReuseTest` regression suite locks the cumulative-iteration win
+of `REUSE_PREVIOUS_MU + DECAY_PREVIOUS_REG` over `RESET_TO_MU_INIT +
+RESET_TO_REG_INIT` on a small tracking model so future changes cannot silently
+regress the warm-start contract.
+
 ### RTI-lite Warm Start
 
 For repeated MPC solves where state deltas between control cycles are small,

@@ -221,7 +221,7 @@ BenchStats run_case(const StrategyCase& strategy)
 
 int main()
 {
-    const std::array<StrategyCase, 7> cases = { {
+    const std::array<StrategyCase, 11> cases = { {
         { "adaptive_primal_reset", InitializationMode::REUSE_PRIMAL, BarrierStrategy::ADAPTIVE,
             WarmStartBarrierMode::RESET_TO_MU_INIT,
             WarmStartRegularizationMode::RESET_TO_REG_INIT },
@@ -234,12 +234,27 @@ int main()
         { "adaptive_pd_gap_mu", InitializationMode::REUSE_PRIMAL_DUAL, BarrierStrategy::ADAPTIVE,
             WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP,
             WarmStartRegularizationMode::RESET_TO_REG_INIT },
+        // Regularization-reuse variants. They isolate the warm-start
+        // contribution of WarmStartRegularizationMode so the bench output
+        // can argue for or against keeping the previous reg across solves.
+        { "adaptive_pd_reuse_mu_reuse_reg", InitializationMode::REUSE_PRIMAL_DUAL,
+            BarrierStrategy::ADAPTIVE, WarmStartBarrierMode::REUSE_PREVIOUS_MU,
+            WarmStartRegularizationMode::REUSE_PREVIOUS_REG },
+        { "adaptive_pd_reuse_mu_decay_reg", InitializationMode::REUSE_PRIMAL_DUAL,
+            BarrierStrategy::ADAPTIVE, WarmStartBarrierMode::REUSE_PREVIOUS_MU,
+            WarmStartRegularizationMode::DECAY_PREVIOUS_REG },
+        { "adaptive_pd_gap_mu_decay_reg", InitializationMode::REUSE_PRIMAL_DUAL,
+            BarrierStrategy::ADAPTIVE, WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP,
+            WarmStartRegularizationMode::DECAY_PREVIOUS_REG },
         { "monotone_pd_reset_mu", InitializationMode::REUSE_PRIMAL_DUAL, BarrierStrategy::MONOTONE,
             WarmStartBarrierMode::RESET_TO_MU_INIT,
             WarmStartRegularizationMode::RESET_TO_REG_INIT },
         { "monotone_pd_reuse_mu", InitializationMode::REUSE_PRIMAL_DUAL, BarrierStrategy::MONOTONE,
             WarmStartBarrierMode::REUSE_PREVIOUS_MU,
             WarmStartRegularizationMode::RESET_TO_REG_INIT },
+        { "monotone_pd_reuse_mu_decay_reg", InitializationMode::REUSE_PRIMAL_DUAL,
+            BarrierStrategy::MONOTONE, WarmStartBarrierMode::REUSE_PREVIOUS_MU,
+            WarmStartRegularizationMode::DECAY_PREVIOUS_REG },
         { "monotone_pd_gap_mu", InitializationMode::REUSE_PRIMAL_DUAL, BarrierStrategy::MONOTONE,
             WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP,
             WarmStartRegularizationMode::RESET_TO_REG_INIT },
