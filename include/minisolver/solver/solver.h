@@ -1199,6 +1199,20 @@ private:
             context_.info.degraded_step = true;
             context_.info.degraded_riccati_freeze_count += result.degraded_riccati_freeze_count;
         }
+        // Riccati inertia-correction diagnostics. Always accumulate the
+        // counters so any caller can detect numerically suspicious solves.
+        // RiccatiRobustMode::INERTIA_AWARE_DIAGNOSTICS additionally promotes a
+        // non-zero correction count to a degraded_step flag for monitoring.
+        context_.info.riccati_indefinite_blocks += result.riccati_indefinite_blocks;
+        if (result.riccati_max_diagonal_perturbation
+            > context_.info.riccati_max_diagonal_perturbation) {
+            context_.info.riccati_max_diagonal_perturbation
+                = result.riccati_max_diagonal_perturbation;
+        }
+        if (config.riccati_robust_mode == RiccatiRobustMode::INERTIA_AWARE_DIAGNOSTICS
+            && result.riccati_indefinite_blocks > 0) {
+            context_.info.degraded_step = true;
+        }
     }
 
     void record_line_search_diagnostics_(const LineSearchResult& result)

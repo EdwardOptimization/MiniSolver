@@ -27,6 +27,7 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
     * **Mehrotra Predictor-Corrector**: Drastically reduces iteration counts by utilizing higher-order corrections.
     * **Filter Line Search**: Ensures global convergence without the tedious tuning of merit function parameters.
     * **Feasibility Restoration**: Automatically triggers a minimum-norm recovery phase if the solver encounters infeasible warm starts.
+* **Riccati Inertia-Correction Diagnostics**: `SolverInfo::riccati_indefinite_blocks` and `SolverInfo::riccati_max_diagonal_perturbation` always surface what the existing SPD fallbacks (regularization escalation, small-Nu freeze, saturation/ignore-singular sweeps) silently did. Set `riccati_robust_mode = RiccatiRobustMode::INERTIA_AWARE_DIAGNOSTICS` to additionally flip `degraded_step` whenever any inertia correction occurred, so monitoring code can gate downstream control actions on the local QP staying cleanly SPD.
 
 ### 🔧 Advanced Solver Capabilities
 * **Second Order Correction (SOC)**: Handles highly nonlinear constraints (e.g., tight obstacle avoidance) by curving the search step.

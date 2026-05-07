@@ -28,6 +28,31 @@ enum class InertiaStrategy {
     // In the future: FACTORIZATION_MODIFY
 };
 
+// Riccati robustness mode. Controls how aggressively the backward pass
+// surfaces inertia-correction events to callers.
+//
+// STANDARD (default): the legacy NMPC Riccati path. Inertia-correction
+// fallbacks (general-path regularization escalation, small-Nu freeze,
+// SATURATION / IGNORE_SINGULAR repair sweeps) execute as before. The
+// freeze-count and the new riccati_indefinite_blocks /
+// riccati_max_diagonal_perturbation diagnostics are still populated, but a
+// successful solve with non-zero inertia counters is *not* tagged as a
+// degraded step.
+//
+// INERTIA_AWARE_DIAGNOSTICS: same algorithmic path; any non-zero inertia
+// correction during the backward pass also flips SolverInfo::degraded_step,
+// so monitoring code can detect numerically suspicious iterations even when
+// the linear solve itself returned ok. Use this mode when the model is
+// suspected to be near-indefinite and you want to gate downstream control
+// actions on whether the QP subproblem stayed cleanly SPD.
+//
+// SQUARE_ROOT and FACTORIZATION_MODIFY are explicit non-goals for now: the
+// current Riccati path is appropriate for NMPC and a square-root rewrite
+// should be driven by a benchmark-confirmed numerical failure, not by
+// speculative robustness work. See docs/reviews/overdesign-ledger.md OD-006
+// and docs/architecture/solver-capability-adoption-plan.md P1.
+enum class RiccatiRobustMode { STANDARD, INERTIA_AWARE_DIAGNOSTICS };
+
 // Line search strategy for globalization. For real-time NMPC (SQP-style) it's common to
 // disable backtracking and simply take a fraction-to-boundary step.
 enum class LineSearchType { MERIT, FILTER, NONE };
@@ -221,6 +246,7 @@ struct SolverConfig {
 
     // --- Regularization ---
     InertiaStrategy inertia_strategy = InertiaStrategy::REGULARIZATION;
+    RiccatiRobustMode riccati_robust_mode = RiccatiRobustMode::STANDARD;
     double reg_init = 1e-4; // Slightly higher init to be safe
     double reg_min = 1e-8;
     double reg_max = 1e9;

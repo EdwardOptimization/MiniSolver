@@ -203,6 +203,29 @@ Candidate modes:
 Every fallback must be visible in diagnostics. Silent subproblem changes should
 not be reported as normal solves.
 
+#### Stage 1 (shipped): inertia-correction visibility
+
+`RiccatiRobustMode::STANDARD` (default) and `INERTIA_AWARE_DIAGNOSTICS` are
+implemented today. They share the existing Riccati algorithm — no square-root
+or LDLT rewrite — and only differ in how visible the existing fallbacks are:
+
+- The general-path SPD escalation, the small-Nu freeze fallback, and the
+  `SATURATION` / `IGNORE_SINGULAR` repair sweeps each bump
+  `LinearSolveResult::riccati_indefinite_blocks` and update
+  `riccati_max_diagonal_perturbation` whenever they fire.
+- `Solver::record_linear_solver_diagnostics_` accumulates those into
+  `SolverInfo::riccati_indefinite_blocks` and
+  `SolverInfo::riccati_max_diagonal_perturbation` for every solve, regardless
+  of the mode.
+- `INERTIA_AWARE_DIAGNOSTICS` additionally sets `SolverInfo::degraded_step`
+  to true whenever any inertia-correction event happened during the solve, so
+  monitoring code can gate downstream control actions on the QP staying SPD.
+
+Square-root and `FACTORIZATION_MODIFY` paths remain explicit non-goals until a
+benchmark-confirmed failure that this stage cannot diagnose appears. The
+diagnostic stage is the contract anchor that future stages must keep
+populated, so the visibility invariant survives any future Riccati rewrite.
+
 ### P0: Constraint Scaling / Per-Row Normalization
 
 This is listed separately from general scaling because it is the most likely

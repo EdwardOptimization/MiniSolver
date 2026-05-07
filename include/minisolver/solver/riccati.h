@@ -584,6 +584,14 @@ LinearSolveResult cpu_serial_solve(TrajVector& traj, int N, double mu, double re
                 if (used_freeze_fallback) {
                     result.degraded_step = true;
                     result.degraded_riccati_freeze_count++;
+                    // Freeze fallback is by definition an inertia-correction
+                    // event: the original Quu was not SPD at the requested
+                    // regularization. The huge_penalty perturbation is what
+                    // anchors the frozen direction.
+                    result.riccati_indefinite_blocks++;
+                    if (config.huge_penalty > result.riccati_max_diagonal_perturbation) {
+                        result.riccati_max_diagonal_perturbation = config.huge_penalty;
+                    }
                 }
             }
 
@@ -610,6 +618,10 @@ LinearSolveResult cpu_serial_solve(TrajVector& traj, int N, double mu, double re
                     if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
                         return { false }; // Give up
                     }
+                    result.riccati_indefinite_blocks++;
+                    if (config.regularization_step > result.riccati_max_diagonal_perturbation) {
+                        result.riccati_max_diagonal_perturbation = config.regularization_step;
+                    }
                 }
 
                 // Failure handling B: Try to fix (Ignore Singular)
@@ -631,6 +643,10 @@ LinearSolveResult cpu_serial_solve(TrajVector& traj, int N, double mu, double re
                         if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
                             return { false };
                         }
+                        result.riccati_indefinite_blocks++;
+                        if (config.huge_penalty > result.riccati_max_diagonal_perturbation) {
+                            result.riccati_max_diagonal_perturbation = config.huge_penalty;
+                        }
                     } else {
                         // The matrix is not positive definite, but the diagonal elements are all
                         // greater than the threshold, indicating a structural problem that cannot
@@ -645,12 +661,18 @@ LinearSolveResult cpu_serial_solve(TrajVector& traj, int N, double mu, double re
                 // uniform regularization sweep.
                 if (strategy == minisolver::InertiaStrategy::SATURATION) {
                     const double sat_floor = (reg > config.reg_min) ? reg : config.reg_min;
+                    double sat_perturbation = 0.0;
                     for (int i = 0; i < Knot::NU; ++i) {
                         if (kp.R_bar(i, i) < sat_floor) {
+                            const double delta = sat_floor - kp.R_bar(i, i);
+                            if (delta > sat_perturbation) {
+                                sat_perturbation = delta;
+                            }
                             kp.R_bar(i, i) = sat_floor;
                         }
                     }
                     ws.spd_solver.compute(kp.R_bar);
+                    bool used_uniform_sweep = false;
                     if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
                         for (int i = 0; i < Knot::NU; ++i) {
                             kp.R_bar(i, i) += config.regularization_step;
@@ -659,6 +681,13 @@ LinearSolveResult cpu_serial_solve(TrajVector& traj, int N, double mu, double re
                         if (!MatOps::is_spd_solver_success(ws.spd_solver)) {
                             return { false };
                         }
+                        used_uniform_sweep = true;
+                    }
+                    result.riccati_indefinite_blocks++;
+                    const double total_pert = sat_perturbation
+                        + (used_uniform_sweep ? config.regularization_step : 0.0);
+                    if (total_pert > result.riccati_max_diagonal_perturbation) {
+                        result.riccati_max_diagonal_perturbation = total_pert;
                     }
                 }
             }

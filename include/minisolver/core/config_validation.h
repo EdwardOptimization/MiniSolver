@@ -135,6 +135,12 @@ namespace detail {
             InertiaStrategy::SATURATION, InertiaStrategy::IGNORE_SINGULAR>(value);
     }
 
+    inline bool valid_enum(RiccatiRobustMode value)
+    {
+        return enum_is_one_of<RiccatiRobustMode, RiccatiRobustMode::STANDARD,
+            RiccatiRobustMode::INERTIA_AWARE_DIAGNOSTICS>(value);
+    }
+
     inline bool valid_enum(LineSearchType value)
     {
         return enum_is_one_of<LineSearchType, LineSearchType::MERIT, LineSearchType::FILTER,
@@ -173,6 +179,7 @@ namespace detail {
     X(integrator)                                                                                  \
     X(barrier_strategy)                                                                            \
     X(inertia_strategy)                                                                            \
+    X(riccati_robust_mode)                                                                         \
     X(line_search_type)                                                                            \
     X(print_level)                                                                                 \
     X(hessian_approximation)                                                                       \

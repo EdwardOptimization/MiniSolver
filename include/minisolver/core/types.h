@@ -225,6 +225,20 @@ struct SolverInfo {
     // RTI-lite falls back to a full solve.
     bool rti_lite_reused_linearization = false;
     int rti_lite_linearization_age = 0;
+    // Riccati inertia-correction diagnostics. They are populated for every
+    // solve regardless of `SolverConfig::riccati_robust_mode`; the mode only
+    // controls whether non-zero counters also flip `degraded_step`.
+    //
+    // riccati_indefinite_blocks: cumulative number of backward-pass stages
+    // that required Quu inertia correction beyond the user-supplied `reg`
+    // (general-path SPD escalation, small-Nu freeze fallback, or
+    // SATURATION/IGNORE_SINGULAR repair sweeps).
+    //
+    // riccati_max_diagonal_perturbation: the largest *extra* diagonal value
+    // added to Quu(i,i) during the last solve, on top of the standard `reg`
+    // shift. Useful for detecting numerically suspicious local QPs.
+    int riccati_indefinite_blocks = 0;
+    double riccati_max_diagonal_perturbation = 0.0;
 
     void reset()
     {
@@ -259,6 +273,8 @@ struct SolverInfo {
         direction_refinement_last_defect = 0.0;
         rti_lite_reused_linearization = false;
         rti_lite_linearization_age = 0;
+        riccati_indefinite_blocks = 0;
+        riccati_max_diagonal_perturbation = 0.0;
     }
 };
 
