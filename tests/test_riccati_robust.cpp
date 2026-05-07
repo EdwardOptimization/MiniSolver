@@ -81,8 +81,7 @@ struct SmoothTrackingModel {
         kp.Q(1, 0) = 0.0;
         kp.Q(1, 1) = 0.2;
         kp.R(0, 0) = 1.0;
-        kp.H(0, 0) = 0.0;
-        kp.H(1, 0) = 0.0;
+        kp.H.setZero();
     }
 
     template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
