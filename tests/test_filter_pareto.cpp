@@ -1,19 +1,37 @@
 // Pareto-frontier filter contract tests.
 //
-// These tests pin the contract introduced by Tier 4.3:
+// These tests pin the contract introduced by Tier 4.3 and the gamma_phi
+// correctness fix that followed it:
+//
 //   - LineSearchResult.filter_entries_pruned, filter_redundant_inserts, and
 //     filter_size_after are populated by FilterLineSearch and surface the
 //     Pareto-pruning policy that replaces the legacy circular-buffer
-//     eviction.
+//     eviction. (MonotonicallyImprovingMetricsCollapseFrontierToSingleEntry
+//     and the gamma_phi tests below).
 //   - SolverInfo.filter_entries_pruned_total,
-//     filter_redundant_inserts_total, and filter_max_history_size accumulate
-//     across an entire solve and reset between solves.
+//     filter_redundant_inserts_total, and filter_max_history_size are
+//     cleared by SolverInfo::reset() so they reflect the current solve
+//     only. (SolverInfoExposesPeakHistorySize.)
 //   - MeritLineSearch leaves all filter diagnostics at zero.
-//   - On strictly improving (theta, phi) the frontier collapses to size 1.
+//     (MeritLineSearchLeavesFilterDiagnosticsAtZero.)
+//   - On strictly improving (theta, phi) the frontier collapses to size 1
+//     and the redundant-insert counter stays zero.
+//     (MonotonicallyImprovingMetricsCollapseFrontierToSingleEntry.)
 //   - On strictly worsening (theta, phi) every new entry is rejected as
 //     redundant; the existing single entry is preserved.
-//   - On Pareto-incomparable entries (better theta, worse phi or vice versa)
-//     no pruning happens and both stay on the frontier.
+//     (StrictlyWorseningSequenceMarksEveryNewEntryRedundant.)
+//   - gamma_phi-aware dominance: the IPOPT-style forbidden region of an
+//     entry (theta_e, phi_e) is theta_c >= (1-gamma_theta) theta_e AND
+//     phi_c >= phi_e - gamma_phi * theta_e. The Pareto check therefore has
+//     to compare psi = phi - gamma_phi * theta on the ordinate, not phi.
+//     Plain (theta, phi) Pareto silently over-prunes when gamma_phi > 0;
+//     the corrected (theta, psi) Pareto:
+//       * preserves entries that are incomparable in (theta, psi)
+//         (NonZeroGammaPhiPreservesParetoIncomparableEntry);
+//       * still prunes entries dominated in (theta, psi)
+//         (NonZeroGammaPhiPrunesEntriesDominatedInPsiSpace);
+//       * reduces to plain Pareto when gamma_phi = 0
+//         (ZeroGammaPhiBehavesAsPlainPareto).
 
 #include "minisolver/algorithms/line_search.h"
 #include "minisolver/core/solver_options.h"
@@ -279,4 +297,42 @@ TEST(FilterParetoTest, ZeroGammaPhiBehavesAsPlainPareto)
     EXPECT_EQ(r_redundant.filter_redundant_inserts, 1);
     EXPECT_EQ(r_redundant.filter_entries_pruned, 0);
     EXPECT_EQ(r_redundant.filter_size_after, 1);
+}
+
+// File-header contract case "strictly worsening (theta, phi) marks every
+// new entry redundant" was previously documented but not pinned. The
+// filter logic: once an entry (theta_seed, phi_seed) sits in the
+// frontier, any later attempt with both theta and phi greater than or
+// equal to the seed is redundant (the seed dominates the trial in both
+// axes), so it must NOT enter the filter and must NOT prune anything.
+// With gamma_phi = 0 (plain Pareto), this is the simplest form of the
+// contract; the gamma_phi > 0 cases are pinned in
+// NonZeroGammaPhi* above.
+TEST(FilterParetoTest, StrictlyWorseningSequenceMarksEveryNewEntryRedundant)
+{
+    FilterLineSearch<ParetoFilterModel, 1> ls;
+    const double gamma_phi = 0.0;
+
+    const auto r_seed = ls.try_insert_h_type_for_testing(1.0, 10.0, gamma_phi);
+    ASSERT_FALSE(r_seed.filter_redundant_inserts > 0);
+    ASSERT_EQ(r_seed.filter_size_after, 1);
+
+    int total_redundant = 0;
+    int total_pruned = 0;
+    for (int i = 1; i <= 5; ++i) {
+        const double theta = 1.0 + 0.5 * static_cast<double>(i);
+        const double phi = 10.0 + static_cast<double>(i);
+        const auto r = ls.try_insert_h_type_for_testing(theta, phi, gamma_phi);
+        EXPECT_EQ(r.filter_redundant_inserts, 1)
+            << "(theta=" << theta << ", phi=" << phi
+            << ") is dominated by the seed and must be redundant";
+        EXPECT_EQ(r.filter_entries_pruned, 0)
+            << "redundant inserts must not prune the surviving entry";
+        EXPECT_EQ(r.filter_size_after, 1) << "the seed must be preserved, frontier size stays at 1";
+        total_redundant += r.filter_redundant_inserts;
+        total_pruned += r.filter_entries_pruned;
+    }
+    EXPECT_EQ(total_redundant, 5);
+    EXPECT_EQ(total_pruned, 0);
+    EXPECT_EQ(ls.filter_size(), 1u);
 }
