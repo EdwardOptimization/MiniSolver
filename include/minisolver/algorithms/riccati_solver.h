@@ -69,79 +69,123 @@ public:
     }
 
     // Direction refinement implementation.
-    // Current strategy: correct the linearized dynamics defect by rolling dx/du forward through
-    // the existing Riccati feedback gains. This is not full KKT iterative refinement.
+    //
+    // DYNAMICS_DEFECT_ROLLOUT: a single pass that corrects the linearized
+    // dynamics defect by rolling dx/du forward through the existing Riccati
+    // feedback gains. This is not full KKT iterative refinement.
+    //
+    // FULL_KKT_ITERATIVE_REFINEMENT: repeats the same dynamics-defect rollout
+    // up to direction_refinement_max_passes times or until the maximum
+    // dynamic-defect inf-norm drops below direction_refinement_tol. Despite
+    // the name it remains a *structured* refinement that reuses the existing
+    // Riccati feedback gains; it does not re-factorize the KKT matrix and
+    // does not rebuild slack/dual directions. The mode auto-degrades to a
+    // single pass when any inequality dual is non-trivial so the OD-005
+    // dual-consistency hazard is not amplified by repeated primal-only
+    // refinements.
     bool refine_direction(TrajArray& traj, const TrajArray& original_system, int N, double /*mu*/,
         double /*reg*/, const SolverConfig& config) override
     {
-        if (config.direction_refinement != DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT) {
+        this->last_refine_passes_ = 0;
+        this->last_refine_defect_ = 0.0;
+
+        if (config.direction_refinement == DirectionRefinementMode::NONE) {
             return true;
         }
 
-        // This pass enforces strict dynamic feasibility of the linear solution:
-        // dx_{k+1} = A dx_k + B du_k + defect
-        // It propagates the calculation error accumulated during the backward/forward Riccati pass.
+        const bool iterative = (config.direction_refinement
+            == DirectionRefinementMode::FULL_KKT_ITERATIVE_REFINEMENT);
+        int max_passes = 1;
+        if (iterative) {
+            max_passes = std::max(1, config.direction_refinement_max_passes);
+            if (has_active_inequality_duals_(traj, N)) {
+                max_passes = 1;
+                if (config.print_level >= PrintLevel::DEBUG) {
+                    MLOG_DEBUG("FULL_KKT_ITERATIVE_REFINEMENT auto-degraded to single pass: "
+                               "active inequality duals detected");
+                }
+            }
+        }
 
-        MSVec<double, Model::NX> delta_x;
-        delta_x.setZero(); // Initial state correction is zero (x0 fixed)
+        const double tol = std::max(0.0, config.direction_refinement_tol);
+        double last_defect = 0.0;
+        int passes_done = 0;
+        for (int pass = 0; pass < max_passes; ++pass) {
+            last_defect = run_dynamics_defect_rollout_pass_(traj, original_system, N);
+            ++passes_done;
+            if (config.print_level >= PrintLevel::DEBUG) {
+                MLOG_DEBUG("Direction refinement pass "
+                    << passes_done << "/" << max_passes
+                    << ": max dynamic defect = " << last_defect);
+            }
+            if (last_defect <= tol) {
+                break;
+            }
+        }
 
-        MSVec<double, Model::NU> delta_u;
+        this->last_refine_passes_ = passes_done;
+        this->last_refine_defect_ = last_defect;
+        return true;
+    }
 
-        // Use workspace (original_system) to access A, B matrices
+private:
+    static double run_dynamics_defect_rollout_pass_(
+        TrajArray& traj, const TrajArray& original_system, int N)
+    {
+        // Single sweep of the linearized dynamics-defect refinement. Returns
+        // the maximum dynamic defect encountered before applying the
+        // correction so callers can decide whether to iterate again.
         const TrajArray& sys = original_system;
 
-        double max_defect = 0.0;
+        MSVec<double, Model::NX> delta_x;
+        delta_x.setZero();
+        MSVec<double, Model::NU> delta_u;
 
+        double max_defect = 0.0;
         for (int k = 0; k < N; ++k) {
-            // 1. Compute Control Correction via Feedback
-            // du_new = K * (dx + delta_x) + d - du_old
-            // Since du_old = K * dx + d, then:
-            // delta_u = K * delta_x
             delta_u.noalias() = traj[k].K * delta_x;
 
-            // 2. Compute Dynamic Defect of the current solution
-            // expected_next = A * dx + B * du + (f_resid - x_next_base)
-            // defect = expected_next - dx_next_actual
-
-            // Reconstruct the affine term (linearization defect)
-            // In Riccati: defect_term = sys[k].f_resid - sys[k+1].x;
             MSVec<double, Model::NX> linearization_defect = sys[k].f_resid - sys[k + 1].x;
-
             MSVec<double, Model::NX> predicted_dx_next;
             predicted_dx_next.noalias() = sys[k].A * traj[k].dx;
             predicted_dx_next.noalias() += sys[k].B * traj[k].du;
             predicted_dx_next += linearization_defect;
 
             MSVec<double, Model::NX> error = predicted_dx_next - traj[k + 1].dx;
-            // [FIX] Use MatOps::norm_inf
-            double err_norm = MatOps::norm_inf(error);
+            const double err_norm = MatOps::norm_inf(error);
             if (err_norm > max_defect) {
                 max_defect = err_norm;
             }
 
-            // 3. Propagate Correction
-            // delta_x_{k+1} = A * delta_x + B * delta_u + error
-            // This ensures (dx + delta_x)_{k+1} matches the dynamics of (dx+delta_x)_k
             MSVec<double, Model::NX> delta_x_next;
             delta_x_next.noalias() = sys[k].A * delta_x;
             delta_x_next.noalias() += sys[k].B * delta_u;
             delta_x_next += error;
 
-            // 4. Apply to Trajectory
             traj[k].dx += delta_x;
             traj[k].du += delta_u;
 
             delta_x = delta_x_next;
         }
-
-        // Apply last state correction
         traj[N].dx += delta_x;
+        return max_defect;
+    }
 
-        if (config.print_level >= PrintLevel::DEBUG) {
-            MLOG_DEBUG("Direction refinement: max dynamic defect corrected = " << max_defect);
+    static bool has_active_inequality_duals_(const TrajArray& traj, int N)
+    {
+        // "Active" here uses the same conservative threshold as OD-005: any
+        // inequality multiplier above 1e-6 indicates a binding constraint
+        // whose dual direction should not silently drift across multiple
+        // refinement passes.
+        constexpr double active_threshold = 1e-6;
+        for (int k = 0; k <= N; ++k) {
+            for (int i = 0; i < Model::NC; ++i) {
+                if (traj[k].lam(i) > active_threshold) {
+                    return true;
+                }
+            }
         }
-
-        return true;
+        return false;
     }
 };
 

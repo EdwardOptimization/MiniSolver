@@ -115,14 +115,24 @@ Proposal: Implement full KKT iterative refinement now.
 
 Category: algorithm-convention
 
-Decision: defer
+Decision: modify (shipped as scoped dynamics-defect iterative variant)
 
-Reason: Full KKT refinement couples to Mehrotra, SOC, line search, slack/dual
-recovery, and linear solver residual contracts. It should be driven by a
-constrained benchmark failure, not added as a speculative feature.
+Reason: Full KKT refinement still couples to Mehrotra, SOC, line search,
+slack/dual recovery, and linear-solver residual contracts, so a primal-and-dual
+iterative refinement remains deferred. What was shipped is strictly narrower:
+`DirectionRefinementMode::FULL_KKT_ITERATIVE_REFINEMENT` iterates the existing
+dynamics-defect rollout up to `direction_refinement_max_passes` times or until
+the rollout defect drops below `direction_refinement_tol`, and auto-degrades to
+a single pass whenever active inequality duals are present so the OD-005
+dual-consistency hazard is not re-amplified.
 
-Evidence: Current `DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT` is
-explicitly scoped as dynamics-defect rollout, not full KKT refinement.
+Evidence: `tests/test_direction_refinement.cpp` pins the contract:
+unconstrained problems may consume up to `iterations * max_passes` primal
+passes, constrained problems are pinned to one pass per iteration, and
+`SolverInfo::direction_refinement_passes` /
+`SolverInfo::direction_refinement_last_defect` expose the realized work.
+True primal-dual KKT iterative refinement is still gated on a constrained
+benchmark failure that the scoped variant cannot resolve.
 
 ### OD-007: Pareto Frontier Filter
 

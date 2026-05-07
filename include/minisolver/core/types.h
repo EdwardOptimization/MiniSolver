@@ -205,6 +205,19 @@ struct SolverInfo {
     // metric is then evaluated in scale-weighted norm. Primal variables, the
     // Riccati recursion, and the search direction are unchanged.
     bool coordinate_scaling_active = false;
+    // Cumulative direction-refinement passes consumed across the last solve()
+    // when DirectionRefinementMode is non-NONE. Each iteration adds the
+    // number of passes the linear-solver actually executed on that step
+    // (1 for DYNAMICS_DEFECT_ROLLOUT; up to direction_refinement_max_passes
+    // for FULL_KKT_ITERATIVE_REFINEMENT, fewer if the dynamic defect drops
+    // below direction_refinement_tol or the auto-degrade gate trips).
+    int direction_refinement_passes = 0;
+    // Maximum dynamic-defect inf-norm observed by the most recent
+    // direction-refinement pass on the last accepted step. Zero when no
+    // refinement was active. Useful for diagnosing whether
+    // FULL_KKT_ITERATIVE_REFINEMENT actually buys precision over the
+    // single-pass DYNAMICS_DEFECT_ROLLOUT mode on a given problem.
+    double direction_refinement_last_defect = 0.0;
     // RTI-lite diagnostics. `rti_lite_reused_linearization` is true when this
     // solve() call reused the previous primal-dual iterate under the RTI-lite
     // gates (see SolverConfig::enable_rti_lite). `rti_lite_linearization_age`
@@ -242,6 +255,8 @@ struct SolverInfo {
         objective_scaling_active = false;
         problem_scaling_active = false;
         coordinate_scaling_active = false;
+        direction_refinement_passes = 0;
+        direction_refinement_last_defect = 0.0;
         rti_lite_reused_linearization = false;
         rti_lite_linearization_age = 0;
     }

@@ -1363,6 +1363,8 @@ private:
         // system).
         linear_solver->refine_direction(
             traj, trajectory.candidate(), N, context_.solve.mu, context_.solve.reg, config);
+        context_.info.direction_refinement_passes += linear_solver->last_refine_passes_consumed();
+        context_.info.direction_refinement_last_defect = linear_solver->last_refine_defect();
     }
 
     void update_metrics_after_globalization_(double max_dual_inf)

@@ -147,7 +147,17 @@ enum class DirectionRefinementMode {
     // Correct only the linearized dynamics defect by rolling dx/du forward through the
     // existing Riccati feedback gains. This is not full KKT iterative refinement and does
     // not rebuild slack/dual directions.
-    DYNAMICS_DEFECT_ROLLOUT
+    DYNAMICS_DEFECT_ROLLOUT,
+
+    // Multi-pass dynamics-defect rollout that iterates the DYNAMICS_DEFECT_ROLLOUT
+    // correction until the maximum dynamic defect drops below
+    // direction_refinement_tol or direction_refinement_max_passes is reached. The
+    // mode auto-degrades to a single pass when any inequality dual is non-trivial
+    // so the OD-005 dual-consistency hazard is not amplified by repeated
+    // primal-only refinements; see the overdesign ledger for the rationale.
+    // Despite the name, this remains a structured Riccati-feedback refinement,
+    // not full unstructured KKT iterative refinement.
+    FULL_KKT_ITERATIVE_REFINEMENT
 };
 
 enum class TerminationProfile {
@@ -295,6 +305,16 @@ struct SolverConfig {
                                                         // curvature
 
     DirectionRefinementMode direction_refinement = DirectionRefinementMode::NONE;
+    // Maximum refinement passes used by FULL_KKT_ITERATIVE_REFINEMENT. The
+    // single-pass DYNAMICS_DEFECT_ROLLOUT mode ignores this field. A value of
+    // 1 reduces the iterative mode to single-pass behaviour. Each extra pass
+    // is bounded work (no allocations, no extra factorizations) so the
+    // default of 4 keeps the worst-case overhead small.
+    int direction_refinement_max_passes = 4;
+    // Convergence tolerance on the dynamic-defect inf-norm used by
+    // FULL_KKT_ITERATIVE_REFINEMENT to stop early. Must be finite and
+    // strictly positive when the iterative mode is selected.
+    double direction_refinement_tol = 1e-12;
 
     // Line Search Logic
     //

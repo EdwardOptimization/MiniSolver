@@ -85,6 +85,7 @@ Out of scope for this matrix:
 | MiniMatrix vs Eigen kernel evidence | `tools/mini_matrix_vs_eigen_bench` measures GEMM and LDLT throughput on 4x4-12x12 fixed-size blocks under both backends. The README captures reference numbers and documents the policy: kernel changes (e.g. widening `MINISOLVER_MATRIX_STATIC_UNROLL_MAX_WORK`, adding SIMD) require a measurable win in this table to land |
 | API error contract | `test_config_regressions` and `test_status` cover `ApiStatus` returns for setters, checked scalar getters, and constructor validation |
 | Line-search backtracking visibility | `test_line_search` asserts `SolverInfo::line_search_backtracking_count` accumulates on strongly nonlinear merit cases |
+| Direction refinement modes | `test_direction_refinement` pins three contracts: (1) the default config keeps `DirectionRefinementMode::NONE` and reports zero refinement passes; (2) `FULL_KKT_ITERATIVE_REFINEMENT` on an unconstrained nonlinear problem records at least one pass per iteration and is bounded by `iterations * direction_refinement_max_passes`; (3) on a problem with active inequality bounds the iterative mode auto-degrades to one pass per iteration, matching `DYNAMICS_DEFECT_ROLLOUT` and preserving the OD-005 dual-consistency safety net. Validation rejects `direction_refinement_max_passes <= 0` and non-positive `direction_refinement_tol` |
 
 ## CI Commands
 

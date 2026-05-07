@@ -55,6 +55,17 @@ public:
     {
         return false;
     }
+
+    // Diagnostic counters that the solver core reads after the most recent
+    // refine_direction() call. Implementations should set them when they
+    // perform refinement; the defaults below leave them at zero so callers
+    // can rely on a single contract regardless of backend.
+    int last_refine_passes_consumed() const { return last_refine_passes_; }
+    double last_refine_defect() const { return last_refine_defect_; }
+
+protected:
+    int last_refine_passes_ = 0;
+    double last_refine_defect_ = 0.0;
 };
 
 }

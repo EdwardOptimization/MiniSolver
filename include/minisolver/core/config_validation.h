@@ -156,7 +156,8 @@ namespace detail {
     inline bool valid_enum(DirectionRefinementMode value)
     {
         return enum_is_one_of<DirectionRefinementMode, DirectionRefinementMode::NONE,
-            DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT>(value);
+            DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT,
+            DirectionRefinementMode::FULL_KKT_ITERATIVE_REFINEMENT>(value);
     }
 
 #define MINISOLVER_CONFIG_ENUM_FIELDS(X)                                                           \
@@ -404,6 +405,14 @@ namespace detail {
         }
         if (conf.coordinate_scale_max < conf.coordinate_scale_min) {
             return ApiStatus::InvalidArgument;
+        }
+
+        if (conf.direction_refinement_max_passes < 1) {
+            return ApiStatus::InvalidArgument;
+        }
+        status = validate_positive_finite_config_value(conf.direction_refinement_tol);
+        if (status != ApiStatus::OK) {
+            return status;
         }
         return ApiStatus::OK;
     }

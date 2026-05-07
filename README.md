@@ -31,7 +31,7 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
 ### 🔧 Advanced Solver Capabilities
 * **Second Order Correction (SOC)**: Handles highly nonlinear constraints (e.g., tight obstacle avoidance) by curving the search step.
 * **Native Soft Constraints**: Supports L1 (Exact) and L2 (Quadratic) soft constraints via **Dual Regularization**, allowing for relaxation without increasing the problem dimensions (slack variables are handled implicitly).
-* **Defect Rollout Refinement**: Optional correction pass for linearized dynamics defects after the Riccati solve. Configure it with `direction_refinement = DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT`; it is not a full KKT iterative-refinement method.
+* **Defect Rollout Refinement**: Optional correction pass for linearized dynamics defects after the Riccati solve. Configure it with `direction_refinement = DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT`; it is not a full KKT iterative-refinement method. For nonlinear unconstrained or weakly active problems, opt into `DirectionRefinementMode::FULL_KKT_ITERATIVE_REFINEMENT` to iterate the dynamics-defect rollout up to `direction_refinement_max_passes` times or until the rollout defect drops below `direction_refinement_tol`. The mode auto-degrades to a single primal pass whenever active inequality duals are detected, preserving the OD-005 dual-consistency contract; per-iteration counters and the last observed defect are exposed via `SolverInfo::direction_refinement_passes` and `SolverInfo::direction_refinement_last_defect`.
 
 ---
 
