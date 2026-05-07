@@ -939,13 +939,64 @@ public:
         if (accepted) {
             trajectory.swap();
             if (accepted_type == AcceptedStepType::HType) {
-                if (filter_size_ < FILTER_CAPACITY) {
-                    filter[filter_size_] = { theta_0, phi_0 };
-                    ++filter_size_;
-                } else {
-                    filter[filter_next_] = { theta_0, phi_0 };
-                    filter_next_ = (filter_next_ + 1) % FILTER_CAPACITY;
+                // Pareto-frontier insertion. The IPOPT-style forbidden region
+                // of an entry (theta_j, phi_j) for filter-acceptance is
+                //     theta >= (1 - gamma_theta) * theta_j  AND
+                //     phi   >= phi_j - gamma_phi * theta_j.
+                // For gamma_phi = 0 this reduces to simple Pareto dominance
+                // on (theta, phi). We use that simple rule for redundancy
+                // pruning here: it strictly subsets the IPOPT acceptance
+                // contract (no acceptable trial is silently turned into a
+                // rejected one), and it lets us collapse circular-buffer
+                // history that the original implementation just rotated out.
+                //
+                // Rule:
+                //   - If any existing entry weakly dominates (theta_0, phi_0)
+                //     (theta_j <= theta_0 AND phi_j <= phi_0), the new entry
+                //     is redundant. Skip insertion.
+                //   - Otherwise prune all existing entries weakly dominated
+                //     by (theta_0, phi_0) and append it.
+                bool redundant = false;
+                for (size_t idx = 0; idx < filter_size_; ++idx) {
+                    if (filter[idx].first <= theta_0 && filter[idx].second <= phi_0) {
+                        redundant = true;
+                        break;
+                    }
                 }
+
+                if (redundant) {
+                    result.filter_redundant_inserts = 1;
+                } else {
+                    size_t write_idx = 0;
+                    int pruned = 0;
+                    for (size_t read_idx = 0; read_idx < filter_size_; ++read_idx) {
+                        const auto& entry = filter[read_idx];
+                        if (entry.first >= theta_0 && entry.second >= phi_0) {
+                            ++pruned;
+                            continue;
+                        }
+                        if (write_idx != read_idx) {
+                            filter[write_idx] = entry;
+                        }
+                        ++write_idx;
+                    }
+                    filter_size_ = write_idx;
+                    result.filter_entries_pruned = pruned;
+
+                    if (filter_size_ < FILTER_CAPACITY) {
+                        filter[filter_size_] = { theta_0, phi_0 };
+                        ++filter_size_;
+                        // Pareto pruning keeps the active history compact;
+                        // filter_next_ stays at 0 so that the legacy
+                        // circular-buffer eviction below only fires if the
+                        // frontier itself reaches capacity.
+                        filter_next_ = 0;
+                    } else {
+                        filter[filter_next_] = { theta_0, phi_0 };
+                        filter_next_ = (filter_next_ + 1) % FILTER_CAPACITY;
+                    }
+                }
+                result.filter_size_after = static_cast<int>(filter_size_);
             }
         } else {
             result.alpha = 0.0;

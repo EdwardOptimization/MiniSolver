@@ -141,14 +141,30 @@ filter implementation.
 
 Category: algorithm-convention
 
-Decision: defer
+Decision: modify (shipped as scoped Pareto-pruning policy)
 
-Reason: The current filter already covers the main f-type/h-type and switching
-behavior needed for globalization hardening. Pareto-frontier management is a
-separate theory pass and should require a concrete filter failure case.
+Reason: A full IPOPT-style filter rewrite still requires a concrete failure
+case, but the legacy circular-buffer policy was carrying redundant entries
+that did not strengthen the filter and could only be evicted by FIFO once the
+1024-slot history was exhausted. Replacing the eviction step with simple
+gamma_phi=0 Pareto pruning is strictly contained: it never accepts a trial
+the IPOPT filter rule would reject (because every dominated entry's
+forbidden region is a subset of the dominating entry's), and it eliminates
+two failure modes — unbounded history growth on strictly improving solves
+and silent FIFO eviction of entries that may still matter.
 
-Evidence: `docs/architecture/globalization-mehrotra-theory-plan.md` keeps deeper
-filter variants as a later pass.
+Evidence: `tests/test_filter_pareto.cpp` and the rewritten
+`test_line_search.FilterHistoryParetoCollapsesMonotonicallyImprovingSequence`
+pin the contract: monotonically improving (theta, phi) collapses to a single
+entry; `LineSearchResult::filter_entries_pruned` /
+`filter_redundant_inserts` / `filter_size_after` and the cumulative
+`SolverInfo::filter_*` counters expose the realized pruning work.
+`MeritLineSearch` continues to leave all filter diagnostics at zero, so the
+counters stay an honest probe of the filter line search.
+
+A full Pareto-frontier filter (gamma_phi > 0 envelope tracking, dominance
+arbitration on the IPOPT-shifted shifted regions, or alternate filter
+metrics) is still gated on a concrete filter failure case.
 
 ### OD-008: Embedded Fixed-Buffer Logger/Profile
 

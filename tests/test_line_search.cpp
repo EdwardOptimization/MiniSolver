@@ -1127,8 +1127,14 @@ public:
     }
 };
 
-TEST(LineSearchTest, FilterHistoryWrapsAtFixedCapacity)
+TEST(LineSearchTest, FilterHistoryParetoCollapsesMonotonicallyImprovingSequence)
 {
+    // Contract pinned by Tier 4.3 Pareto-frontier filter pruning: when the
+    // accepted (theta_0, phi_0) sequence improves monotonically on at least
+    // one axis, every newly inserted entry weakly dominates the existing
+    // history, so the filter collapses to a single entry instead of growing
+    // unboundedly into the FILTER_CAPACITY circular buffer. The diagnostic
+    // counters returned via LineSearchResult must reflect that pruning.
     constexpr int N = 1;
     constexpr int Repetitions = 1100;
 
@@ -1146,15 +1152,15 @@ TEST(LineSearchTest, FilterHistoryWrapsAtFixedCapacity)
     std::array<double, N> dts;
     dts.fill(0.1);
 
+    int total_pruned = 0;
+    int total_redundant = 0;
+
     for (int iter = 0; iter < Repetitions; ++iter) {
         auto& active = trajectory.active();
         for (int k = 0; k <= N; ++k) {
             active[k].set_zero();
         }
 
-        // Dynamic defect theta starts large and decreases monotonically.
-        // The trial point reduces the defect enough to be acceptable against
-        // every previous filter entry, while still pushing beyond FILTER_CAPACITY.
         active[0].x(0) = 0.0;
         active[0].u(0) = 0.0;
         active[1].x(0) = 2000.0 - static_cast<double>(iter);
@@ -1167,11 +1173,21 @@ TEST(LineSearchTest, FilterHistoryWrapsAtFixedCapacity)
 
         const LineSearchResult result
             = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
-        const double alpha = result.alpha;
-        ASSERT_GT(alpha, 0.0) << "filter rejected at iteration " << iter;
+        ASSERT_GT(result.alpha, 0.0) << "filter rejected at iteration " << iter;
+        total_pruned += result.filter_entries_pruned;
+        total_redundant += result.filter_redundant_inserts;
+        EXPECT_LE(result.filter_size_after, 1)
+            << "Pareto frontier should not grow when each new (theta, phi) dominates the previous "
+               "entry (iter "
+            << iter << ")";
     }
 
-    EXPECT_EQ(ls.filter_size(), 1024u);
+    EXPECT_EQ(ls.filter_size(), 1u)
+        << "Monotonically improving (theta, phi) sequence must collapse to a single Pareto entry";
+    EXPECT_EQ(total_redundant, 0)
+        << "Strictly improving entries are never redundant; redundancy implies a regression";
+    EXPECT_GT(total_pruned, 0)
+        << "Each new dominating entry must prune at least one stale frontier entry";
 }
 
 TEST(LineSearchTest, NoLineSearchRefreshesAcceptedPointEvaluations)

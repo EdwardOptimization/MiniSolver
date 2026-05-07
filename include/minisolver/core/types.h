@@ -225,6 +225,26 @@ struct SolverInfo {
     // RTI-lite falls back to a full solve.
     bool rti_lite_reused_linearization = false;
     int rti_lite_linearization_age = 0;
+    // Pareto-frontier filter history diagnostics. Populated only by
+    // FilterLineSearch; MeritLineSearch leaves them at zero.
+    //
+    // filter_entries_pruned_total: cumulative number of filter entries that
+    // were dominated by a newly accepted H-type step and removed across this
+    // solve. A high count usually means the filter was carrying redundant
+    // history that throttled acceptance.
+    //
+    // filter_redundant_inserts_total: cumulative number of new H-type
+    // (theta_0, phi_0) candidates that were themselves Pareto-dominated by
+    // an existing entry and therefore *not* appended. Indicates the search
+    // is revisiting metric pairs that the filter already excludes.
+    //
+    // filter_max_history_size: peak filter history size observed across
+    // this solve. Bounds the memory and per-trial scan cost the filter
+    // imposes; staying well below FILTER_CAPACITY confirms the Pareto
+    // pruning policy is doing its job.
+    int filter_entries_pruned_total = 0;
+    int filter_redundant_inserts_total = 0;
+    int filter_max_history_size = 0;
     // Riccati inertia-correction diagnostics. They are populated for every
     // solve regardless of `SolverConfig::riccati_robust_mode`; the mode only
     // controls whether non-zero counters also flip `degraded_step`.
@@ -275,6 +295,9 @@ struct SolverInfo {
         rti_lite_linearization_age = 0;
         riccati_indefinite_blocks = 0;
         riccati_max_diagonal_perturbation = 0.0;
+        filter_entries_pruned_total = 0;
+        filter_redundant_inserts_total = 0;
+        filter_max_history_size = 0;
     }
 };
 
@@ -287,6 +310,17 @@ struct LineSearchResult {
     // Zero means the first trial step was accepted; line_search_max_iters - 1
     // is the worst case, line_search_max_iters means the search failed.
     int backtracks = 0;
+    // Pareto-frontier filter diagnostics. Populated by FilterLineSearch only;
+    // MeritLineSearch leaves them at zero. They surface what the filter
+    // history did during this search invocation:
+    //   - filter_entries_pruned: existing entries dominated by the new
+    //     accepted (theta_0, phi_0) and removed during insertion.
+    //   - filter_redundant_inserts: 1 if the new (theta_0, phi_0) was itself
+    //     dominated by an existing entry and therefore not appended; 0 else.
+    //   - filter_size_after: filter history size after insertion / pruning.
+    int filter_entries_pruned = 0;
+    int filter_redundant_inserts = 0;
+    int filter_size_after = 0;
 
     constexpr LineSearchResult() = default;
     constexpr explicit LineSearchResult(double alpha_value)

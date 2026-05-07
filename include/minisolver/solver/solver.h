@@ -1227,6 +1227,14 @@ private:
             context_.info.soc_reject_count++;
         }
         context_.info.line_search_backtracking_count += result.backtracks;
+        // Pareto-frontier filter diagnostics. MeritLineSearch leaves these
+        // at zero so the cumulative counters only ever reflect the filter
+        // line-search path that actually maintains a history.
+        context_.info.filter_entries_pruned_total += result.filter_entries_pruned;
+        context_.info.filter_redundant_inserts_total += result.filter_redundant_inserts;
+        if (result.filter_size_after > context_.info.filter_max_history_size) {
+            context_.info.filter_max_history_size = result.filter_size_after;
+        }
     }
 
     void prepare_direction_workspace_()

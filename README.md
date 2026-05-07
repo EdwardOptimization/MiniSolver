@@ -25,7 +25,7 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
 * **Zero-Malloc Solve Path**: The default solver configuration performs no `new`/`malloc` calls during `solve()`. Keep profiling and iteration logging disabled for hard real-time use.
 * **Robust Interior Point Method (IPM)**:
     * **Mehrotra Predictor-Corrector**: Drastically reduces iteration counts by utilizing higher-order corrections.
-    * **Filter Line Search**: Ensures global convergence without the tedious tuning of merit function parameters.
+    * **Filter Line Search**: Ensures global convergence without the tedious tuning of merit function parameters. The H-type filter history uses Pareto-frontier pruning so that strictly improving (θ, φ) sequences collapse to a single entry instead of inflating the legacy 1024-slot circular buffer; per-search and per-solve counters (`SolverInfo::filter_entries_pruned_total`, `filter_redundant_inserts_total`, `filter_max_history_size`) expose the realized pruning work.
     * **Feasibility Restoration**: Automatically triggers a minimum-norm recovery phase if the solver encounters infeasible warm starts.
 * **Riccati Inertia-Correction Diagnostics**: `SolverInfo::riccati_indefinite_blocks` and `SolverInfo::riccati_max_diagonal_perturbation` always surface what the existing SPD fallbacks (regularization escalation, small-Nu freeze, saturation/ignore-singular sweeps) silently did. Set `riccati_robust_mode = RiccatiRobustMode::INERTIA_AWARE_DIAGNOSTICS` to additionally flip `degraded_step` whenever any inertia correction occurred, so monitoring code can gate downstream control actions on the local QP staying cleanly SPD.
 
