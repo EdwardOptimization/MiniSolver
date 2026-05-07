@@ -234,11 +234,24 @@ struct SolverInfo {
     // FULL_KKT_ITERATIVE_REFINEMENT actually buys precision over the
     // single-pass DYNAMICS_DEFECT_ROLLOUT mode on a given problem.
     double direction_refinement_last_defect = 0.0;
-    // RTI-lite diagnostics. `rti_lite_reused_linearization` is true when this
-    // solve() call reused the previous primal-dual iterate under the RTI-lite
-    // gates (see SolverConfig::enable_rti_lite). `rti_lite_linearization_age`
-    // is the consecutive count of reused solves; it is reset to 0 whenever
-    // RTI-lite falls back to a full solve.
+    // RTI-lite diagnostics (see SolverConfig::enable_rti_lite for the gating
+    // contract).
+    //
+    // rti_lite_reused_linearization: true iff the most recent solve() call
+    // took the RTI-lite reuse path (gates passed, previous primal-dual
+    // iterate was reused, ACCEPTABLE_NMPC termination + capped iterations
+    // were applied). False on a full solve, including the very first solve
+    // and any solve where any gate (enable flag, prior acceptability,
+    // linearization age, state delta, post-set_config history reset) failed.
+    //
+    // rti_lite_linearization_age: count of CONSECUTIVE successful RTI-lite
+    // reuse solves since the last full solve. Reset to 0 whenever the solver
+    // takes the full-solve path (because either the gates failed or the
+    // previous reuse solve was not acceptable). The gate compares this
+    // counter against `SolverConfig::rti_lite_max_linearization_age` and
+    // fires a refresh once they meet. Within a reuse solve the same config
+    // value also caps SQP/IPM iterations, so the counter doubles as the
+    // user-visible signal for "how stale the linearization is".
     bool rti_lite_reused_linearization = false;
     int rti_lite_linearization_age = 0;
     // Restoration penalty diagnostics. Populated only when feasibility

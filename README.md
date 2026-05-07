@@ -302,7 +302,7 @@ opt into the RTI-lite mode to reuse the previous primal-dual iterate:
 ```cpp
 SolverConfig cfg = solver.get_config();
 cfg.enable_rti_lite = true;
-cfg.rti_lite_max_linearization_age = 3;     // up to 3 reuses before forcing a full solve
+cfg.rti_lite_max_linearization_age = 3;     // up to 3 reuses *and* up to 3 SQP/IPM iters per reuse
 cfg.rti_lite_max_state_delta = 0.5;          // L2 state-delta gate (model units)
 solver.set_config(cfg);
 ```
@@ -310,9 +310,12 @@ solver.set_config(cfg);
 When the gates pass (previous solve was acceptable, state delta < threshold,
 linearization age < budget), the next `solve()` call runs at most
 `rti_lite_max_linearization_age` SQP/IPM iterations with `ACCEPTABLE_NMPC`
-termination. If any gate fails the solver falls back to a full solve and
-resets the linearization age. `SolverInfo::rti_lite_reused_linearization`
-and `SolverInfo::rti_lite_linearization_age` report which path ran.
+termination. The same `rti_lite_max_linearization_age` knob also caps the
+number of consecutive reused solves before a full refresh is forced, so the
+total "stale-linearization work" budget is bounded by a single integer. If
+any gate fails the solver falls back to a full solve and resets the
+linearization age. `SolverInfo::rti_lite_reused_linearization` and
+`SolverInfo::rti_lite_linearization_age` report which path ran.
 `set_config()` always invalidates the RTI-lite history so a strategy change
 does not silently warm-start from an incompatible seed.
 

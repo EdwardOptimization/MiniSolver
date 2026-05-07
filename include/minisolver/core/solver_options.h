@@ -409,18 +409,35 @@ struct SolverConfig {
     // RTI-lite is a safe-by-default warm-start mode for repeated MPC solves.
     // When `enable_rti_lite=true` and the previous solve reached an acceptable
     // verdict (OPTIMAL/FEASIBLE), the next `solve()` call reuses the previous
-    // primal-dual iterate and runs at most `rti_lite_max_linearization_age`
-    // SQP/IPM iterations under `TerminationProfile::ACCEPTABLE_NMPC`. The
-    // reuse path is gated by:
+    // primal-dual iterate under `TerminationProfile::ACCEPTABLE_NMPC`.
+    //
+    // The reuse path is gated by:
     //   * the L2 distance between the new initial state and the previous
     //     solved initial state must be < `rti_lite_max_state_delta`;
-    //   * the previous solve must have been acceptable;
-    //   * the linearization age must not have exceeded
-    //     `rti_lite_max_linearization_age`.
+    //   * the previous solve must have been acceptable
+    //     (OPTIMAL or FEASIBLE);
+    //   * the linearization age (count of consecutive reused solves since
+    //     the last full solve) must be `<` `rti_lite_max_linearization_age`.
     // If any gate fails, the solver falls back to a full SQP/IPM solve under
     // the user-provided `max_iters` / `termination_profile` and resets the
-    // linearization age. Diagnostic counters live on `SolverInfo`
+    // linearization age to 0. Diagnostic counters live on `SolverInfo`
     // (`rti_lite_reused_linearization`, `rti_lite_linearization_age`).
+    //
+    // `rti_lite_max_linearization_age` carries TWO coupled meanings - both
+    // intentional, both bounded by the same integer for simplicity:
+    //   1. Across solves: the maximum number of consecutive reused solves
+    //      allowed before forcing a full refresh. With max=3, after the 3rd
+    //      reused solve the next `solve()` does a full SQP run.
+    //   2. Within a reused solve: a per-call cap on SQP/IPM iterations
+    //      (config.max_iters is min'd against this when the reuse path is
+    //      taken). With max=3, each reused solve runs at most 3 iterations
+    //      under ACCEPTABLE_NMPC, so the iterate cannot drift far from the
+    //      cached linearization between full solves.
+    // Coupling these two interpretations under one knob keeps the total
+    // "trust budget" of stale-linearization work bounded by a single number;
+    // splitting them into separate fields would let the user configure
+    // arbitrarily long reuse chains with arbitrarily heavy iteration work,
+    // which is exactly the unsafe regime the gates are guarding against.
     bool enable_rti_lite = false;
     int rti_lite_max_linearization_age = 3;
     double rti_lite_max_state_delta = 0.5;
