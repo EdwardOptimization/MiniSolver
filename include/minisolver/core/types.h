@@ -191,6 +191,17 @@ struct SolverInfo {
     bool line_search_failed = false;
     bool restoration_used = false;
     bool degraded_step = false;
+    // Total number of stage-level small-Nu freeze-fallback events accumulated
+    // across all backward passes (across all SQP iterations) of this solve.
+    // The freeze fallback fires when fast_inverse rejects Quu as non-SPD
+    // under InertiaStrategy::REGULARIZATION with NU<=3; that path freezes a
+    // control dimension via a huge_penalty diagonal anchor. Each such stage
+    // event contributes 1 to this counter, mirroring
+    // LinearSolveResult::degraded_riccati_freeze_count and reset by
+    // SolverInfo::reset(). Strict subset of riccati_indefinite_blocks; the
+    // remaining inertia-correction events (general-path SPD retry,
+    // SATURATION, IGNORE_SINGULAR) are covered by riccati_indefinite_blocks
+    // alone but never by this freeze-specific counter.
     int degraded_riccati_freeze_count = 0;
     int regularization_escalation_count = 0;
     int soc_attempt_count = 0;
@@ -267,16 +278,29 @@ struct SolverInfo {
     int filter_max_history_size = 0;
     // Riccati inertia-correction diagnostics. They are populated for every
     // solve regardless of `SolverConfig::riccati_robust_mode`; the mode only
-    // controls whether non-zero counters also flip `degraded_step`.
+    // controls whether non-zero counters also flip `degraded_step`. Both
+    // counters are reset by `SolverInfo::reset()` at the start of each
+    // top-level `Solver::solve()` and therefore reflect the *current* solve
+    // run only.
     //
-    // riccati_indefinite_blocks: cumulative number of backward-pass stages
-    // that required Quu inertia correction beyond the user-supplied `reg`
+    // riccati_indefinite_blocks: total number of stage-level inertia-
+    // correction events applied across all backward passes (i.e. across all
+    // SQP iterations and any in-iteration linear-solve retries) during this
+    // solve. Each backward pass scans every stage k=0..N once; for a given
+    // stage in a given backward pass exactly one fallback path can fire
     // (general-path SPD escalation, small-Nu freeze fallback, or
-    // SATURATION/IGNORE_SINGULAR repair sweeps).
+    // SATURATION / IGNORE_SINGULAR repair sweep), and that path bumps this
+    // counter by one. A single physical stage that needs correction on
+    // multiple iterations is counted once per iteration - this is an event
+    // counter, not a distinct-stage counter, so a value of e.g. 30 on a
+    // 10-iteration / N=20 horizon means up to 30 corrections fired across
+    // 10 backward passes, not that 30 distinct stages were corrected.
     //
     // riccati_max_diagonal_perturbation: the largest *extra* diagonal value
-    // added to Quu(i,i) during the last solve, on top of the standard `reg`
-    // shift. Useful for detecting numerically suspicious local QPs.
+    // added to any Quu(i,i) on top of the standard `reg` shift, taken as the
+    // maximum across all backward passes during this solve (not just the
+    // last linear solve). Useful for detecting numerically suspicious local
+    // QPs without scanning per-iteration logs.
     int riccati_indefinite_blocks = 0;
     double riccati_max_diagonal_perturbation = 0.0;
 
