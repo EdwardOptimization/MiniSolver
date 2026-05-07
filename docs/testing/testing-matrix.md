@@ -76,7 +76,7 @@ Out of scope for this matrix:
 | --- | --- |
 | Zero dynamic allocation during production `solve()` | `test_memory` with profiling/logging disabled and multiple line-search modes |
 | Profiling/logging | Explicitly not part of the zero-malloc guarantee unless converted to fixed buffers |
-| Solver snapshot/replay | Round-trip config, trajectory, soft slacks, backend policy, model fingerprint, and atomic failure behavior |
+| Solver snapshot/replay | Round-trip config, trajectory, soft slacks, backend policy, model fingerprint, and atomic failure behavior. `SnapshotPreservesAllConfigFields` keeps every serialised `SolverConfig` field in the round-trip, anchored by `MakeNonDefaultConfig()` setting a non-default value for each field; `SnapshotPreservesV3FieldsExplicitly` covers the v3 additions (coordinate scaling, Riccati robust mode, restoration penalty knobs, full-KKT iterative refinement, RTI-lite) per field; `RejectsPreviousFormatVersion` keeps the format-version bump honest |
 | Logger callback contract | `test_logger` covers callback capture, default config, and `silent_fallback` runtime behavior |
 | Embedded no-stream logger profile | `test_logger_no_stream` compiles the same logger test with `MINISOLVER_DISABLE_STREAM_LOGGER` defined to keep `<iostream>` out and silence stream fallbacks |
 | Embedded ARM cross-build | CI job `embedded-arm-cortex-m4` configures with `MINISOLVER_EMBEDDED_PROFILE=ON` and `cmake/toolchains/arm-cortex-m4.cmake`, builds `minisolver_embedded_smoke`, and `scripts/check_arm_size_budget.sh` enforces a 256 KiB budget on the smoke object so embedded regressions surface before tagging a release |

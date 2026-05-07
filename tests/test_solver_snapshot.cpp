@@ -83,7 +83,11 @@ constexpr std::streamoff SnapshotLineSearchMaxItersOffset()
 
 constexpr std::streamoff SnapshotStatusOffset()
 {
-    return SnapshotHeaderBytes() + 424;
+    // Config block size = 509 bytes after v3 (was 424 in v2). The 85-byte delta
+    // is the appended coordinate-scaling, riccati-robust, restoration-penalty,
+    // direction-refinement extra knobs, and RTI-lite block. See MINISOLVER_
+    // SNAPSHOT_CONFIG_FIELDS in solver_snapshot.h.
+    return SnapshotHeaderBytes() + 509;
 }
 
 SolverConfig MakeNonDefaultConfig()
@@ -170,6 +174,26 @@ SolverConfig MakeNonDefaultConfig()
     config.enable_slack_reset = false;
     config.enable_feasibility_restoration = false;
     config.enable_soc = false;
+
+    // v3 additions: every new SolverConfig field that snapshot serialises must
+    // hold a non-default value here, otherwise SnapshotPreservesAllConfigFields
+    // becomes a false positive (default == default trivially). validate_solver_
+    // config still has to accept the resulting config.
+    config.coordinate_scaling = CoordinateScalingMethod::USER_SUPPLIED;
+    config.coordinate_scale_min = 5e-6;
+    config.coordinate_scale_max = 5e5;
+    config.riccati_robust_mode = RiccatiRobustMode::INERTIA_AWARE_DIAGNOSTICS;
+    config.restoration_penalty_mode = SolverConfig::RestorationPenaltyMode::VIOLATION_ADAPTIVE;
+    config.restoration_rho_init = 4321.0;
+    config.restoration_rho_min = 7.0;
+    config.restoration_rho_max = 1.5e6;
+    config.restoration_rho_violation_floor = 3e-6;
+    config.direction_refinement = DirectionRefinementMode::FULL_KKT_ITERATIVE_REFINEMENT;
+    config.direction_refinement_max_passes = 6;
+    config.direction_refinement_tol = 5e-12;
+    config.enable_rti_lite = true;
+    config.rti_lite_max_linearization_age = 11;
+    config.rti_lite_max_state_delta = 0.875;
 
     return config;
 }
@@ -430,6 +454,79 @@ TEST(SolverSnapshotTest, SnapshotPreservesAllConfigFields)
     const SolverConfig& cfgB = solverB.get_config();
     ExpectConfigEq<SnapshotIO>(cfgA, cfgB);
 
+    std::remove(filename.c_str());
+}
+
+// Defense-in-depth against MINISOLVER_SNAPSHOT_CONFIG_FIELDS regressing on the
+// v3 additions. config_equal() above already catches a missing macro entry as
+// long as MakeNonDefaultConfig() sets a non-default value, but a per-field
+// round-trip makes the failure mode point to the offending field directly.
+TEST(SolverSnapshotTest, SnapshotPreservesV3FieldsExplicitly)
+{
+    SolverConfig config = MakeNonDefaultConfig();
+    MiniSolver<CarModel, 10> solverA(2, config.backend, config);
+
+    const std::string filename = MakeUniqueTestFilename("test_v3_fields", ".bin");
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
+
+    MiniSolver<CarModel, 10> solverB(2, Backend::CPU_SERIAL);
+    SnapshotLoadOptions options;
+    options.backend_policy = SnapshotBackendPolicy::UseSnapshotBackend;
+    ASSERT_EQ(SnapshotIO::load_case(filename, solverB, options).status, SnapshotStatus::OK);
+
+    const SolverConfig& cfgB = solverB.get_config();
+    EXPECT_EQ(cfgB.coordinate_scaling, CoordinateScalingMethod::USER_SUPPLIED);
+    EXPECT_DOUBLE_EQ(cfgB.coordinate_scale_min, 5e-6);
+    EXPECT_DOUBLE_EQ(cfgB.coordinate_scale_max, 5e5);
+    EXPECT_EQ(cfgB.riccati_robust_mode, RiccatiRobustMode::INERTIA_AWARE_DIAGNOSTICS);
+    EXPECT_EQ(
+        cfgB.restoration_penalty_mode, SolverConfig::RestorationPenaltyMode::VIOLATION_ADAPTIVE);
+    EXPECT_DOUBLE_EQ(cfgB.restoration_rho_init, 4321.0);
+    EXPECT_DOUBLE_EQ(cfgB.restoration_rho_min, 7.0);
+    EXPECT_DOUBLE_EQ(cfgB.restoration_rho_max, 1.5e6);
+    EXPECT_DOUBLE_EQ(cfgB.restoration_rho_violation_floor, 3e-6);
+    EXPECT_EQ(cfgB.direction_refinement, DirectionRefinementMode::FULL_KKT_ITERATIVE_REFINEMENT);
+    EXPECT_EQ(cfgB.direction_refinement_max_passes, 6);
+    EXPECT_DOUBLE_EQ(cfgB.direction_refinement_tol, 5e-12);
+    EXPECT_TRUE(cfgB.enable_rti_lite);
+    EXPECT_EQ(cfgB.rti_lite_max_linearization_age, 11);
+    EXPECT_DOUBLE_EQ(cfgB.rti_lite_max_state_delta, 0.875);
+
+    std::remove(filename.c_str());
+}
+
+// v2 binaries must be rejected after the v3 layout change. We synthesise the
+// minimum-size header that previously parsed and assert UnsupportedVersion.
+TEST(SolverSnapshotTest, RejectsPreviousFormatVersion)
+{
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    const std::string filename = MakeUniqueTestFilename("test_v2_rejected", ".bin");
+    {
+        std::ofstream out(filename, std::ios::binary);
+        ASSERT_TRUE(out.good());
+        out.write(
+            SnapshotIO::kMagic.data(), static_cast<std::streamsize>(SnapshotIO::kMagic.size()));
+        const std::uint32_t old_version = 2;
+        const std::uint32_t scalar_bytes = sizeof(double);
+        const std::int32_t nx = CarModel::NX;
+        const std::int32_t nu = CarModel::NU;
+        const std::int32_t np = CarModel::NP;
+        const std::int32_t nc = CarModel::NC;
+        const std::int32_t horizon = 1;
+        const std::uint64_t fingerprint = 0;
+        out.write(reinterpret_cast<const char*>(&old_version), sizeof(old_version));
+        out.write(reinterpret_cast<const char*>(&scalar_bytes), sizeof(scalar_bytes));
+        out.write(reinterpret_cast<const char*>(&nx), sizeof(nx));
+        out.write(reinterpret_cast<const char*>(&nu), sizeof(nu));
+        out.write(reinterpret_cast<const char*>(&np), sizeof(np));
+        out.write(reinterpret_cast<const char*>(&nc), sizeof(nc));
+        out.write(reinterpret_cast<const char*>(&horizon), sizeof(horizon));
+        out.write(reinterpret_cast<const char*>(&fingerprint), sizeof(fingerprint));
+    }
+
+    MiniSolver<CarModel, 10> solver(1, Backend::CPU_SERIAL);
+    EXPECT_EQ(SnapshotIO::load_case(filename, solver).status, SnapshotStatus::UnsupportedVersion);
     std::remove(filename.c_str());
 }
 

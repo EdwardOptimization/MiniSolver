@@ -151,13 +151,31 @@ struct SnapshotLoadOptions {
     X_BOOL(enable_aggressive_barrier)                                                              \
     X_BOOL(enable_slack_reset)                                                                     \
     X_BOOL(enable_feasibility_restoration)                                                         \
-    X_BOOL(enable_soc)
+    X_BOOL(enable_soc)                                                                             \
+    X_ENUM(coordinate_scaling)                                                                     \
+    X_DOUBLE(coordinate_scale_min)                                                                 \
+    X_DOUBLE(coordinate_scale_max)                                                                 \
+    X_ENUM(riccati_robust_mode)                                                                    \
+    X_ENUM(restoration_penalty_mode)                                                               \
+    X_DOUBLE(restoration_rho_init)                                                                 \
+    X_DOUBLE(restoration_rho_min)                                                                  \
+    X_DOUBLE(restoration_rho_max)                                                                  \
+    X_DOUBLE(restoration_rho_violation_floor)                                                      \
+    X_INT(direction_refinement_max_passes)                                                         \
+    X_DOUBLE(direction_refinement_tol)                                                             \
+    X_BOOL(enable_rti_lite)                                                                        \
+    X_INT(rti_lite_max_linearization_age)                                                          \
+    X_DOUBLE(rti_lite_max_state_delta)
 
 template <typename Model, int MAX_N> class SolverSnapshotIO {
 public:
     using SolverType = MiniSolver<Model, MAX_N>;
     static constexpr std::array<char, 8> kMagic = { 'M', 'S', 'N', 'A', 'P', '0', '1', '\0' };
-    static constexpr std::uint32_t kFormatVersion = 2;
+    // v2 -> v3: appended coordinate_scaling, coordinate_scale_*, riccati_robust_mode,
+    // restoration_penalty_mode, restoration_rho_*, direction_refinement_max_passes,
+    // direction_refinement_tol, enable_rti_lite, rti_lite_max_linearization_age,
+    // rti_lite_max_state_delta. Size growth: 85 bytes (config block 424 -> 509).
+    static constexpr std::uint32_t kFormatVersion = 3;
 
     struct Snapshot {
         SolverConfig config;

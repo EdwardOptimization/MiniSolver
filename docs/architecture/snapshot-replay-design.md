@@ -66,13 +66,27 @@ tool with the same model type and a large enough `MAX_N`.
 
 ## Config Codec Contract
 
-Snapshot config read/write uses the single field table in
-`solver_snapshot.h`. When adding a `SolverConfig` field, update that table and
-the snapshot config round-trip test in the same commit.
+Snapshot config read/write uses the single field table
+`MINISOLVER_SNAPSHOT_CONFIG_FIELDS` in `solver_snapshot.h`. When adding or
+removing a `SolverConfig` field, the same commit must:
+
+1. update that table,
+2. set a non-default value for the new field in `MakeNonDefaultConfig()` in
+   `tests/test_solver_snapshot.cpp` (otherwise `SnapshotPreservesAllConfigFields`
+   silently passes because both sides keep the default),
+3. add an explicit assertion in `SnapshotPreservesV3FieldsExplicitly` (or its
+   successor) for the new field, so a regression points at the offending field
+   directly,
+4. bump `kFormatVersion` and add a `RejectsPreviousFormatVersion`-style test
+   that synthesises an old header and asserts `UnsupportedVersion`.
 
 Snapshot load validates the restored config before mutating the target solver.
 Invalid config, invalid enum values, bad dimensions, model mismatch, truncated
 files, and trailing bytes are rejected atomically.
+
+The current binary layout is `kFormatVersion = 3`. v3 added the coordinate-
+scaling, Riccati-robust, restoration-penalty-rho, full-KKT iterative-refinement
+extra knobs, and RTI-lite block (config grew from 424 to 509 bytes).
 
 ## Model Fingerprint Contract
 
