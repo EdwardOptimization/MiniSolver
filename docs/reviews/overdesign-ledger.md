@@ -241,9 +241,14 @@ realized work via `SolverInfo::restoration_rho_min_used`,
 Evidence: `tests/test_restoration_penalty.cpp` pins the defaults, the
 validation gates (rho_init / rho_min / rho_max / violation_floor positivity,
 `rho_max >= rho_min`, enum membership), and the `SolverInfo::reset` contract.
-End-to-end behavioural coverage is deferred until a benchmarked restoration
-regression appears, since adaptive scaling only matters when feasibility
-restoration is actually triggered.
+`tests/test_bugfixes.cpp::AdaptiveRestorationRhoUsesGValOnly` pins the
+metric/penalty consistency contract: the adaptive rho is sized from
+`||g_val||_inf`, not `||g_val + s||_inf`, so it matches the residual the
+linearised penalty actually penalises (`q += rho * C^T * g_val`,
+`r += rho * D^T * g_val`). An earlier revision used `g_val + s`, which
+silently undersized rho whenever s and g_val partially cancelled in
+magnitude; the test contrives a state with `|g_val|=10`, `s=10` to make
+the divergence detectable (rho 100 vs the buggy 50).
 
 ### OD-010: Snapshot Save-Side Strictness
 

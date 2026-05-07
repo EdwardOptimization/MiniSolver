@@ -1819,7 +1819,10 @@ private:
 
             // Restoration linear solve.
             // Quadratic-penalty feasibility restoration:
-            // Minimizing 0.5*||dx||^2 + 0.5*rho*||C*dx + D*du + g + s||^2
+            // Minimizing 0.5*||dx||^2 + 0.5*rho*||C*dx + D*du + g_val||^2
+            // (`s` is held fixed in the QP penalty; ds/dlam still come out of the
+            // augmented system so the slack/multiplier update happens implicitly,
+            // but the penalty residual is g_val alone.)
             // This pulls the solution towards the constraint manifold more aggressively than simple
             // min-norm. This is a restoration heuristic, not a full ALADIN or augmented-Lagrangian
             // outer loop.
@@ -1831,6 +1834,17 @@ private:
             // Adaptive mode keeps the augmented Hessian well-conditioned when
             // theta is large and pulls aggressively to feasibility once
             // theta drops, without retuning restoration_mu / restoration_reg.
+            //
+            // The "violation" metric must match the residual the penalty
+            // gradient sees. Below the linearised gradient adds
+            //   q += rho * C^T * g_val
+            //   r += rho * D^T * g_val
+            // i.e. the penalty is 0.5 * rho * ||C dx + D du + g_val||^2 with s
+            // held fixed (per the restoration convention). The relevant
+            // violation is therefore ||g_val||_inf, not ||g_val + s||_inf -
+            // an earlier revision used the latter, which silently undersized
+            // rho whenever s shifted the residual towards zero even though
+            // the actual penalty residual was unchanged.
             double rho = config.restoration_rho_init;
             if (config.restoration_penalty_mode
                 == SolverConfig::RestorationPenaltyMode::VIOLATION_ADAPTIVE) {
@@ -1838,7 +1852,7 @@ private:
                 for (int k = 0; k <= N; ++k) {
                     const auto& kp = traj[k];
                     for (int i = 0; i < NC; ++i) {
-                        const double val = std::abs(kp.g_val(i) + kp.s(i));
+                        const double val = std::abs(kp.g_val(i));
                         if (val > theta_inf) {
                             theta_inf = val;
                         }

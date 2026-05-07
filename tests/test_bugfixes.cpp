@@ -1906,6 +1906,71 @@ TEST(BugfixTest, MehrotraRestorationBuildsFeasibilityPenalty)
         << "Restoration must include rho * D^T * g_val even under Mehrotra.";
 }
 
+TEST(BugfixTest, AdaptiveRestorationRhoUsesGValOnly)
+{
+    // RED test for the metric/penalty consistency contract: when
+    // RestorationPenaltyMode::VIOLATION_ADAPTIVE picks rho, it must size rho
+    // from the same residual that the linearised penalty actually penalises -
+    // i.e. ||g_val||_inf, not ||g_val + s||_inf. The penalty gradient added in
+    // feasibility_restoration() is
+    //     q += rho * C^T * g_val
+    //     r += rho * D^T * g_val
+    // so any 'violation' metric that bakes in s undersizes rho whenever s and
+    // g_val partially cancel in magnitude (or oversizes it whenever they
+    // reinforce, as engineered below).
+    SolverConfig config;
+    config.max_restoration_iters = 1;
+    config.enable_feasibility_restoration = true;
+    config.restoration_penalty_mode = SolverConfig::RestorationPenaltyMode::VIOLATION_ADAPTIVE;
+    config.restoration_rho_init = 1000.0;
+    config.restoration_rho_min = 1.0;
+    config.restoration_rho_max = 1.0e6;
+    config.restoration_rho_violation_floor = 1.0e-6;
+
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = CapturingRestorationPenaltySolver<Solver::TrajArray>;
+
+    Solver solver(1, Backend::CPU_SERIAL, config);
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    auto& traj = Access::get_trajectory(solver);
+    // BugTestModel constraint is u - 1 <= 0.
+    // u = 11 -> g_val = 10 (a 10-unit infeasibility).
+    // s = 10 is intentionally large so |g_val| = 10 differs materially from
+    // |g_val + s| = 20. With rho_init = 1000:
+    //   correct (uses |g_val|=10):    rho = 100,  captured_R00 ~ 101
+    //   buggy   (uses |g_val+s|=20):  rho =  50,  captured_R00 ~  51
+    constexpr double u_val = 11.0;
+    constexpr double s_val = 10.0;
+    for (int k = 0; k <= 1; ++k) {
+        traj[k].u(0) = u_val;
+        traj[k].s(0) = s_val;
+        traj[k].lam(0) = 1.0;
+    }
+
+    (void)Access::feasibility_restoration(solver);
+
+    constexpr double g_val_inf = u_val - 1.0; // matches BugTestModel::compute_constraints.
+    const double expected_rho = config.restoration_rho_init / g_val_inf;
+    const double expected_R00 = 1.0 + expected_rho;
+    const double expected_r0 = expected_rho * g_val_inf;
+
+    EXPECT_TRUE(fake_solver_ptr->called);
+    EXPECT_NEAR(fake_solver_ptr->captured_R00, expected_R00, 1.0e-9)
+        << "VIOLATION_ADAPTIVE rho must size from |g_val|_inf, not |g_val + s|_inf.";
+    EXPECT_NEAR(fake_solver_ptr->captured_r0, expected_r0, 1.0e-9)
+        << "VIOLATION_ADAPTIVE rho * g_val gradient must match the metric used to "
+           "select rho.";
+
+    const SolverInfo& info = solver.get_info();
+    EXPECT_EQ(info.restoration_rho_adaptive_steps, 1);
+    EXPECT_NEAR(info.restoration_rho_max_used, expected_rho, 1.0e-9);
+    EXPECT_NEAR(info.restoration_rho_min_used, expected_rho, 1.0e-9);
+}
+
 TEST(BugfixTest, FeasibilityRestorationRequiresViolationImprovement)
 {
     SolverConfig config;
