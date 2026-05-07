@@ -692,6 +692,76 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         return std::isfinite(lhs) && std::isfinite(rhs) && lhs > rhs;
     }
 
+    // Pareto-frontier insertion for accepted H-type entries.
+    //
+    // The IPOPT-style forbidden region of an entry (theta_j, phi_j) is
+    //     theta >= (1 - gamma_theta) * theta_j  AND
+    //     phi   >= phi_j - gamma_phi * theta_j.
+    //
+    // The (1 - gamma_theta) factor is monotonic in theta_j, so the theta axis
+    // still tests theta_a <= theta_b. The phi cut-off shifts with theta_j, so
+    // dominance must compare phi - gamma_phi * theta, not phi alone.
+    //
+    // Define psi(e) = phi_e - gamma_phi * theta_e. Then
+    //   Forbidden(e_a) is a superset of Forbidden(e_b) iff
+    //   theta_a <= theta_b AND psi(e_a) <= psi(e_b).
+    //
+    // For gamma_phi = 0 this collapses to plain Pareto on (theta, phi). For
+    // non-zero gamma_phi a plain Pareto rule silently relaxes the filter
+    // forbidden region by both over-pruning existing entries and dropping new
+    // entries as "redundant" when they were not, so we always use the
+    // psi-shifted dominance.
+    void insert_h_type_pareto_(
+        double theta_new, double phi_new, double gamma_phi, LineSearchResult& result)
+    {
+        const double psi_new = phi_new - gamma_phi * theta_new;
+        bool redundant = false;
+        for (size_t idx = 0; idx < filter_size_; ++idx) {
+            const double theta_j = filter[idx].first;
+            const double psi_j = filter[idx].second - gamma_phi * theta_j;
+            if (theta_j <= theta_new && psi_j <= psi_new) {
+                redundant = true;
+                break;
+            }
+        }
+
+        if (redundant) {
+            result.filter_redundant_inserts = 1;
+            result.filter_size_after = static_cast<int>(filter_size_);
+            return;
+        }
+
+        size_t write_idx = 0;
+        int pruned = 0;
+        for (size_t read_idx = 0; read_idx < filter_size_; ++read_idx) {
+            const auto& entry = filter[read_idx];
+            const double psi_e = entry.second - gamma_phi * entry.first;
+            if (entry.first >= theta_new && psi_e >= psi_new) {
+                ++pruned;
+                continue;
+            }
+            if (write_idx != read_idx) {
+                filter[write_idx] = entry;
+            }
+            ++write_idx;
+        }
+        filter_size_ = write_idx;
+        result.filter_entries_pruned = pruned;
+
+        if (filter_size_ < FILTER_CAPACITY) {
+            filter[filter_size_] = { theta_new, phi_new };
+            ++filter_size_;
+            // Pareto pruning keeps the active history compact; filter_next_
+            // stays at 0 so the legacy circular-buffer eviction below only
+            // fires if the frontier itself reaches capacity.
+            filter_next_ = 0;
+        } else {
+            filter[filter_next_] = { theta_new, phi_new };
+            filter_next_ = (filter_next_ + 1) % FILTER_CAPACITY;
+        }
+        result.filter_size_after = static_cast<int>(filter_size_);
+    }
+
     bool is_h_type_acceptable(
         double theta, double phi, double theta_0, double phi_0, const SolverConfig& config)
     {
@@ -831,6 +901,21 @@ public:
     // Test / diagnostic accessor.
     size_t filter_size() const { return filter_size_; }
 
+    // Test-only entry point. Performs the same Pareto insertion that search()
+    // applies after accepting an H-type step. Exposed so unit tests can drive
+    // the dominance contract without simulating a full solver iteration.
+    LineSearchResult try_insert_h_type_for_testing(double theta, double phi, double gamma_phi)
+    {
+        LineSearchResult result;
+        insert_h_type_pareto_(theta, phi, gamma_phi, result);
+        return result;
+    }
+
+    // Test-only frontier inspection. Returns one entry by insertion-order
+    // index. Only used by Pareto contract tests; production callers should
+    // not rely on this internal layout.
+    std::pair<double, double> filter_entry_for_testing(size_t idx) const { return filter[idx]; }
+
     LineSearchResult search(TrajectoryType& trajectory, LinearSolver<TrajArray>& linear_solver,
         const std::array<double, MAX_N>& dt_traj, double mu, double reg,
         const SolverConfig& config) override
@@ -939,64 +1024,7 @@ public:
         if (accepted) {
             trajectory.swap();
             if (accepted_type == AcceptedStepType::HType) {
-                // Pareto-frontier insertion. The IPOPT-style forbidden region
-                // of an entry (theta_j, phi_j) for filter-acceptance is
-                //     theta >= (1 - gamma_theta) * theta_j  AND
-                //     phi   >= phi_j - gamma_phi * theta_j.
-                // For gamma_phi = 0 this reduces to simple Pareto dominance
-                // on (theta, phi). We use that simple rule for redundancy
-                // pruning here: it strictly subsets the IPOPT acceptance
-                // contract (no acceptable trial is silently turned into a
-                // rejected one), and it lets us collapse circular-buffer
-                // history that the original implementation just rotated out.
-                //
-                // Rule:
-                //   - If any existing entry weakly dominates (theta_0, phi_0)
-                //     (theta_j <= theta_0 AND phi_j <= phi_0), the new entry
-                //     is redundant. Skip insertion.
-                //   - Otherwise prune all existing entries weakly dominated
-                //     by (theta_0, phi_0) and append it.
-                bool redundant = false;
-                for (size_t idx = 0; idx < filter_size_; ++idx) {
-                    if (filter[idx].first <= theta_0 && filter[idx].second <= phi_0) {
-                        redundant = true;
-                        break;
-                    }
-                }
-
-                if (redundant) {
-                    result.filter_redundant_inserts = 1;
-                } else {
-                    size_t write_idx = 0;
-                    int pruned = 0;
-                    for (size_t read_idx = 0; read_idx < filter_size_; ++read_idx) {
-                        const auto& entry = filter[read_idx];
-                        if (entry.first >= theta_0 && entry.second >= phi_0) {
-                            ++pruned;
-                            continue;
-                        }
-                        if (write_idx != read_idx) {
-                            filter[write_idx] = entry;
-                        }
-                        ++write_idx;
-                    }
-                    filter_size_ = write_idx;
-                    result.filter_entries_pruned = pruned;
-
-                    if (filter_size_ < FILTER_CAPACITY) {
-                        filter[filter_size_] = { theta_0, phi_0 };
-                        ++filter_size_;
-                        // Pareto pruning keeps the active history compact;
-                        // filter_next_ stays at 0 so that the legacy
-                        // circular-buffer eviction below only fires if the
-                        // frontier itself reaches capacity.
-                        filter_next_ = 0;
-                    } else {
-                        filter[filter_next_] = { theta_0, phi_0 };
-                        filter_next_ = (filter_next_ + 1) % FILTER_CAPACITY;
-                    }
-                }
-                result.filter_size_after = static_cast<int>(filter_size_);
+                insert_h_type_pareto_(theta_0, phi_0, config.filter_gamma_phi, result);
             }
         } else {
             result.alpha = 0.0;

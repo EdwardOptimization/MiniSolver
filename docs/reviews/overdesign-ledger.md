@@ -146,25 +146,39 @@ Decision: modify (shipped as scoped Pareto-pruning policy)
 Reason: A full IPOPT-style filter rewrite still requires a concrete failure
 case, but the legacy circular-buffer policy was carrying redundant entries
 that did not strengthen the filter and could only be evicted by FIFO once the
-1024-slot history was exhausted. Replacing the eviction step with simple
-gamma_phi=0 Pareto pruning is strictly contained: it never accepts a trial
-the IPOPT filter rule would reject (because every dominated entry's
-forbidden region is a subset of the dominating entry's), and it eliminates
-two failure modes — unbounded history growth on strictly improving solves
-and silent FIFO eviction of entries that may still matter.
+1024-slot history was exhausted. The shipped Pareto-pruning rule is strictly
+contained: it never accepts a trial the IPOPT filter rule would reject
+(because every dominated entry's forbidden region is a subset of the
+dominating entry's), and it eliminates two failure modes — unbounded history
+growth on strictly improving solves and silent FIFO eviction of entries that
+may still matter.
 
-Evidence: `tests/test_filter_pareto.cpp` and the rewritten
-`test_line_search.FilterHistoryParetoCollapsesMonotonicallyImprovingSequence`
-pin the contract: monotonically improving (theta, phi) collapses to a single
-entry; `LineSearchResult::filter_entries_pruned` /
-`filter_redundant_inserts` / `filter_size_after` and the cumulative
-`SolverInfo::filter_*` counters expose the realized pruning work.
-`MeritLineSearch` continues to leave all filter diagnostics at zero, so the
-counters stay an honest probe of the filter line search.
+The first revision used plain Pareto on (theta, phi) and claimed correctness
+only for `gamma_phi = 0`. With non-zero `gamma_phi`, plain Pareto silently
+relaxed the filter forbidden region: it both over-pruned existing entries
+and dropped new entries as "redundant" when they were not. The corrected
+implementation compares in (theta, psi) space where `psi(e) = phi_e -
+gamma_phi * theta_e`. `Forbidden(e_a) ⊇ Forbidden(e_b)` iff
+`theta_a ≤ theta_b AND psi(e_a) ≤ psi(e_b)`. For `gamma_phi = 0` this
+collapses to plain Pareto, so the original collapse-on-improvement contract
+is preserved.
 
-A full Pareto-frontier filter (gamma_phi > 0 envelope tracking, dominance
-arbitration on the IPOPT-shifted shifted regions, or alternate filter
-metrics) is still gated on a concrete filter failure case.
+Evidence: `tests/test_filter_pareto.cpp` (collapse contract,
+`MeritLineSearch` zero-diagnostic, `SolverInfo::reset` clearing,
+`NonZeroGammaPhiPreservesParetoIncomparableEntry` and
+`NonZeroGammaPhiPrunesEntriesDominatedInPsiSpace` red tests for the
+gamma_phi > 0 dominance bug, `ZeroGammaPhiBehavesAsPlainPareto` defense
+test) plus
+`test_line_search.FilterHistoryParetoCollapsesMonotonicallyImprovingSequence`.
+`LineSearchResult::filter_entries_pruned` / `filter_redundant_inserts` /
+`filter_size_after` and the cumulative `SolverInfo::filter_*` counters
+expose the realized pruning work. The Pareto insertion is exposed via
+`FilterLineSearch::try_insert_h_type_for_testing` so tests can drive the
+dominance contract without simulating a full solver iteration.
+
+A full Pareto-frontier filter (variable-margin tracking, dominance
+arbitration on alternate metrics) is still gated on a concrete filter
+failure case.
 
 ### OD-008: Embedded Fixed-Buffer Logger/Profile
 

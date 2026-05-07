@@ -181,3 +181,102 @@ TEST(FilterParetoTest, SolverInfoExposesPeakHistorySize)
     EXPECT_EQ(info.filter_redundant_inserts_total, 0);
     EXPECT_EQ(info.filter_max_history_size, 0);
 }
+
+// RED: a previous implementation used plain Pareto on (theta, phi). With
+// non-zero gamma_phi, plain Pareto silently widens the filter forbidden region:
+// it both over-prunes existing entries and drops new entries as "redundant"
+// when they are not. The IPOPT-style filter forbidden region of an entry
+// (theta_e, phi_e) is theta_c >= (1-gamma_theta) theta_e AND
+// phi_c >= phi_e - gamma_phi * theta_e. For dominance to hold, both axes have
+// to use this shifted reading; psi(e) = phi_e - gamma_phi * theta_e is the
+// correct ordinate.
+//
+// Setup pinned by this test:
+//   gamma_phi = 5
+//   e1 = (theta=0,   phi=10)  -> psi=10
+//   e2 = (theta=1,   phi=11)  -> psi=6
+// In plain (theta, phi) Pareto, e1 dominates e2 (theta_e1<=theta_e2 and
+// phi_e1<=phi_e2), so the legacy code rejected e2 as redundant. In the
+// shifted (theta, psi) Pareto e1 does NOT dominate e2 (psi(e1)=10>6=psi(e2));
+// e2 must be inserted.
+//
+// The trial (theta=0.6, phi=7) is forbidden by e2 (theta>0.5 and phi>6) but
+// not by e1 alone (phi=7 < 10). Without e2 in the filter, the legacy code
+// silently accepted forbidden trials.
+TEST(FilterParetoTest, NonZeroGammaPhiPreservesParetoIncomparableEntry)
+{
+    FilterLineSearch<ParetoFilterModel, 1> ls;
+    const double gamma_phi = 5.0;
+
+    const auto r1 = ls.try_insert_h_type_for_testing(0.0, 10.0, gamma_phi);
+    EXPECT_EQ(r1.filter_redundant_inserts, 0);
+    EXPECT_EQ(r1.filter_entries_pruned, 0);
+    EXPECT_EQ(r1.filter_size_after, 1);
+
+    const auto r2 = ls.try_insert_h_type_for_testing(1.0, 11.0, gamma_phi);
+    EXPECT_EQ(r2.filter_redundant_inserts, 0)
+        << "psi(e1)=10, psi(e2)=6; e1 does not dominate e2 in (theta, psi) space";
+    EXPECT_EQ(r2.filter_entries_pruned, 0)
+        << "e2 has theta_e2 > theta_e1; the new entry must not prune e1";
+    ASSERT_EQ(r2.filter_size_after, 2);
+
+    EXPECT_EQ(ls.filter_entry_for_testing(0).first, 0.0);
+    EXPECT_EQ(ls.filter_entry_for_testing(0).second, 10.0);
+    EXPECT_EQ(ls.filter_entry_for_testing(1).first, 1.0);
+    EXPECT_EQ(ls.filter_entry_for_testing(1).second, 11.0);
+}
+
+// Symmetric guard: when the new entry psi-dominates an existing one, prune
+// the old entry. With plain Pareto the dominance test missed this case any
+// time the new entry had larger phi but a much smaller psi via gamma_phi.
+TEST(FilterParetoTest, NonZeroGammaPhiPrunesEntriesDominatedInPsiSpace)
+{
+    FilterLineSearch<ParetoFilterModel, 1> ls;
+    const double gamma_phi = 5.0;
+
+    // Seed with an entry that has small theta and large phi, hence large psi.
+    const auto r_seed = ls.try_insert_h_type_for_testing(0.5, 12.0, gamma_phi);
+    ASSERT_EQ(r_seed.filter_size_after, 1);
+    // psi_seed = 12 - 5*0.5 = 9.5
+
+    // New entry has SMALLER theta, but larger phi than seed -> plain Pareto
+    // would refuse the new entry as "dominated by something that doesn't
+    // exist" or fail to prune the seed because phi_new > phi_seed. In
+    // (theta, psi) space psi_new = 13 - 5*0 = 13 > psi_seed = 9.5, so the
+    // seed is NOT dominated and the new one is NOT redundant either; both
+    // stay on the frontier.
+    const auto r_incomparable = ls.try_insert_h_type_for_testing(0.0, 13.0, gamma_phi);
+    EXPECT_EQ(r_incomparable.filter_redundant_inserts, 0);
+    EXPECT_EQ(r_incomparable.filter_entries_pruned, 0);
+    EXPECT_EQ(r_incomparable.filter_size_after, 2);
+
+    // Now insert an entry that genuinely psi-dominates the seed: theta_new <
+    // theta_seed AND psi_new < psi_seed. theta_new=0.1, phi_new=4 ->
+    // psi_new = 4 - 5*0.1 = 3.5 < 9.5. The new entry has theta=0.1 < 0.5 and
+    // psi=3.5 < 9.5, so it psi-dominates the seed. The seed must be pruned;
+    // the (theta=0, phi=13, psi=13) entry is incomparable so it stays.
+    const auto r_dominator = ls.try_insert_h_type_for_testing(0.1, 4.0, gamma_phi);
+    EXPECT_EQ(r_dominator.filter_redundant_inserts, 0);
+    EXPECT_EQ(r_dominator.filter_entries_pruned, 1)
+        << "(theta=0.1, psi=3.5) psi-dominates the seed (theta=0.5, psi=9.5)";
+    EXPECT_EQ(r_dominator.filter_size_after, 2);
+}
+
+// Defense: gamma_phi = 0 still collapses to plain (theta, phi) Pareto, so
+// strictly improving sequences still collapse to a single entry.
+TEST(FilterParetoTest, ZeroGammaPhiBehavesAsPlainPareto)
+{
+    FilterLineSearch<ParetoFilterModel, 1> ls;
+    const double gamma_phi = 0.0;
+
+    ls.try_insert_h_type_for_testing(2.0, 20.0, gamma_phi);
+    const auto r_strict = ls.try_insert_h_type_for_testing(1.0, 10.0, gamma_phi);
+    EXPECT_EQ(r_strict.filter_entries_pruned, 1);
+    EXPECT_EQ(r_strict.filter_redundant_inserts, 0);
+    EXPECT_EQ(r_strict.filter_size_after, 1);
+
+    const auto r_redundant = ls.try_insert_h_type_for_testing(2.0, 20.0, gamma_phi);
+    EXPECT_EQ(r_redundant.filter_redundant_inserts, 1);
+    EXPECT_EQ(r_redundant.filter_entries_pruned, 0);
+    EXPECT_EQ(r_redundant.filter_size_after, 1);
+}
