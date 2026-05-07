@@ -402,37 +402,48 @@ how the dual-stationarity infinity norm is reported and compared:
 ```cpp
 config.coordinate_scaling = CoordinateScalingMethod::USER_SUPPLIED;
 
-solver.set_state_scale("x_pos", 100.0);   // x_pos has typical magnitude ~100
 solver.set_control_scale("u_force", 1.0); // u_force is already O(1)
+solver.set_control_scale("u_steer", 0.1); // small-magnitude control axis
 ```
 
 Convention: the user-supplied scale `s_i` represents the typical magnitude of
-coordinate `i` in model units. With `USER_SUPPLIED` active, the solver
-evaluates `dual_inf = max_i |r_i| * control_scale_i` so coordinates with
-naturally large gradients do not mask convergence on coordinates with small
-gradients.
+control coordinate `i` in model units. With `USER_SUPPLIED` active the solver
+evaluates `dual_inf = max_i |r_bar_i| * control_scale_i` (where `r_bar` is the
+Riccati-projected control residual) so coordinates with naturally large
+gradients do not mask convergence on coordinates with small gradients.
+
+The API is intentionally control-only. Dual stationarity is reported via the
+inf-norm of `r_bar`; state stationarity is eliminated by the Riccati
+substitution and parameters are not optimisation variables, so neither has a
+residual to weight. An earlier revision exposed `set_state_scale` and
+`set_parameter_scale` that stored values without affecting `dual_inf` while
+`coordinate_scaling_active` reported `true`. They were removed and the
+absence is locked in by `static_assert` fences in
+`tests/test_coordinate_scaling.cpp`. Re-introducing them requires shipping a
+state/parameter-aware termination metric in the same change.
 
 Contract guarantees:
 
 - `CoordinateScalingMethod::NONE` (default) keeps the legacy unweighted
-  inf-norm bit-for-bit; the `test_coordinate_scaling.NoneStrategyKeepsBaselineDualInfBitForBit`
-  test pins this guarantee.
+  inf-norm bit-for-bit;
+  `test_coordinate_scaling.NoneStrategyKeepsBaselineDualInfBitForBit` pins
+  this guarantee.
 - API setters return `ApiStatus` and reject non-finite values, indices out of
   range, and scales outside `[config.coordinate_scale_min,
   config.coordinate_scale_max]` (defaults `[1e-6, 1e6]`).
 - `SolverInfo::coordinate_scaling_active` is `true` only when the strategy is
-  `USER_SUPPLIED` *and* at least one scale differs from `1.0`. All-unity
-  scales fall back to legacy semantics.
-- The hint is consumed exclusively by `compute_dual_infeasibility_` (iteration
-  loop) and the postsolve dual-residual evaluation. It does **not** change
-  Riccati, line search, SOC, restoration, or warm-start delta application.
+  `USER_SUPPLIED` *and* at least one control scale differs from `1.0`.
+  All-unity scales fall back to legacy semantics.
+- The hint is consumed exclusively by `compute_dual_infeasibility_`
+  (iteration loop) and the postsolve dual-residual evaluation. It does
+  **not** change Riccati, line search, SOC, restoration, or warm-start delta
+  application.
 
 Limitations and follow-ups:
 
 - Stage 5a only weights the control-stationarity vector. State and parameter
-  scales are stored on the solver instance but currently only validated and
-  surfaced via getters; they are wired up here to keep the public API stable
-  for the eventual full-equilibration version.
+  scaling are deferred to the eventual full-equilibration version, which has
+  to land its own dual-residual definition for those axes.
 - Full coordinate equilibration (rescaling `dx/du`, `A/B`, Hessian blocks,
   warm-start deltas, etc.) remains gated on a focused benchmark proving the
   extra complexity is justified.

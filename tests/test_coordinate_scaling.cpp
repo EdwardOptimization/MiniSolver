@@ -1,15 +1,23 @@
 // Coordinate-scaling hint contract tests (Stage 5 minimal viable).
 //
-// These tests pin the API behaviour of the per-coordinate scale setters and
-// the resulting termination metric. They deliberately do NOT assert that the
+// These tests pin the API behaviour of the per-control scale setters and the
+// resulting termination metric. They deliberately do NOT assert that the
 // search direction or Riccati recursion changes -- the hint is documented as
 // affecting only the dual-stationarity termination metric.
+//
+// Earlier revisions also shipped set_state_scale / set_parameter_scale APIs
+// that stored values but never affected dual_inf (state stationarity is
+// eliminated by Riccati; parameters are not optimisation variables). They
+// have been removed; the contract tests deliberately verify those entry
+// points no longer exist.
 
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include "minisolver/solver/solver.h"
 #include <array>
 #include <gtest/gtest.h>
+#include <limits>
+#include <type_traits>
 
 using namespace minisolver;
 
@@ -109,12 +117,8 @@ TEST(CoordinateScalingTest, DefaultConfigKeepsScaleAtUnity)
     MiniSolver<CoordScalingModel, 16> solver(8, Backend::CPU_SERIAL, config);
 
     EXPECT_EQ(config.coordinate_scaling, CoordinateScalingMethod::NONE);
-    EXPECT_DOUBLE_EQ(solver.get_state_scale(0), 1.0);
-    EXPECT_DOUBLE_EQ(solver.get_state_scale(1), 1.0);
     EXPECT_DOUBLE_EQ(solver.get_control_scale(0), 1.0);
     EXPECT_DOUBLE_EQ(solver.get_control_scale(1), 1.0);
-    EXPECT_DOUBLE_EQ(solver.get_parameter_scale(0), 1.0);
-    EXPECT_DOUBLE_EQ(solver.get_parameter_scale(1), 1.0);
 }
 
 TEST(CoordinateScalingTest, SetScaleByIndexAndNameAreEquivalent)
@@ -123,17 +127,11 @@ TEST(CoordinateScalingTest, SetScaleByIndexAndNameAreEquivalent)
     config.print_level = PrintLevel::NONE;
     MiniSolver<CoordScalingModel, 16> solver(8, Backend::CPU_SERIAL, config);
 
-    EXPECT_EQ(solver.set_state_scale(0, 100.0), ApiStatus::OK);
-    EXPECT_EQ(solver.set_state_scale("x_vel", 0.5), ApiStatus::OK);
     EXPECT_EQ(solver.set_control_scale("u_force", 2.0), ApiStatus::OK);
     EXPECT_EQ(solver.set_control_scale(1, 0.1), ApiStatus::OK);
-    EXPECT_EQ(solver.set_parameter_scale("x_pos_ref", 100.0), ApiStatus::OK);
 
-    EXPECT_DOUBLE_EQ(solver.get_state_scale(0), 100.0);
-    EXPECT_DOUBLE_EQ(solver.get_state_scale(1), 0.5);
     EXPECT_DOUBLE_EQ(solver.get_control_scale(0), 2.0);
     EXPECT_DOUBLE_EQ(solver.get_control_scale(1), 0.1);
-    EXPECT_DOUBLE_EQ(solver.get_parameter_scale(0), 100.0);
 }
 
 TEST(CoordinateScalingTest, RejectInvalidScaleValuesAndIndices)
@@ -142,24 +140,20 @@ TEST(CoordinateScalingTest, RejectInvalidScaleValuesAndIndices)
     config.print_level = PrintLevel::NONE;
     MiniSolver<CoordScalingModel, 16> solver(8, Backend::CPU_SERIAL, config);
 
-    EXPECT_EQ(solver.set_state_scale(-1, 1.0), ApiStatus::InvalidIndex);
-    EXPECT_EQ(solver.set_state_scale(7, 1.0), ApiStatus::InvalidIndex);
     EXPECT_EQ(solver.set_control_scale(-1, 1.0), ApiStatus::InvalidIndex);
-    EXPECT_EQ(solver.set_parameter_scale(99, 1.0), ApiStatus::InvalidIndex);
+    EXPECT_EQ(solver.set_control_scale(99, 1.0), ApiStatus::InvalidIndex);
+    EXPECT_EQ(solver.set_control_scale("nonexistent", 1.0), ApiStatus::UnknownName);
 
-    EXPECT_EQ(solver.set_state_scale("nonexistent", 1.0), ApiStatus::UnknownName);
-
-    EXPECT_EQ(solver.set_state_scale(0, 0.0), ApiStatus::InvalidArgument);
-    EXPECT_EQ(solver.set_state_scale(0, -1.0), ApiStatus::InvalidArgument);
-    EXPECT_EQ(solver.set_state_scale(0, std::numeric_limits<double>::infinity()),
+    EXPECT_EQ(solver.set_control_scale(0, 0.0), ApiStatus::InvalidArgument);
+    EXPECT_EQ(solver.set_control_scale(0, -1.0), ApiStatus::InvalidArgument);
+    EXPECT_EQ(solver.set_control_scale(0, std::numeric_limits<double>::infinity()),
         ApiStatus::InvalidArgument);
 
     EXPECT_EQ(solver.set_control_scale(0, 1e-30), ApiStatus::InvalidArgument);
     EXPECT_EQ(solver.set_control_scale(0, 1e30), ApiStatus::InvalidArgument);
 
-    EXPECT_DOUBLE_EQ(solver.get_state_scale(0), 1.0)
+    EXPECT_DOUBLE_EQ(solver.get_control_scale(0), 1.0)
         << "Failed setters must not mutate stored scale";
-    EXPECT_DOUBLE_EQ(solver.get_control_scale(0), 1.0);
 }
 
 TEST(CoordinateScalingTest, ResetCoordinateScalingRestoresUnity)
@@ -168,16 +162,34 @@ TEST(CoordinateScalingTest, ResetCoordinateScalingRestoresUnity)
     config.print_level = PrintLevel::NONE;
     MiniSolver<CoordScalingModel, 16> solver(8, Backend::CPU_SERIAL, config);
 
-    EXPECT_EQ(solver.set_state_scale(0, 100.0), ApiStatus::OK);
+    EXPECT_EQ(solver.set_control_scale(0, 2.0), ApiStatus::OK);
     EXPECT_EQ(solver.set_control_scale(1, 0.5), ApiStatus::OK);
-    EXPECT_EQ(solver.set_parameter_scale(1, 4.0), ApiStatus::OK);
 
     solver.reset_coordinate_scaling();
 
-    EXPECT_DOUBLE_EQ(solver.get_state_scale(0), 1.0);
+    EXPECT_DOUBLE_EQ(solver.get_control_scale(0), 1.0);
     EXPECT_DOUBLE_EQ(solver.get_control_scale(1), 1.0);
-    EXPECT_DOUBLE_EQ(solver.get_parameter_scale(1), 1.0);
 }
+
+// Compile-time fence: the legacy state/parameter scaling setters must not
+// be reintroduced. They were silent no-ops while coordinate_scaling_active
+// reported true, so the API was misleading. If any of these expressions
+// compiles, the API should be re-evaluated against a real state/parameter-
+// aware termination metric before reintroducing it.
+template <typename T, typename = void> struct has_set_state_scale : std::false_type { };
+template <typename T>
+struct has_set_state_scale<T, std::void_t<decltype(std::declval<T&>().set_state_scale(0, 1.0))>>
+    : std::true_type { };
+
+template <typename T, typename = void> struct has_set_parameter_scale : std::false_type { };
+template <typename T>
+struct has_set_parameter_scale<T,
+    std::void_t<decltype(std::declval<T&>().set_parameter_scale(0, 1.0))>> : std::true_type { };
+
+static_assert(!has_set_state_scale<MiniSolver<CoordScalingModel, 16>>::value,
+    "set_state_scale must remain absent until a state-aware dual_inf metric exists");
+static_assert(!has_set_parameter_scale<MiniSolver<CoordScalingModel, 16>>::value,
+    "set_parameter_scale must remain absent until a parameter-aware dual_inf metric exists");
 
 TEST(CoordinateScalingTest, NoneStrategyKeepsBaselineDualInfBitForBit)
 {

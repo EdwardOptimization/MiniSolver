@@ -649,39 +649,27 @@ public:
     // Coordinate-scaling hint API (Stage 5 minimal viable).
     //
     // The scale factors describe the *typical magnitude* of the corresponding
-    // primal coordinate in user units. They never rescale state/control/
+    // control coordinate in user units. They never rescale state/control/
     // parameter values returned by getters, never alter the search direction,
     // and never feed back into Riccati/SOC/restoration. They are consumed
     // exclusively by the dual-stationarity termination metric when
     // `config.coordinate_scaling == CoordinateScalingMethod::USER_SUPPLIED`.
+    //
+    // Why control-only: dual stationarity is reported via the inf-norm of the
+    // Riccati-projected control residual `r_bar`. State stationarity is
+    // eliminated by the Riccati substitution (it is implicitly satisfied by
+    // the linearised KKT) and parameters are not optimisation variables, so
+    // there is no `r_bar`-style residual on those axes. Earlier revisions
+    // exposed `set_state_scale` / `set_parameter_scale` that stored values
+    // but never affected `dual_inf`; they were a silent no-op while
+    // `coordinate_scaling_active` reported `true`. They have been removed
+    // until a state/parameter-aware termination metric exists.
     //
     // Validation: each scale must be finite and inside
     // `[config.coordinate_scale_min, config.coordinate_scale_max]`. The
     // defaults are 1.0 so callers that never touch this API keep the prior
     // numerical contract bit-for-bit.
     // -----------------------------------------------------------------------
-
-    ApiStatus set_state_scale(int idx, double value)
-    {
-        if (idx < 0 || idx >= NX) {
-            return ApiStatus::InvalidIndex;
-        }
-        if (!std::isfinite(value) || value < config.coordinate_scale_min
-            || value > config.coordinate_scale_max) {
-            return ApiStatus::InvalidArgument;
-        }
-        state_coord_scale_[idx] = value;
-        return ApiStatus::OK;
-    }
-
-    ApiStatus set_state_scale(const std::string& name, double value)
-    {
-        const int idx = get_state_idx(name);
-        if (idx < 0) {
-            return ApiStatus::UnknownName;
-        }
-        return set_state_scale(idx, value);
-    }
 
     ApiStatus set_control_scale(int idx, double value)
     {
@@ -705,42 +693,7 @@ public:
         return set_control_scale(idx, value);
     }
 
-    ApiStatus set_parameter_scale(int idx, double value)
-    {
-        if (idx < 0 || idx >= NP) {
-            return ApiStatus::InvalidIndex;
-        }
-        if (!std::isfinite(value) || value < config.coordinate_scale_min
-            || value > config.coordinate_scale_max) {
-            return ApiStatus::InvalidArgument;
-        }
-        param_coord_scale_[idx] = value;
-        return ApiStatus::OK;
-    }
-
-    ApiStatus set_parameter_scale(const std::string& name, double value)
-    {
-        const int idx = get_param_idx(name);
-        if (idx < 0) {
-            return ApiStatus::UnknownName;
-        }
-        return set_parameter_scale(idx, value);
-    }
-
-    void reset_coordinate_scaling()
-    {
-        state_coord_scale_.fill(1.0);
-        control_coord_scale_.fill(1.0);
-        param_coord_scale_.fill(1.0);
-    }
-
-    double get_state_scale(int idx) const
-    {
-        if (idx < 0 || idx >= NX) {
-            return 1.0;
-        }
-        return state_coord_scale_[idx];
-    }
+    void reset_coordinate_scaling() { control_coord_scale_.fill(1.0); }
 
     double get_control_scale(int idx) const
     {
@@ -748,14 +701,6 @@ public:
             return 1.0;
         }
         return control_coord_scale_[idx];
-    }
-
-    double get_parameter_scale(int idx) const
-    {
-        if (idx < 0 || idx >= NP) {
-            return 1.0;
-        }
-        return param_coord_scale_[idx];
     }
 
     std::vector<double> get_slack(int stage) const
@@ -1146,18 +1091,8 @@ private:
         if (config.coordinate_scaling != CoordinateScalingMethod::USER_SUPPLIED) {
             return false;
         }
-        for (int i = 0; i < NX; ++i) {
-            if (state_coord_scale_[i] != 1.0) {
-                return true;
-            }
-        }
         for (int i = 0; i < NU; ++i) {
             if (control_coord_scale_[i] != 1.0) {
-                return true;
-            }
-        }
-        for (int i = 0; i < NP; ++i) {
-            if (param_coord_scale_[i] != 1.0) {
                 return true;
             }
         }
@@ -2879,18 +2814,10 @@ private:
     // Values are validated at API entry against config.coordinate_scale_min/max
     // and are only consumed by termination metrics when
     // config.coordinate_scaling == CoordinateScalingMethod::USER_SUPPLIED.
-    std::array<double, NX> state_coord_scale_ = ([] {
-        std::array<double, NX> s {};
-        s.fill(1.0);
-        return s;
-    })();
+    // Only NU scales: state stationarity is eliminated by Riccati and
+    // parameters are not optimisation variables (see set_control_scale doc).
     std::array<double, NU> control_coord_scale_ = ([] {
         std::array<double, NU> s {};
-        s.fill(1.0);
-        return s;
-    })();
-    std::array<double, NP> param_coord_scale_ = ([] {
-        std::array<double, NP> s {};
         s.fill(1.0);
         return s;
     })();
