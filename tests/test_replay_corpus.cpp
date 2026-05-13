@@ -553,6 +553,43 @@ TEST(ReplayCorpusTest, BadScalingCaseReportsScaledAndUnscaledFeasibility)
     EXPECT_NEAR(info.unscaled_primal_inf, 2000.0, 1e-2);
 }
 
+TEST(ReplayCorpusTest, AcceptableNmpcEarlyStopCoversSoftConstrainedProblem)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.enable_profiling = false;
+    config.max_iters = 40;
+    config.termination_profile = TerminationProfile::ACCEPTABLE_NMPC;
+    config.tol_con = 1e-5;
+    config.tol_dual = 1e-8;
+    config.tol_mu = 1e-8;
+    config.mu_final = 1e-9;
+
+    MiniSolver<CorpusL1SoftModel, 10> solver(3, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(1.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_initial_state("x", 0.0), ApiStatus::OK);
+    for (int k = 0; k < solver.get_horizon(); ++k) {
+        ASSERT_EQ(solver.set_control_guess(k, "u", 0.5), ApiStatus::OK);
+    }
+    solver.rollout_dynamics();
+
+    const SolverStatus status = solver.solve();
+    const SolverInfo& info = solver.get_info();
+    ASSERT_EQ(status, SolverStatus::FEASIBLE);
+    expect_finite_info(info);
+    EXPECT_EQ(info.loop_status, SolverStatus::FEASIBLE)
+        << "ACCEPTABLE_NMPC should actively exit once the fresh accepted trajectory "
+           "is primal-feasible, not only through postsolve fallback.";
+    EXPECT_EQ(info.termination_reason, TerminationReason::PRIMAL_FEASIBLE);
+    EXPECT_LE(info.primal_inf, config.tol_con);
+    EXPECT_GT(CorpusL1SoftModel::NC, 0);
+    for (int k = 0; k <= solver.get_horizon(); ++k) {
+        EXPECT_GT(solver.get_slack(k, 0), 0.0);
+        EXPECT_GT(solver.get_dual(k, 0), 0.0);
+        EXPECT_LT(solver.get_dual(k, 0), CorpusL1SoftModel::constraint_weights[0]);
+    }
+}
+
 TEST(ReplayCorpusTest, FailureSnapshotWorkflowPersistsPreSolveReplayState)
 {
     SolverConfig config;
