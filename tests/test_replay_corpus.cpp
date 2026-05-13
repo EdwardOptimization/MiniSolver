@@ -472,6 +472,12 @@ TEST(ReplayCorpusTest, WarmStartTwoFrameSolveReachesAcceptableQualityInTwoIterat
     ASSERT_TRUE(acceptable_status(second_status));
     expect_finite_info(second_info);
     EXPECT_LE(second_info.iterations, 2);
+    EXPECT_EQ(second_info.loop_status, SolverStatus::FEASIBLE)
+        << "ACCEPTABLE_NMPC should actively exit the solve loop once the accepted "
+           "trajectory reaches fresh primal feasibility, instead of relying only on "
+           "postsolve fallback.";
+    EXPECT_EQ(second_info.termination_reason, TerminationReason::PRIMAL_FEASIBLE);
+    EXPECT_LE(second_info.primal_inf, warm_config.tol_con);
     EXPECT_LT(std::abs(solver.get_state(N, 0)), std::abs(shifted_x0));
     EXPECT_LE(total_unscaled_cost(solver), shifted_cost_before + 1e-9);
 

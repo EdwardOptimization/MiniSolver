@@ -209,13 +209,17 @@ Implemented:
 - `SolverConfig::termination_profile` selects the internal termination mode.
 - `TerminationProfile::RTI_FIXED_ITERATION` is the single RTI-style fixed
   iteration configuration entry point.
+- `TerminationProfile::ACCEPTABLE_NMPC` has an active loop exit: after an
+  accepted globalization step, MiniSolver refreshes primal feasibility on the
+  accepted trajectory and returns `FEASIBLE` when `primal_inf <= tol_con`.
+  This does not use `feasible_tol_scale`, stale dual residuals, or stale
+  complementarity; postsolve still refreshes the final residual snapshot.
 - `SolverInfo` and `TerminationReason` expose the final residual snapshot and
   loop stop reason through `get_info()`.
 
 Still deferred:
 
 - acceptable/reduced-accuracy status beyond the existing `FEASIBLE` summary.
-- full `ACCEPTABLE_NMPC` behavior beyond the current documented profile;
 - scale-aware termination thresholds.
 
 ## Implementation Order
@@ -268,8 +272,9 @@ Still deferred:
   certificates until the solver can produce evidence.
 - acceptable/reduced-accuracy public status: keep using `FEASIBLE` until there
   is a concrete need for a separate `ACCEPTABLE` status.
-- `ACCEPTABLE_NMPC`: implement behavior only after continuous MPC benchmarks
-  show which relaxed criteria preserve control quality.
+- additional `ACCEPTABLE_NMPC` criteria beyond fresh primal feasibility:
+  implement only after continuous MPC benchmarks show which relaxed criteria
+  preserve control quality.
 - scale-aware termination: defer until scaling / constraint normalization has a
   stable design and tests.
 - benchmark-driven tuning: run after `SolverInfo` fields are available in

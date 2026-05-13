@@ -849,6 +849,27 @@ private:
         return detail::TerminationKernel::check_convergence(config, snapshot);
     }
 
+    SolverStatus check_acceptable_nmpc_primal_after_accepted_step_()
+    {
+        if (!detail::TerminationKernel::uses_acceptable_nmpc_profile(config)) {
+            return SolverStatus::UNSOLVED;
+        }
+
+        auto& traj = trajectory.active();
+        PostsolveResiduals residuals = refresh_postsolve_residuals_(traj);
+        if (!residuals.residuals_ok) {
+            return SolverStatus::NUMERICAL_ERROR;
+        }
+
+        detail::TerminationSnapshot snapshot;
+        snapshot.primal_inf = residuals.max_primal_inf;
+        if (detail::TerminationKernel::check_acceptable_nmpc_primal(config, snapshot)) {
+            return SolverStatus::FEASIBLE;
+        }
+
+        return SolverStatus::UNSOLVED;
+    }
+
     double compute_objective_cost_(const TrajArray& traj) const
     {
         double total_cost = 0.0;
@@ -1980,7 +2001,13 @@ private:
 
         // Do not certify convergence immediately after line search: the accepted
         // primal trajectory and pre-line-search dual residual belong to different
-        // snapshots. The next iteration or postsolve() refreshes both on one iterate.
+        // snapshots. ACCEPTABLE_NMPC may still stop on fresh primal feasibility only;
+        // strict optimality waits for the next iteration or postsolve().
+        const SolverStatus acceptable_status = check_acceptable_nmpc_primal_after_accepted_step_();
+        if (acceptable_status != SolverStatus::UNSOLVED) {
+            return acceptable_status;
+        }
+
         update_metrics_after_globalization_(max_dual_inf);
         return SolverStatus::UNSOLVED;
     }

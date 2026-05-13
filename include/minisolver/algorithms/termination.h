@@ -22,6 +22,17 @@ struct TerminationKernel {
         return config.termination_profile == TerminationProfile::RTI_FIXED_ITERATION;
     }
 
+    static bool uses_acceptable_nmpc_profile(const SolverConfig& config)
+    {
+        return config.termination_profile == TerminationProfile::ACCEPTABLE_NMPC;
+    }
+
+    static bool check_acceptable_nmpc_primal(
+        const SolverConfig& config, const TerminationSnapshot& snapshot)
+    {
+        return snapshot.primal_inf <= config.tol_con;
+    }
+
     static bool check_convergence(const SolverConfig& config, const TerminationSnapshot& snapshot)
     {
         if (!snapshot.linear_ok) {
