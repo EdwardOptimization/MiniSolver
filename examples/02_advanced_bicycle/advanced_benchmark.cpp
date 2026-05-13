@@ -49,6 +49,8 @@ struct BenchmarkResult {
     double final_constraint_residual;
 };
 
+using BicycleSolver = MiniSolver<BicycleExtModel, 50>;
+
 double reference_y_for_x(double x_ref)
 {
     if (x_ref > ExtConfig::OBS_X - 10.0 && x_ref < ExtConfig::OBS_X + 10.0) {
@@ -57,11 +59,66 @@ double reference_y_for_x(double x_ref)
     return 0.0;
 }
 
+void prepare_benchmark_case(BicycleSolver& solver, const std::vector<double>& dts, int N)
+{
+    solver.reset(ResetOption::FULL);
+    solver.set_dt(dts);
+
+    double current_t = 0.0;
+    for (int k = 0; k <= N; ++k) {
+        if (k > 0) {
+            current_t += dts[k - 1];
+        }
+        double x_ref = current_t * ExtConfig::TARGET_V;
+
+        // Keep the reference path synchronized across x/y and across benchmark runs.
+        double y_ref_val = reference_y_for_x(x_ref);
+
+        solver.set_parameter(k, "v_ref", ExtConfig::TARGET_V);
+        solver.set_parameter(k, "x_ref", x_ref);
+        solver.set_parameter(k, "y_ref", y_ref_val);
+
+        solver.set_parameter(k, "obs_x", ExtConfig::OBS_X);
+        solver.set_parameter(k, "obs_y", ExtConfig::OBS_Y);
+        solver.set_parameter(k, "obs_rad", ExtConfig::OBS_RAD);
+        solver.set_parameter(k, "L", 2.5); // Unused in this model dynamics but present
+        solver.set_parameter(k, "car_rad", ExtConfig::CAR_RAD);
+
+        solver.set_parameter(k, "w_pos", ExtConfig::W_POS);
+        solver.set_parameter(k, "w_vel", ExtConfig::W_VEL);
+        solver.set_parameter(k, "w_theta", ExtConfig::W_THETA);
+        solver.set_parameter(k, "w_kappa", ExtConfig::W_KAPPA);
+        solver.set_parameter(k, "w_a", ExtConfig::W_A);
+        solver.set_parameter(k, "w_dkappa", ExtConfig::W_DKAPPA);
+        solver.set_parameter(k, "w_jerk", ExtConfig::W_JERK);
+
+        if (k < N) {
+            solver.set_control_guess(k, "dkappa", 0.0);
+            solver.set_control_guess(k, "jerk", 0.0);
+        }
+
+        solver.set_state_guess(k, "x", x_ref);
+        solver.set_state_guess(k, "y", y_ref_val);
+        solver.set_state_guess(k, "v", ExtConfig::TARGET_V);
+    }
+
+    solver.set_initial_state("x", 0.0);
+    solver.set_initial_state("y", 0.0);
+    solver.set_initial_state("theta", 0.0);
+    solver.set_initial_state("kappa", 0.0);
+    solver.set_initial_state("v", 5); // Non-zero v to match debug
+    solver.set_initial_state("a", 0.0);
+
+    if (solver.get_config().barrier_strategy != BarrierStrategy::ADAPTIVE) {
+        solver.rollout_dynamics();
+    }
+}
+
 BenchmarkResult run_test(const std::string& name, SolverConfig config)
 {
     int N = ExtConfig::N;
     config.print_level = PrintLevel::NONE;
-    config.enable_profiling = true;
+    config.enable_profiling = false;
 
     std::vector<double> dts(N);
     // Simple uniform time steps
@@ -75,9 +132,6 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
     std::vector<double> total_times;
     total_times.reserve(NUM_RUNS);
 
-    double sum_deriv = 0;
-    double sum_solve = 0;
-    double sum_ls = 0;
     int last_iter_count = 0;
     SolverStatus last_status = SolverStatus::UNSOLVED;
     double last_cost = 0;
@@ -86,105 +140,50 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
     double last_dual = 0;
     double last_constraint_residual = 0;
 
-    MiniSolver<BicycleExtModel, 50> solver(N, Backend::CPU_SERIAL, config);
+    BicycleSolver solver(N, Backend::CPU_SERIAL, config);
     for (int run = 0; run < WARMUP_RUNS + NUM_RUNS; ++run) {
-        solver.reset(ResetOption::FULL);
-        solver.set_dt(dts);
-
-        double current_t = 0.0;
-        for (int k = 0; k <= N; ++k) {
-            if (k > 0) {
-                current_t += dts[k - 1];
-            }
-            double x_ref = current_t * ExtConfig::TARGET_V;
-
-            // Intelligent Reference Generation (Match Debug Setup)
-            double y_ref_val = reference_y_for_x(x_ref);
-
-            // Set Parameters
-            solver.set_parameter(k, "v_ref", ExtConfig::TARGET_V);
-            solver.set_parameter(k, "x_ref", x_ref);
-            solver.set_parameter(k, "y_ref", y_ref_val);
-
-            solver.set_parameter(k, "obs_x", ExtConfig::OBS_X);
-            solver.set_parameter(k, "obs_y", ExtConfig::OBS_Y);
-            solver.set_parameter(k, "obs_rad", ExtConfig::OBS_RAD);
-            solver.set_parameter(k, "L", 2.5); // Unused in this model dynamics but present
-            solver.set_parameter(k, "car_rad", ExtConfig::CAR_RAD);
-
-            solver.set_parameter(k, "w_pos", ExtConfig::W_POS);
-            solver.set_parameter(k, "w_vel", ExtConfig::W_VEL);
-            solver.set_parameter(k, "w_theta", ExtConfig::W_THETA);
-            solver.set_parameter(k, "w_kappa", ExtConfig::W_KAPPA);
-            solver.set_parameter(k, "w_a", ExtConfig::W_A);
-            solver.set_parameter(k, "w_dkappa", ExtConfig::W_DKAPPA);
-            solver.set_parameter(k, "w_jerk", ExtConfig::W_JERK);
-
-            // Warm start controls
-            if (k < N) {
-                solver.set_control_guess(k, "dkappa", 0.0);
-                solver.set_control_guess(k, "jerk", 0.0);
-            }
-
-            // [Fix] Provide smart state guess to avoid obstacle
-            solver.set_state_guess(k, "x", x_ref);
-            solver.set_state_guess(k, "y", y_ref_val);
-            solver.set_state_guess(k, "v", ExtConfig::TARGET_V);
-        }
-
-        // Initial State: x, y, theta, kappa, v, a
-        solver.set_initial_state("x", 0.0);
-        solver.set_initial_state("y", 0.0);
-        solver.set_initial_state("theta", 0.0);
-        solver.set_initial_state("kappa", 0.0);
-        solver.set_initial_state("v", 5); // Non-zero v to match debug
-        solver.set_initial_state("a", 0.0);
-
-        if (config.barrier_strategy != BarrierStrategy::ADAPTIVE) {
-            solver.rollout_dynamics();
-        }
+        prepare_benchmark_case(solver, dts, N);
 
         auto start = std::chrono::high_resolution_clock::now();
-        SolverStatus status = solver.solve();
+        solver.solve();
         auto end = std::chrono::high_resolution_clock::now();
 
         if (run >= WARMUP_RUNS) {
             double ms = std::chrono::duration<double, std::milli>(end - start).count();
             total_times.push_back(ms);
+        }
+    }
 
-            sum_deriv += solver.get_profile_time_ms("Derivatives");
-            sum_solve += solver.get_profile_time_ms("Linear Solve");
-            sum_ls += solver.get_profile_time_ms("Line Search");
+    SolverConfig profile_config = config;
+    profile_config.enable_profiling = true;
+    BicycleSolver profile_solver(N, Backend::CPU_SERIAL, profile_config);
+    prepare_benchmark_case(profile_solver, dts, N);
+    last_status = profile_solver.solve();
 
-            if (run == WARMUP_RUNS + NUM_RUNS - 1) {
-                const SolverInfo& info = solver.get_info();
-                last_iter_count = info.iterations;
+    const SolverInfo& info = profile_solver.get_info();
+    last_iter_count = info.iterations;
+    last_primal = info.primal_inf;
+    last_raw_primal = info.unscaled_primal_inf;
+    last_dual = info.dual_inf;
 
-                double max_constraint_residual = 0.0;
-                int horizon = solver.get_horizon();
-                for (int k = 0; k <= horizon; ++k) {
-                    for (int i = 0; i < BicycleExtModel::NC; ++i) {
-                        double val
-                            = std::abs(solver.get_constraint_val(k, i) + solver.get_slack(k, i));
-                        if (val > max_constraint_residual) {
-                            max_constraint_residual = val;
-                        }
-                    }
-                }
-                last_status = status;
-                last_primal = info.primal_inf;
-                last_raw_primal = info.unscaled_primal_inf;
-                last_dual = info.dual_inf;
-
-                double cost = 0.0;
-                for (int k = 0; k <= horizon; ++k) {
-                    cost += solver.get_stage_cost(k);
-                }
-                last_cost = cost;
-                last_constraint_residual = max_constraint_residual;
+    double max_constraint_residual = 0.0;
+    int horizon = profile_solver.get_horizon();
+    for (int k = 0; k <= horizon; ++k) {
+        for (int i = 0; i < BicycleExtModel::NC; ++i) {
+            double val = std::abs(
+                profile_solver.get_constraint_val(k, i) + profile_solver.get_slack(k, i));
+            if (val > max_constraint_residual) {
+                max_constraint_residual = val;
             }
         }
     }
+
+    double cost = 0.0;
+    for (int k = 0; k <= horizon; ++k) {
+        cost += profile_solver.get_stage_cost(k);
+    }
+    last_cost = cost;
+    last_constraint_residual = max_constraint_residual;
 
     BenchmarkResult res;
     res.name = name;
@@ -195,9 +194,9 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
     res.time_min = *std::min_element(total_times.begin(), total_times.end());
     res.time_max = *std::max_element(total_times.begin(), total_times.end());
 
-    res.deriv_avg = sum_deriv / NUM_RUNS;
-    res.solve_avg = sum_solve / NUM_RUNS;
-    res.ls_avg = sum_ls / NUM_RUNS;
+    res.deriv_avg = profile_solver.get_profile_time_ms("Derivatives");
+    res.solve_avg = profile_solver.get_profile_time_ms("Linear Solve");
+    res.ls_avg = profile_solver.get_profile_time_ms("Line Search");
     res.status = last_status;
     res.final_cost = last_cost;
     res.final_primal = last_primal;
@@ -292,6 +291,8 @@ int main()
     }
     std::cout << "================================================================================="
                  "================================\n";
+    std::cout << "Note: Time(ms) excludes MiniSolver profiling. Deriv/Solve/LS are from one "
+                 "separate profiled diagnostic solve.\n";
 
     return 0;
 }

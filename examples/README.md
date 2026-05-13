@@ -27,11 +27,10 @@ Primary files:
 Typical flow:
 
 ```bash
-cd examples/01_car_tutorial
-python3 generate_model.py
-cmake -S . -B build
-cmake --build build -j
-./build/car_demo
+python3 examples/01_car_tutorial/generate_model.py
+cmake -S . -B .build
+cmake --build .build --target car_demo -j
+./.build/examples/01_car_tutorial/car_demo
 ```
 
 ### `02_advanced_bicycle`
@@ -44,19 +43,22 @@ Primary files:
 * `advanced_benchmark.cpp`: compares solver configurations on the extended
   bicycle case.
 * `advanced_debug.cpp`: debug-oriented executable for inspecting one scenario.
-* `run_benchmark.sh`: compares fused and standard Riccati-generated code. The
-  script temporarily regenerates the model with fused Riccati disabled, then
+* `run_benchmark.sh`: runs the `no_quad/quad x fused/standard` local benchmark
+  matrix. The script temporarily regenerates the model for each mode, then
   restores the default generated header before exiting.
 
 Typical flow:
 
 ```bash
-cd examples/02_advanced_bicycle
-python3 generate_advanced_model.py
-cmake -S . -B build
-cmake --build build -j
-./build/advanced_debug
-./build/advanced_benchmark
+python3 examples/02_advanced_bicycle/generate_advanced_model.py
+cmake -S . -B .build
+cmake --build .build --target advanced_debug advanced_benchmark -j
+./.build/examples/02_advanced_bicycle/advanced_debug
+./.build/examples/02_advanced_bicycle/advanced_benchmark
+
+# Optional local benchmark matrix. This regenerates tracked generated headers
+# during the run and restores the default header before exit.
+examples/02_advanced_bicycle/run_benchmark.sh
 ```
 
 ### `03_model_update_callback`
