@@ -1,0 +1,2 @@
+add_executable(model_update_callback_demo main.cpp)
+target_link_libraries(model_update_callback_demo PRIVATE minisolver_lib)

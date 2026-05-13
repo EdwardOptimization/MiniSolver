@@ -264,6 +264,43 @@ TEST(MemoryTest, DefaultConfigSolveDoesNotAllocate)
         << "Default SolverConfig must keep solve() heap-allocation free.";
 }
 
+namespace {
+struct ModelUpdateNoAllocState {
+    int calls = 0;
+};
+
+ApiStatus no_alloc_model_update_callback(MiniSolver<CarModel, 20>& solver, void* user)
+{
+    auto* state = static_cast<ModelUpdateNoAllocState*>(user);
+    ++state->calls;
+    return solver.set_parameter(0, 0, solver.get_parameter(0, 0));
+}
+} // namespace
+
+TEST(MemoryTest, ModelUpdateCallbackMechanismDoesNotAllocate)
+{
+    constexpr int N = 10;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.enable_profiling = false;
+    config.max_iters = 2;
+
+    MiniSolver<CarModel, 20> solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+    ModelUpdateNoAllocState state;
+    ASSERT_EQ(
+        solver.set_model_update_callback(no_alloc_model_update_callback, &state), ApiStatus::OK);
+
+    g_allocation_count = 0;
+    g_memory_check_active = true;
+    solver.solve();
+    g_memory_check_active = false;
+
+    EXPECT_EQ(state.calls, solver.get_info().iterations + 1);
+    EXPECT_EQ(g_allocation_count, 0)
+        << "Model-update callback dispatch must not allocate during solve().";
+}
+
 TEST(MemoryTest, ZeroMalloc_ConfigMatrixSolve)
 {
     struct Scenario {

@@ -244,6 +244,7 @@ endif()
 if(MINISOLVER_BUILD_EXAMPLES)
     add_subdirectory(examples/01_car_tutorial)
     add_subdirectory(examples/02_advanced_bicycle)
+    add_subdirectory(examples/03_model_update_callback)
 endif()
 
 # --- Tools ---

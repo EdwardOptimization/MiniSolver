@@ -671,3 +671,295 @@ TEST(ConfigRegressionTest, WarmStartRegularizationModesAreExplicit)
 
     EXPECT_DOUBLE_EQ(Access::reg(solver), 1e-3);
 }
+
+struct CallbackUpdateModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 1;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = { "reference" };
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    inline static int cost_call_count = 0;
+    inline static double first_cost_reference = -1.0;
+
+    static void reset_observations()
+    {
+        cost_call_count = 0;
+        first_cost_reference = -1.0;
+    }
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + dt * u(0);
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + dt * kp.u(0);
+        kp.A.setIdentity();
+        kp.B.setZero();
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val.setZero();
+        kp.C.setZero();
+        kp.D.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        if (cost_call_count == 0) {
+            first_cost_reference = static_cast<double>(kp.p(0));
+        }
+        ++cost_call_count;
+
+        const T error = kp.x(0) - kp.p(0);
+        kp.cost = error * error + T(0.1) * kp.u(0) * kp.u(0);
+        kp.q(0) = T(2.0) * error;
+        kp.r(0) = T(0.2) * kp.u(0);
+        kp.Q.setZero();
+        kp.Q(0, 0) = T(2.0);
+        kp.R.setZero();
+        kp.R(0, 0) = T(0.2);
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+struct CallbackUpdateState {
+    int calls = 0;
+    double reference = 0.0;
+};
+
+using CallbackSolver = MiniSolver<CallbackUpdateModel, 4>;
+
+ApiStatus update_reference_before_evaluation(CallbackSolver& solver, void* user)
+{
+    auto* state = static_cast<CallbackUpdateState*>(user);
+    ++state->calls;
+    return solver.set_global_parameter("reference", state->reference);
+}
+
+ApiStatus fail_model_update_callback(CallbackSolver& /*solver*/, void* user)
+{
+    auto* state = static_cast<CallbackUpdateState*>(user);
+    ++state->calls;
+    return ApiStatus::InvalidArgument;
+}
+
+TEST(ConfigRegressionTest, ModelUpdateCallbackRunsBeforeFirstEvaluation)
+{
+    CallbackUpdateModel::reset_observations();
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::NONE;
+    config.max_iters = 1;
+
+    CallbackSolver solver(2, Backend::CPU_SERIAL, config);
+    CallbackUpdateState state;
+    state.reference = 3.5;
+
+    ASSERT_EQ(solver.set_model_update_callback(update_reference_before_evaluation, &state),
+        ApiStatus::OK);
+
+    (void)solver.solve();
+
+    EXPECT_EQ(state.calls, 2);
+    EXPECT_DOUBLE_EQ(solver.get_parameter(0, "reference"), 3.5);
+    EXPECT_DOUBLE_EQ(CallbackUpdateModel::first_cost_reference, 3.5);
+}
+
+TEST(ConfigRegressionTest, ModelUpdateCallbackFailureStopsSolveAsInvalidInput)
+{
+    CallbackUpdateModel::reset_observations();
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 3;
+
+    CallbackSolver solver(2, Backend::CPU_SERIAL, config);
+    CallbackUpdateState state;
+
+    ASSERT_EQ(solver.set_model_update_callback(fail_model_update_callback, &state), ApiStatus::OK);
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(state.calls, 1);
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::INVALID_INPUT);
+    EXPECT_EQ(CallbackUpdateModel::cost_call_count, 0);
+}
+
+ApiStatus fail_model_update_after_presolve(CallbackSolver& solver, void* user)
+{
+    auto* state = static_cast<CallbackUpdateState*>(user);
+    ++state->calls;
+    if (solver.get_iteration_count() == 0) {
+        return ApiStatus::OK;
+    }
+    return ApiStatus::InvalidArgument;
+}
+
+ApiStatus dirty_plan_during_iteration_callback(CallbackSolver& solver, void* user)
+{
+    auto* state = static_cast<CallbackUpdateState*>(user);
+    ++state->calls;
+    if (solver.get_iteration_count() == 0) {
+        return ApiStatus::OK;
+    }
+
+    SolverConfig config = solver.get_config();
+    config.max_iters = 1;
+    return solver.set_config(config);
+}
+
+TEST(ConfigRegressionTest, ModelUpdateCallbackFailureDuringIterationStopsBeforeEvaluation)
+{
+    CallbackUpdateModel::reset_observations();
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 2;
+
+    CallbackSolver solver(2, Backend::CPU_SERIAL, config);
+    CallbackUpdateState state;
+
+    ASSERT_EQ(
+        solver.set_model_update_callback(fail_model_update_after_presolve, &state), ApiStatus::OK);
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(state.calls, 2);
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::INVALID_INPUT);
+}
+
+TEST(ConfigRegressionTest, ModelUpdateCallbackDirtyPlanDuringIterationIsRejected)
+{
+    CallbackUpdateModel::reset_observations();
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 2;
+
+    CallbackSolver solver(2, Backend::CPU_SERIAL, config);
+    CallbackUpdateState state;
+
+    ASSERT_EQ(solver.set_model_update_callback(dirty_plan_during_iteration_callback, &state),
+        ApiStatus::OK);
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(state.calls, 2);
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::INVALID_INPUT);
+}
+
+struct PresolveCallbackConstraintModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 1;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = { "g_shift" };
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> xn;
+        xn(0) = x(0) + dt * u(0);
+        return xn;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + dt * kp.u(0);
+        kp.A.setIdentity();
+        kp.B.setZero();
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = kp.p(0);
+        kp.C.setZero();
+        kp.D.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.u(0) * kp.u(0);
+        kp.q.setZero();
+        kp.r(0) = T(2.0) * kp.u(0);
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.R(0, 0) = T(2.0);
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+using PresolveCallbackSolver = MiniSolver<PresolveCallbackConstraintModel, 4>;
+
+ApiStatus update_presolve_constraint_parameter(PresolveCallbackSolver& solver, void* user)
+{
+    auto* state = static_cast<CallbackUpdateState*>(user);
+    ++state->calls;
+    return solver.set_global_parameter("g_shift", state->reference);
+}
+
+TEST(ConfigRegressionTest, ModelUpdateCallbackRunsBeforePresolveSlackInitialization)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 0;
+    config.mu_init = 1e-1;
+
+    PresolveCallbackSolver solver(2, Backend::CPU_SERIAL, config);
+    CallbackUpdateState state;
+    state.reference = 4.0;
+
+    ASSERT_EQ(solver.set_model_update_callback(update_presolve_constraint_parameter, &state),
+        ApiStatus::OK);
+
+    (void)solver.solve();
+
+    EXPECT_EQ(state.calls, 1);
+    for (int k = 0; k <= solver.get_horizon(); ++k) {
+        EXPECT_DOUBLE_EQ(solver.get_parameter(k, "g_shift"), 4.0);
+        EXPECT_DOUBLE_EQ(solver.get_slack(k, 0), 4.0);
+        EXPECT_DOUBLE_EQ(solver.get_dual(k, 0), config.mu_init / 4.0);
+    }
+}

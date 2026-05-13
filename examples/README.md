@@ -59,6 +59,20 @@ cmake --build build -j
 ./build/advanced_benchmark
 ```
 
+### `03_model_update_callback`
+
+Minimal inline model showing the expert `set_model_update_callback()` hook. The
+callback updates a reference parameter before presolve and before each iteration
+model evaluation.
+
+Typical flow:
+
+```bash
+cmake -S . -B .build
+cmake --build .build --target model_update_callback_demo -j
+./.build/examples/03_model_update_callback/model_update_callback_demo
+```
+
 ## Example vs Benchmark Boundary
 
 Example-local benchmark scripts are allowed when they demonstrate behavior of a

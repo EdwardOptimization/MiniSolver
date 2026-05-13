@@ -107,6 +107,7 @@ public:
     using Knot = KnotPoint<double, NX, NU, NC, NP>;
     using TrajectoryType = Trajectory<Knot, MAX_N>;
     using TrajArray = typename TrajectoryType::TrajArray;
+    using ModelUpdateCallback = ApiStatus (*)(MiniSolver& solver, void* user);
 
     friend class SolverSnapshotIO<Model, MAX_N>;
     template <typename, int> friend struct ::minisolver::test::SolverInternalAccess;
@@ -242,6 +243,23 @@ public:
     int get_iteration_count() const { return context_.solve.current_iter; }
 
     const SolverInfo& get_info() const { return context_.info; }
+
+    // Expert hook for per-iteration model-data updates. The callback is invoked
+    // once before presolve (iteration count 0) and before every iteration's
+    // model evaluation. It is intended for reference/parameter updates, not for
+    // changing solver configuration or recursively calling solve().
+    ApiStatus set_model_update_callback(ModelUpdateCallback callback, void* user = nullptr)
+    {
+        model_update_callback_ = callback;
+        model_update_callback_user_ = user;
+        return ApiStatus::OK;
+    }
+
+    void clear_model_update_callback()
+    {
+        model_update_callback_ = nullptr;
+        model_update_callback_user_ = nullptr;
+    }
 
     double get_profile_time_ms(const std::string& name) const
     {
@@ -1855,9 +1873,39 @@ private:
             record_terminal_info_(SolverStatus::INVALID_INPUT, SolverStatus::INVALID_INPUT);
             return false;
         }
+
+        // Give model-update callbacks a chance to refresh references/parameters before
+        // presolve initializes slack and dual variables from model evaluations.
+        context_.solve.current_iter = 0;
+        const ApiStatus callback_status = invoke_model_update_callback_();
+        if (callback_status != ApiStatus::OK) {
+            context_.info.reset();
+            record_terminal_info_(SolverStatus::INVALID_INPUT, SolverStatus::INVALID_INPUT);
+            return false;
+        }
+
         // 1. Presolve: prepare data, handle initialization, and reset runtime state.
         presolve();
         return true;
+    }
+
+    ApiStatus invoke_model_update_callback_()
+    {
+        if (!model_update_callback_) {
+            return ApiStatus::OK;
+        }
+
+        const ApiStatus status = model_update_callback_(*this, model_update_callback_user_);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+
+        // This hook updates model data before evaluation. Rebuilding solver components
+        // mid-iteration would mix old and new execution plans.
+        if (build_state_.dirty) {
+            return ApiStatus::InvalidArgument;
+        }
+        return ApiStatus::OK;
     }
 
     LoopExitDecision should_exit_after_step_status_(SolverStatus step_stat, int iter) const
@@ -1975,6 +2023,11 @@ private:
     SolverStatus execute_solve_iteration_()
     {
         context_.solve.current_iter++;
+        const ApiStatus callback_status = invoke_model_update_callback_();
+        if (callback_status != ApiStatus::OK) {
+            return SolverStatus::INVALID_INPUT;
+        }
+
         auto& traj = trajectory.active();
 
         StepResidualSummary residuals = evaluate_derivatives_phase_(traj);
@@ -2499,6 +2552,9 @@ private:
     // Per-solve line-search α trace (cleared at solve() entry, appended after
     // each step's line search). Purely diagnostic — not captured by snapshots.
     std::vector<double> alpha_log_;
+
+    ModelUpdateCallback model_update_callback_ = nullptr;
+    void* model_update_callback_user_ = nullptr;
 
     SolverContext context_;
 
