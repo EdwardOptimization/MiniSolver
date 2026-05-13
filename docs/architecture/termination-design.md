@@ -222,6 +222,47 @@ Still deferred:
 - acceptable/reduced-accuracy status beyond the existing `FEASIBLE` summary.
 - scale-aware termination thresholds.
 
+## Kernel Boundary Decision
+
+Do not introduce separate public termination strategy objects for
+`STRICT_KKT`, `ACCEPTABLE_NMPC`, and `RTI_FIXED_ITERATION` now. The current
+boundary is intentionally smaller:
+
+- `TerminationKernel` owns pure residual-quality predicates such as strict KKT
+  convergence, accepted-step primal feasibility, postsolve quality
+  classification, and cost-stagnation checks.
+- `MiniSolver::run_solve_loop_()` owns loop-budget and loop-exit ordering,
+  including fixed-iteration RTI behavior and fatal-failure precedence.
+- Users select built-in behavior only through `SolverConfig::termination_profile`.
+  Do not add a public OOP/plugin termination framework without a concrete
+  external extension use case.
+
+This keeps the hot loop predictable and avoids turning three stable built-in
+profiles into premature strategy plumbing. It also preserves the important
+semantic distinction that RTI fixed iteration is a budget/loop-exit policy, not
+a residual convergence predicate.
+
+Future upgrade path:
+
+- Introduce an internal `TerminationPlan` or `TerminationDecision` phase only
+  when termination rules grow beyond the current lightweight predicates.
+- Resolve that plan from `SolverConfig` at construction, `set_config()`, or the
+  existing solve build boundary, not through virtual dispatch in the per-stage
+  hot path.
+- Keep the public API config-first unless users need stable third-party
+  termination extensions.
+
+Upgrade triggers:
+
+- `ACCEPTABLE_NMPC` needs Ipopt-style consecutive acceptable iterations or
+  multiple reduced-accuracy thresholds.
+- RTI needs more than one level, time-budget exits, or adaptive iteration
+  budgets.
+- scale-aware termination adds both internal/scaled and physical/unscaled
+  acceptance criteria.
+- watchdog, trust-region, or recovery policies need to share a single
+  structured termination decision with globalization/restoration.
+
 ## Implementation Order
 
 1. Done: Add internal metrics:
