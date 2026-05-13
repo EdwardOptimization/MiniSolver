@@ -59,6 +59,8 @@ void compute_kkt_residual(Knot& kp, double mu, const minisolver::SolverConfig& c
     MSVec<double, Knot::NX>& r_Lx, MSVec<double, Knot::NU>& r_Lu,
     const MSVec<double, Knot::NX>& lam_x_next)
 {
+    (void)mu;
+    (void)config;
 
     // KKT Stationarity:
     // Lx = q + A' lam_x_next + C' lam_c (where lam_c is modified barrier dual)

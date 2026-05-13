@@ -172,6 +172,7 @@ public:
     std::array<T, R * C> data;
 
     MiniMatrix() { matrix::fill(*this, T(0)); }
+    MiniMatrix(const MiniMatrix& other) = default;
 
     // Accessors
     T& operator()(int r, int c) { return data[r * C + c]; }
