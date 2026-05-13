@@ -26,10 +26,18 @@ import argparse
 # Parse args
 parser = argparse.ArgumentParser()
 parser.add_argument('--no-fused', action='store_true', help='Disable Fused Riccati Kernel')
+parser.add_argument(
+    '--with-obstacle-quad',
+    action='store_true',
+    help='Enable the quadratic obstacle avoidance constraint',
+)
 args = parser.parse_args()
 
 use_fused = not args.no_fused
-print(f"Generating Advanced Bicycle Model (Fused Riccati: {use_fused})...")
+print(
+    "Generating Advanced Bicycle Model "
+    f"(Fused Riccati: {use_fused}, Obstacle quad: {args.with_obstacle_quad})..."
+)
 
 model = OptimalControlModel(name="BicycleExtModel")
 
@@ -108,8 +116,16 @@ model.subject_to(-jerk - 50.0 <= 0)
 model.subject_to(dkappa - 2.0 <= 0)
 model.subject_to(-dkappa - 2.0 <= 0)
 
-# # Obstacle Avoidance (Restored)
-# model.subject_to_quad(sp.eye(2), [x, y], center=[obs_x, obs_y], rhs=(car_rad + obs_rad)**2, sense='>=')
+# Obstacle avoidance is an explicit benchmark dimension. Keep the default model
+# unconstrained so benchmark scripts cannot accidentally time stale generated code.
+if args.with_obstacle_quad:
+    model.subject_to_quad(
+        sp.eye(2),
+        [x, y],
+        center=[obs_x, obs_y],
+        rhs=(car_rad + obs_rad)**2,
+        sense='>=',
+    )
 
 # 6. Generate
 output_dir = os.path.join(os.path.dirname(__file__), "generated")

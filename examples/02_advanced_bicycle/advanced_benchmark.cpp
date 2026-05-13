@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <iostream>
 #include <numeric>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -40,15 +41,27 @@ struct BenchmarkResult {
     double deriv_avg;
     double solve_avg;
     double ls_avg;
-    bool converged;
+    SolverStatus status;
     double final_cost;
-    double final_viol;
+    double final_primal;
+    double final_raw_primal;
+    double final_dual;
+    double final_constraint_residual;
 };
+
+double reference_y_for_x(double x_ref)
+{
+    if (x_ref > ExtConfig::OBS_X - 10.0 && x_ref < ExtConfig::OBS_X + 10.0) {
+        return -2.5;
+    }
+    return 0.0;
+}
 
 BenchmarkResult run_test(const std::string& name, SolverConfig config)
 {
     int N = ExtConfig::N;
     config.print_level = PrintLevel::NONE;
+    config.enable_profiling = true;
 
     std::vector<double> dts(N);
     // Simple uniform time steps
@@ -66,9 +79,12 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
     double sum_solve = 0;
     double sum_ls = 0;
     int last_iter_count = 0;
-    bool last_converged = false;
+    SolverStatus last_status = SolverStatus::UNSOLVED;
     double last_cost = 0;
-    double last_viol = 0;
+    double last_primal = 0;
+    double last_raw_primal = 0;
+    double last_dual = 0;
+    double last_constraint_residual = 0;
 
     MiniSolver<BicycleExtModel, 50> solver(N, Backend::CPU_SERIAL, config);
     for (int run = 0; run < WARMUP_RUNS + NUM_RUNS; ++run) {
@@ -83,10 +99,7 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
             double x_ref = current_t * ExtConfig::TARGET_V;
 
             // Intelligent Reference Generation (Match Debug Setup)
-            double y_ref_val = 0.0;
-            if (x_ref > ExtConfig::OBS_X - 10.0 && x_ref < ExtConfig::OBS_X + 10.0) {
-                y_ref_val = -2.5; // Guide BELOW obstacle
-            }
+            double y_ref_val = reference_y_for_x(x_ref);
 
             // Set Parameters
             solver.set_parameter(k, "v_ref", ExtConfig::TARGET_V);
@@ -144,28 +157,31 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
             sum_ls += solver.get_profile_time_ms("Line Search");
 
             if (run == WARMUP_RUNS + NUM_RUNS - 1) {
-                last_iter_count = solver.get_iteration_count();
+                const SolverInfo& info = solver.get_info();
+                last_iter_count = info.iterations;
 
-                double max_viol = 0.0;
+                double max_constraint_residual = 0.0;
                 int horizon = solver.get_horizon();
                 for (int k = 0; k <= horizon; ++k) {
                     for (int i = 0; i < BicycleExtModel::NC; ++i) {
                         double val
                             = std::abs(solver.get_constraint_val(k, i) + solver.get_slack(k, i));
-                        if (val > max_viol) {
-                            max_viol = val;
+                        if (val > max_constraint_residual) {
+                            max_constraint_residual = val;
                         }
                     }
                 }
-                last_converged
-                    = (status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE);
+                last_status = status;
+                last_primal = info.primal_inf;
+                last_raw_primal = info.unscaled_primal_inf;
+                last_dual = info.dual_inf;
 
                 double cost = 0.0;
                 for (int k = 0; k <= horizon; ++k) {
                     cost += solver.get_stage_cost(k);
                 }
                 last_cost = cost;
-                last_viol = max_viol;
+                last_constraint_residual = max_constraint_residual;
             }
         }
     }
@@ -182,9 +198,12 @@ BenchmarkResult run_test(const std::string& name, SolverConfig config)
     res.deriv_avg = sum_deriv / NUM_RUNS;
     res.solve_avg = sum_solve / NUM_RUNS;
     res.ls_avg = sum_ls / NUM_RUNS;
-    res.converged = last_converged;
+    res.status = last_status;
     res.final_cost = last_cost;
-    res.final_viol = last_viol;
+    res.final_primal = last_primal;
+    res.final_raw_primal = last_raw_primal;
+    res.final_dual = last_dual;
+    res.final_constraint_residual = last_constraint_residual;
     return res;
 }
 
@@ -252,10 +271,11 @@ int main()
     std::cout << std::left << std::setw(25) << "Config" << std::setw(8) << "Iters" << std::setw(12)
               << "Time(ms)" << std::setw(12) << "Min/Max" << std::setw(12) << "Deriv(ms)"
               << std::setw(12) << "Solve(ms)" << std::setw(12) << "LS(ms)" << std::setw(12)
-              << "Cost" << std::setw(10) << "Viol"
+              << "Cost" << std::setw(12) << "Prim" << std::setw(12) << "RawPrim" << std::setw(12)
+              << "Dual" << std::setw(12) << "Constr"
               << "Status"
               << "\n";
-    std::cout << std::string(130, '-') << "\n";
+    std::cout << std::string(170, '-') << "\n";
 
     for (const auto& r : results) {
         std::stringstream range_ss;
@@ -265,8 +285,10 @@ int main()
                   << std::setprecision(2) << std::setw(12) << r.time_avg << std::setw(12)
                   << range_ss.str() << std::setw(12) << r.deriv_avg << std::setw(12) << r.solve_avg
                   << std::setw(12) << r.ls_avg << std::scientific << std::setprecision(2)
-                  << std::setw(12) << r.final_cost << std::setw(10) << r.final_viol
-                  << (r.converged ? "OK" : "FAIL") << "\n";
+                  << std::setw(12) << r.final_cost << std::setw(12) << r.final_primal
+                  << std::setw(12) << r.final_raw_primal << std::setw(12) << r.final_dual
+                  << std::setw(12) << r.final_constraint_residual << status_to_string(r.status)
+                  << "\n";
     }
     std::cout << "================================================================================="
                  "================================\n";

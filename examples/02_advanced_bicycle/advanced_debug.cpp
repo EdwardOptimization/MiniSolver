@@ -50,6 +50,14 @@ template <int MAX_N> void print_traj_summary(const MiniSolver<BicycleExtModel, M
     }
 }
 
+double reference_y_for_x(double x_ref)
+{
+    if (x_ref > ExtConfig::OBS_X - 10.0 && x_ref < ExtConfig::OBS_X + 10.0) {
+        return -2.5;
+    }
+    return 0.0;
+}
+
 int main()
 {
     int N = ExtConfig::N;
@@ -97,10 +105,7 @@ int main()
         double x_ref = current_t * ExtConfig::TARGET_V;
 
         // Smart reference for obstacle avoidance
-        double y_ref_val = 0.0;
-        if (x_ref > ExtConfig::OBS_X - 10.0 && x_ref < ExtConfig::OBS_X + 10.0) {
-            y_ref_val = -2.5;
-        }
+        double y_ref_val = reference_y_for_x(x_ref);
 
         solver.set_parameter(k, "v_ref", ExtConfig::TARGET_V);
         solver.set_parameter(k, "x_ref", x_ref);
@@ -190,20 +195,26 @@ int main()
     // Update Initial State (simulate vehicle moving forward)
     solver.set_initial_state(x1);
 
-    // Update Reference (shift time window)
+    // Update reference by one MPC tick. The shifted initial state is x(1), so the
+    // reference window must start at t=dt instead of the previous horizon end.
     for (int k = 0; k <= N; ++k) {
-        // In a real MPC, we would sample the reference at t + k*dt
-        // Here we just keep the reference consistent with the previous run's relative time?
-        // No, reference should be updated.
-        // Let's just update x_ref for t_new
-        double t_new = current_t + 0.05 + (k * 0.05);
-        solver.set_parameter(k, "x_ref", t_new * ExtConfig::TARGET_V);
+        double t_new = 0.0;
+        for (int j = 0; j <= k && j < N; ++j) {
+            t_new += dts[j];
+        }
+        if (k == N && !dts.empty()) {
+            t_new += dts.back();
+        }
+        const double x_ref = t_new * ExtConfig::TARGET_V;
+        solver.set_parameter(k, "x_ref", x_ref);
+        solver.set_parameter(k, "y_ref", reference_y_for_x(x_ref));
     }
 
     solver.reset(ResetOption::ALG_STATE);
 
     // Solve again
-    // Reduce max iters because the shifted primal guess should be close
+    // Keep this as a short shifted-reference smoke test. The status is diagnostic;
+    // benchmark-quality conclusions should come from advanced_benchmark.cpp.
     SolverConfig cfg = solver.get_config();
     cfg.max_iters = 20;
     solver.set_config(cfg);
