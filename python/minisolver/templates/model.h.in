@@ -18,25 +18,7 @@ struct {{MODEL_NAME}} {
     // --- Name Arrays (for Map Construction) ---
     {{NAME_ARRAYS}}
 
-    // --- Continuous Dynamics ---
-    template<typename T>
-    static MSVec<T, NX> dynamics_continuous(
-        const MSVec<T, NX>& x_in,
-        const MSVec<T, NU>& u_in,
-        const MSVec<T, NP>& p_in) 
-    {
-{{DYNAMICS_CONTINUOUS_BODY}}
-    }
-
-    // --- Continuous Dynamics Jacobians (for implicit integrators) ---
-    template<typename T>
-    static ContinuousJacobians<T, NX, NU> jacobian_continuous(
-        const MSVec<T, NX>& x_in,
-        const MSVec<T, NU>& u_in,
-        const MSVec<T, NP>& p_in)
-    {
-{{JACOBIAN_CONTINUOUS_BODY}}
-    }
+{{CONTINUOUS_DYNAMICS_SECTION}}
 
     // --- Integrator Interface ---
     template<typename T>

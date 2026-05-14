@@ -64,10 +64,16 @@ def test_next_subject_to_generates_discrete_dynamics_map():
             "next_dsl_check",
             """
             #include "nextdslmodel.h"
+            #include "minisolver/integrator/implicit_integrator.h"
             #include <cmath>
 
             int main() {
                 using Model = minisolver::NextDslModel;
+                static_assert(!minisolver::detail::has_dynamics_continuous_v<Model, double>,
+                    "Next-generated models must not expose continuous dynamics");
+                static_assert(!minisolver::detail::has_jacobian_continuous_v<Model, double>,
+                    "Next-generated models must not expose continuous Jacobians");
+
                 minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
                 kp.set_zero();
                 kp.x(0) = 2.0;
@@ -242,6 +248,10 @@ def test_model_fingerprint_changes_between_dot_and_next_modes():
     require(text_dot, "dynamics_continuous")
     require(text_next, "discrete dynamics")
     require(text_next, "generated_integrator = IntegratorType::DISCRETE")
+    for forbidden_api in ("dynamics_continuous", "jacobian_continuous"):
+        if forbidden_api in text_next:
+            raise AssertionError(
+                f"Next-generated model should not expose {forbidden_api}")
     for forbidden in (
         "EULER_EXPLICIT",
         "EULER_IMPLICIT",

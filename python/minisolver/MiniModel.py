@@ -1310,6 +1310,40 @@ class OptimalControlModel:
         code += "        return xdot;\n"
         return code
 
+    def _generate_continuous_dynamics_section(self, f_cont, x_vec, u_vec, nx, nu):
+        if self.dynamics_mode != "dot":
+            code = "    // Next(state) models are direct discrete maps and do not define\n"
+            code += "    // continuous dynamics or continuous Jacobians."
+            return code, None, None
+
+        code_dyn_cont = self._generate_continuous_dynamics_body(f_cont, nx)
+        code_jac_body, Jx_cont, Ju_cont = self._generate_continuous_jacobian_body(
+            f_cont, x_vec, u_vec, nx, nu)
+
+        code = """    // --- Continuous Dynamics ---
+    template<typename T>
+    static MSVec<T, NX> dynamics_continuous(
+        const MSVec<T, NX>& x_in,
+        const MSVec<T, NU>& u_in,
+        const MSVec<T, NP>& p_in)
+    {
+"""
+        code += code_dyn_cont
+        code += """
+    }
+
+    // --- Continuous Dynamics Jacobians (for implicit integrators) ---
+    template<typename T>
+    static ContinuousJacobians<T, NX, NU> jacobian_continuous(
+        const MSVec<T, NX>& x_in,
+        const MSVec<T, NU>& u_in,
+        const MSVec<T, NP>& p_in)
+    {
+"""
+        code += code_jac_body
+        code += "\n    }"
+        return code, Jx_cont, Ju_cont
+
     def _generate_integrate_body(self, x_next_direct, nx):
         if self.dynamics_mode == "dot":
             return """        switch(type) {
@@ -1372,14 +1406,11 @@ class OptimalControlModel:
         return code
 
     def _build_dynamics_expressions(self):
-        # Continuous f(x,u) for Dot mode. Next mode is a direct discrete map and
-        # intentionally provides a zero continuous placeholder only for generic
-        # interfaces that are not used by the DISCRETE dispatch path.
         if self.dynamics_mode == "dot":
             f_cont_list = [self.dynamics_rhs[s] for s in self.states]
             x_next_direct = None
         else:
-            f_cont_list = [0 for _ in self.states]
+            f_cont_list = []
             x_next_direct = sp.Matrix([self.next_state_rhs[s] for s in self.states])
         return sp.Matrix(f_cont_list), x_next_direct
 
@@ -1610,7 +1641,7 @@ class OptimalControlModel:
             self._generate_compute_dynamics_dispatch(
                 groups, integrator_type, x_vec, u_vec, nx, nu)
         )
-        code_jac_body, Jx_cont, Ju_cont = self._generate_continuous_jacobian_body(
+        code_continuous_section, Jx_cont, Ju_cont = self._generate_continuous_dynamics_section(
             f_cont, x_vec, u_vec, nx, nu)
 
         # 3.5 Derivatives for Cost & Constraints (Independent of Integrator)
@@ -1629,8 +1660,6 @@ class OptimalControlModel:
             nx, nu, nc, np_param, integrator_type)
         code_names = self._generate_name_arrays()
 
-        # Continuous Dynamics Body
-        code_dyn_cont = self._generate_continuous_dynamics_body(f_cont, nx)
         code_integrate = self._generate_integrate_body(x_next_direct, nx)
 
         # Compute Dynamics Body
@@ -1694,8 +1723,7 @@ class OptimalControlModel:
             "MODEL_NAME": self.name,
             "CONSTANTS": code_constants,
             "NAME_ARRAYS": code_names,
-            "DYNAMICS_CONTINUOUS_BODY": code_dyn_cont,
-            "JACOBIAN_CONTINUOUS_BODY": code_jac_body,
+            "CONTINUOUS_DYNAMICS_SECTION": code_continuous_section,
             "INTEGRATE_BODY": code_integrate,
             "COMPUTE_DYNAMICS_BODY": code_compute_dyn,
             "COMPUTE_CONSTRAINTS_BODY": code_compute_con,
