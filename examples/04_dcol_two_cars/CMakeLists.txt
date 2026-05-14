@@ -1,0 +1,3 @@
+add_executable(dcol_two_cars_demo main.cpp)
+target_link_libraries(dcol_two_cars_demo PRIVATE minisolver_lib)
+target_include_directories(dcol_two_cars_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
