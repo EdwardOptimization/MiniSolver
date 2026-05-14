@@ -530,59 +530,81 @@ class OptimalControlModel:
         code = ""
         clear_names = [name for name, idx, _, _ in assignments if idx < len(reduced)]
         if clear_names:
-            code += "\n        // Clear generated output packets; nonzero entries are assigned below.\n"
-            for name in clear_names:
-                code += f"        kp.{name}.setZero();\n"
+            code += self._emit_clear_block(
+                "kp",
+                clear_names,
+                "Clear generated output packets; nonzero entries are assigned below.",
+            )
         for name, idx, rows, cols in assignments:
             if idx >= len(reduced): continue
             mat = reduced[idx]
             code += f"\n        // {name}\n"
-            for r in range(rows):
-                for c in range(cols):
-                    if rows == 1 or cols == 1:
-                        val = mat[r] if rows > 1 else mat[c]
-                    else:
-                        val = mat[r, c]
-                    
-                    if sp.sympify(val).is_zero is not True:
-                        code += f"        kp.{name}({r},{c}) = {sp.ccode(val)};\n"
+            code += self._emit_sparse_packet_assign("kp", name, mat, rows, cols)
         return code
 
-    def _generate_assign_block_exact(self, assignments_obj, reduced, offset_obj, assignments_con, offset_con):
-        """
-        Special assignment block for Hessians that conditionally adds Constraint Hessians.
-        """
+    @staticmethod
+    def _is_nonzero_expr(expr):
+        return sp.sympify(expr).is_zero is not True
+
+    @staticmethod
+    def _matrix_entry(mat, rows, cols, r, c):
+        if rows == 1 or cols == 1:
+            return mat[r] if rows > 1 else mat[c]
+        return mat[r, c]
+
+    def _emit_cse_assignments(self, replacements, indent="        "):
         code = ""
-        # We assume reduced vector contains [..., Q_obj, R_obj, H_obj, Q_con, R_con, H_con, ...]
-        # Q_out = Q_obj + (Exact ? Q_con : 0)
-        
-        target_names = ["Q", "R", "H"]
-        
-        for i, name in enumerate(target_names):
-            idx_obj = offset_obj + i
-            idx_con = offset_con + i
-            
-            mat_obj = reduced[idx_obj]
-            mat_con = reduced[idx_con]
-            
-            rows = mat_obj.shape[0]
-            cols = mat_obj.shape[1]
-            
-            code += f"\n        // {name} (Conditionally Exact)\n"
-            for r in range(rows):
-                for c in range(cols):
-                    val_obj = mat_obj[r, c]
-                    val_con = mat_con[r, c]
-                    
-                    code_val_obj = sp.ccode(val_obj)
-                    code_val_con = sp.ccode(val_con)
-                    
-                    # C++ logic: kp.Q(r,c) = Q_obj + (Exact ? Q_con : 0);
-                    if val_con == 0:
-                        code += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
-                    else:
-                        code += f"        kp.{name}({r},{c}) = {code_val_obj};\n"
-                        code += f"        if constexpr (Exact) kp.{name}({r},{c}) += {code_val_con};\n"
+        for name, val in replacements:
+            code += f"{indent}T {name} = {sp.ccode(val)};\n"
+        return code
+
+    def _emit_clear_block(self, owner, names, comment, indent="        "):
+        if not names:
+            return ""
+        code = f"\n{indent}// {comment}\n"
+        for name in names:
+            code += f"{indent}{owner}.{name}.setZero();\n"
+        return code
+
+    def _emit_sparse_packet_assign(self, owner, name, mat, rows, cols, indent="        "):
+        code = ""
+        for r in range(rows):
+            for c in range(cols):
+                val = self._matrix_entry(mat, rows, cols, r, c)
+                if self._is_nonzero_expr(val):
+                    code += f"{indent}{owner}.{name}({r},{c}) = {sp.ccode(val)};\n"
+        return code
+
+    def _emit_sparse_packet_add_if(
+        self,
+        owner,
+        name,
+        mat,
+        rows,
+        cols,
+        condition,
+        indent="        ",
+    ):
+        code = ""
+        for r in range(rows):
+            for c in range(cols):
+                val = self._matrix_entry(mat, rows, cols, r, c)
+                if self._is_nonzero_expr(val):
+                    code += f"{indent}if constexpr ({condition}) {owner}.{name}({r},{c}) += {sp.ccode(val)};\n"
+        return code
+
+    def _generate_mode_hessian_packets(self, target_names, gn_mats, delta_mats, label_prefix=""):
+        code = self._emit_clear_block(
+            "kp",
+            target_names,
+            "Clear Hessian packets; nonzero entries are assigned below.",
+        )
+        for name, mat_gn, mat_delta in zip(target_names, gn_mats, delta_mats):
+            rows = mat_gn.shape[0]
+            cols = mat_gn.shape[1]
+            code += f"\n        // {label_prefix}{name} (Mode 0=GN, 1=Exact)\n"
+            code += self._emit_sparse_packet_assign("kp", name, mat_gn, rows, cols)
+            code += self._emit_sparse_packet_add_if("kp", name, mat_delta, rows, cols, "Mode == 1")
         return code
 
     def _generate_special_constraint_preamble(self):
@@ -799,24 +821,12 @@ class OptimalControlModel:
             [q_grad, r_grad],
         )
 
-        target_names = ["Q", "R", "H"]
-        gn_mats = [Q_hess_gn, R_hess_gn, H_hess_gn]
-        delta_mats = [Q_hess_delta, R_hess_delta, H_hess_delta]
-        code += "\n        // Clear terminal Hessian packets; nonzero entries are assigned below.\n"
-        for name in target_names:
-            code += f"        kp.{name}.setZero();\n"
-        for name, mat_gn, mat_delta in zip(target_names, gn_mats, delta_mats):
-            code += f"\n        // terminal {name} (Mode 0=GN, 1=Exact)\n"
-            rows = mat_gn.shape[0]
-            cols = mat_gn.shape[1]
-            for r in range(rows):
-                for c in range(cols):
-                    val_gn = mat_gn[r, c]
-                    val_delta = mat_delta[r, c]
-                    if sp.sympify(val_gn).is_zero is not True:
-                        code += f"        kp.{name}({r},{c}) = {sp.ccode(val_gn)};\n"
-                    if sp.sympify(val_delta).is_zero is not True:
-                        code += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {sp.ccode(val_delta)};\n"
+        code += self._generate_mode_hessian_packets(
+            ["Q", "R", "H"],
+            [Q_hess_gn, R_hess_gn, H_hess_gn],
+            [Q_hess_delta, R_hess_delta, H_hess_delta],
+            label_prefix="terminal ",
+        )
 
         code += f"\n        kp.cost = {sp.ccode(objective_terminal)};\n"
         code += "    }\n\n"
@@ -1273,8 +1283,7 @@ class OptimalControlModel:
                 code_compute_dyn_body += "        (void)dt;\n"
             
             # Body
-            for name, val in repl_dyn:
-                code_compute_dyn_body += f"                T {name} = {sp.ccode(val)};\n"
+            code_compute_dyn_body += self._emit_cse_assignments(repl_dyn, indent="                ")
             
             # Assignments
             # f_resid (x_next)
@@ -1286,27 +1295,27 @@ class OptimalControlModel:
             
             # A
             if nx > 0:
-                code_compute_dyn_body += f"                kp.A.setZero();\n"
                 mat = reduced_dyn[1]
-                for r in range(nx):
-                    for c in range(nx):
-                        val = mat[r,c]
-                        if sp.sympify(val).is_zero is True:
-                             pass # Already zero
-                        else:
-                             code_compute_dyn_body += f"                kp.A({r},{c}) = {sp.ccode(val)};\n"
+                code_compute_dyn_body += self._emit_clear_block(
+                    "kp",
+                    ["A"],
+                    "Clear dynamics Jacobian A; nonzero entries are assigned below.",
+                    indent="                ",
+                )
+                code_compute_dyn_body += self._emit_sparse_packet_assign(
+                    "kp", "A", mat, nx, nx, indent="                ")
             
             # B
             if nx > 0 and nu > 0:
-                code_compute_dyn_body += f"                kp.B.setZero();\n"
                 mat = reduced_dyn[2]
-                for r in range(nx):
-                    for c in range(nu):
-                        val = mat[r,c]
-                        if sp.sympify(val).is_zero is True:
-                             pass # Already zero
-                        else:
-                             code_compute_dyn_body += f"                kp.B({r},{c}) = {sp.ccode(val)};\n"
+                code_compute_dyn_body += self._emit_clear_block(
+                    "kp",
+                    ["B"],
+                    "Clear dynamics Jacobian B; nonzero entries are assigned below.",
+                    indent="                ",
+                )
+                code_compute_dyn_body += self._emit_sparse_packet_assign(
+                    "kp", "B", mat, nx, nu, indent="                ")
 
             if self.dynamics_mode == "dot":
                 code_compute_dyn_body += "                break;\n"
@@ -1334,30 +1343,23 @@ class OptimalControlModel:
         code_jac_body += "\n        ContinuousJacobians<T, NX, NU> jac;\n"
 
         # CSE intermediates
-        for name, val in repl_jac:
-            code_jac_body += f"        T {name} = {sp.ccode(val)};\n"
+        code_jac_body += self._emit_cse_assignments(repl_jac)
 
         # Assign Jx (NX x NX)
-        code_jac_body += "\n        // Clear continuous Jacobian packets; nonzero entries are assigned below.\n"
-        code_jac_body += "        jac.Jx.setZero();\n"
-        code_jac_body += "        jac.Ju.setZero();\n"
+        code_jac_body += self._emit_clear_block(
+            "jac",
+            ["Jx", "Ju"],
+            "Clear continuous Jacobian packets; nonzero entries are assigned below.",
+        )
 
         code_jac_body += "\n        // Jx = df/dx\n"
         mat_jx = reduced_jac[0]
-        for r in range(nx):
-            for c in range(nx):
-                val = mat_jx[r, c]
-                if sp.sympify(val).is_zero is not True:
-                    code_jac_body += f"        jac.Jx({r},{c}) = {sp.ccode(val)};\n"
+        code_jac_body += self._emit_sparse_packet_assign("jac", "Jx", mat_jx, nx, nx)
 
         # Assign Ju (NX x NU)
         code_jac_body += "\n        // Ju = df/du\n"
         mat_ju = reduced_jac[1]
-        for r in range(nx):
-            for c in range(nu):
-                val = mat_ju[r, c]
-                if sp.sympify(val).is_zero is not True:
-                    code_jac_body += f"        jac.Ju({r},{c}) = {sp.ccode(val)};\n"
+        code_jac_body += self._emit_sparse_packet_assign("jac", "Ju", mat_ju, nx, nu)
 
         code_jac_body += "\n        return jac;\n"
 
@@ -1546,8 +1548,7 @@ class OptimalControlModel:
         code_compute_con += self._generate_unpack_block(source_kp=True, expressions=con_exprs)
         code_compute_con += self._generate_special_constraint_preamble()
         code_compute_con += "\n"
-        for name, val in repl_con:
-            code_compute_con += f"        T {name} = {sp.ccode(val)};\n"
+        code_compute_con += self._emit_cse_assignments(repl_con)
         assign_con = [("g_val", 0, nc, 1), ("C", 1, nc, nx), ("D", 2, nc, nu)]
         code_compute_con += self._generate_assign_block(assign_con, reduced_con)
         code_compute_true_con = self._generate_true_constraints_body(terminal=False)
@@ -1594,45 +1595,17 @@ class OptimalControlModel:
                     code_unpack += f"        T lam_{i} = kp.lam({i});\n"
         
         code_cse = "\n"
-        for name, val in repl_cost:
-            code_cse += f"        T {name} = {sp.ccode(val)};\n"
+        code_cse += self._emit_cse_assignments(repl_cost)
             
         code_assign = ""
         assign_grads = [("q", 0, nx, 1), ("r", 1, nu, 1)]
         code_assign += self._generate_assign_block(assign_grads, reduced_cost)
         
-        # Inline modified generation logic here
-        target_names = ["Q", "R", "H"]
-        offset_gn = 2
-        offset_delta = 5
-
-        code_assign += "\n        // Clear Hessian packets; nonzero entries are assigned below.\n"
-        for name in target_names:
-            code_assign += f"        kp.{name}.setZero();\n"
-        
-        for i, name in enumerate(target_names):
-            idx_gn = offset_gn + i
-            idx_delta = offset_delta + i
-            
-            mat_gn = reduced_cost[idx_gn]
-            mat_delta = reduced_cost[idx_delta]
-            
-            rows = mat_gn.shape[0]
-            cols = mat_gn.shape[1]
-            
-            code_assign += f"\n        // {name} (Mode 0=GN, 1=Exact)\n"
-            for r in range(rows):
-                for c in range(cols):
-                    val_gn = mat_gn[r, c]
-                    val_delta = mat_delta[r, c]
-                    
-                    code_val_gn = sp.ccode(val_gn)
-                    code_val_delta = sp.ccode(val_delta)
-                    
-                    if sp.sympify(val_gn).is_zero is not True:
-                        code_assign += f"        kp.{name}({r},{c}) = {code_val_gn};\n"
-                    if sp.sympify(val_delta).is_zero is not True:
-                        code_assign += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {code_val_delta};\n"
+        code_assign += self._generate_mode_hessian_packets(
+            ["Q", "R", "H"],
+            reduced_cost[2:5],
+            reduced_cost[5:8],
+        )
         
         if len(reduced_cost) > 8:
             code_assign += f"\n        kp.cost = {sp.ccode(reduced_cost[8])};\n"

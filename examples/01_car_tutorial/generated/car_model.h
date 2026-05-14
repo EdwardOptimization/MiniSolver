@@ -198,6 +198,8 @@ struct CarModel {
                 kp.f_resid(1) = tmp_d3 + y;
                 kp.f_resid(2) = theta + tmp_d6*v;
                 kp.f_resid(3) = acc*dt + v;
+
+                // Clear dynamics Jacobian A; nonzero entries are assigned below.
                 kp.A.setZero();
                 kp.A(0,0) = 1;
                 kp.A(0,2) = -tmp_d3;
@@ -208,6 +210,8 @@ struct CarModel {
                 kp.A(2,2) = 1;
                 kp.A(2,3) = tmp_d6;
                 kp.A(3,3) = 1;
+
+                // Clear dynamics Jacobian B; nonzero entries are assigned below.
                 kp.B.setZero();
                 kp.B(2,1) = tmp_d5*v*(pow(tmp_d4, 2) + 1);
                 kp.B(3,0) = dt;
@@ -241,6 +245,8 @@ struct CarModel {
                 kp.f_resid(1) = tmp_d13 + y;
                 kp.f_resid(2) = theta + tmp_d6;
                 kp.f_resid(3) = tmp_d0 + v;
+
+                // Clear dynamics Jacobian A; nonzero entries are assigned below.
                 kp.A.setZero();
                 kp.A(0,0) = 1;
                 kp.A(0,2) = -tmp_d13;
@@ -251,6 +257,8 @@ struct CarModel {
                 kp.A(2,2) = 1;
                 kp.A(2,3) = tmp_d5;
                 kp.A(3,3) = 1;
+
+                // Clear dynamics Jacobian B; nonzero entries are assigned below.
                 kp.B.setZero();
                 kp.B(0,0) = -tmp_d11*tmp_d18 + tmp_d17;
                 kp.B(0,1) = -tmp_d15*tmp_d20;
@@ -314,6 +322,8 @@ struct CarModel {
                 kp.f_resid(1) = tmp_d20*tmp_d29 + y;
                 kp.f_resid(2) = theta + tmp_d20*(tmp_d2*tmp_d6 + tmp_d30*tmp_d6 + tmp_d6*v);
                 kp.f_resid(3) = tmp_d16;
+
+                // Clear dynamics Jacobian A; nonzero entries are assigned below.
                 kp.A.setZero();
                 kp.A(0,0) = 1;
                 kp.A(0,2) = -tmp_d20*tmp_d29;
@@ -324,6 +334,8 @@ struct CarModel {
                 kp.A(2,2) = 1;
                 kp.A(2,3) = tmp_d31*tmp_d6;
                 kp.A(3,3) = 1;
+
+                // Clear dynamics Jacobian B; nonzero entries are assigned below.
                 kp.B.setZero();
                 kp.B(0,0) = tmp_d20*(dt*tmp_d9 - tmp_d24*tmp_d38 - tmp_d25*tmp_d40 - tmp_d27*tmp_d41 + tmp_d35 + tmp_d36);
                 kp.B(0,1) = tmp_d20*(-tmp_d24*tmp_d44 - tmp_d32*tmp_d43 - tmp_d34*tmp_d45);
@@ -539,13 +551,13 @@ struct CarModel {
 
         // Q (Mode 0=GN, 1=Exact)
         kp.Q(0,0) = tmp_j3;
+        kp.Q(1,1) = tmp_j3;
+        kp.Q(2,2) = tmp_j0;
+        kp.Q(3,3) = 2*w_vel;
         if constexpr (Mode == 1) kp.Q(0,0) += -tmp_j5*tmp_j8;
         if constexpr (Mode == 1) kp.Q(0,1) += tmp_j9;
         if constexpr (Mode == 1) kp.Q(1,0) += tmp_j9;
-        kp.Q(1,1) = tmp_j3;
         if constexpr (Mode == 1) kp.Q(1,1) += -tmp_j8*(tmp_j7 + 9.9999999999999995e-7);
-        kp.Q(2,2) = tmp_j0;
-        kp.Q(3,3) = 2*w_vel;
 
         // R (Mode 0=GN, 1=Exact)
         kp.R(0,0) = tmp_j1;
@@ -602,20 +614,20 @@ template<typename T>
 
         // r
 
-        // Clear terminal Hessian packets; nonzero entries are assigned below.
+        // Clear Hessian packets; nonzero entries are assigned below.
         kp.Q.setZero();
         kp.R.setZero();
         kp.H.setZero();
 
         // terminal Q (Mode 0=GN, 1=Exact)
         kp.Q(0,0) = 2*w_pos;
+        kp.Q(1,1) = 2*w_pos;
+        kp.Q(2,2) = 2*w_theta;
+        kp.Q(3,3) = 2*w_vel;
         if constexpr (Mode == 1) kp.Q(0,0) += -lam_4*(pow(obs_y - y, 2) + 9.9999999999999995e-7)/pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0/2.0);
         if constexpr (Mode == 1) kp.Q(0,1) += lam_4*(obs_x - x)*(obs_y - y)/pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0/2.0);
         if constexpr (Mode == 1) kp.Q(1,0) += lam_4*(obs_x - x)*(obs_y - y)/pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0/2.0);
-        kp.Q(1,1) = 2*w_pos;
         if constexpr (Mode == 1) kp.Q(1,1) += -lam_4*(pow(obs_x - x, 2) + 9.9999999999999995e-7)/pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0/2.0);
-        kp.Q(2,2) = 2*w_theta;
-        kp.Q(3,3) = 2*w_vel;
 
         // terminal R (Mode 0=GN, 1=Exact)
 

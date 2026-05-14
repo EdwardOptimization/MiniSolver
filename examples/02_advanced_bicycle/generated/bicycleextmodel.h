@@ -208,6 +208,8 @@ struct BicycleExtModel {
                 kp.f_resid(3) = dkappa*dt + kappa;
                 kp.f_resid(4) = a*dt + v;
                 kp.f_resid(5) = a + dt*jerk;
+
+                // Clear dynamics Jacobian A; nonzero entries are assigned below.
                 kp.A.setZero();
                 kp.A(0,0) = 1;
                 kp.A(0,2) = -tmp_d3;
@@ -222,6 +224,8 @@ struct BicycleExtModel {
                 kp.A(4,4) = 1;
                 kp.A(4,5) = dt;
                 kp.A(5,5) = 1;
+
+                // Clear dynamics Jacobian B; nonzero entries are assigned below.
                 kp.B.setZero();
                 kp.B(3,0) = dt;
                 kp.B(5,1) = dt;
@@ -254,6 +258,8 @@ struct BicycleExtModel {
                 kp.f_resid(3) = kappa + tmp_d8;
                 kp.f_resid(4) = dt*(a + 0.5*tmp_d10) + v;
                 kp.f_resid(5) = a + tmp_d10;
+
+                // Clear dynamics Jacobian A; nonzero entries are assigned below.
                 kp.A.setZero();
                 kp.A(0,0) = 1;
                 kp.A(0,2) = -tmp_d7;
@@ -273,6 +279,8 @@ struct BicycleExtModel {
                 kp.A(4,4) = 1;
                 kp.A(4,5) = dt;
                 kp.A(5,5) = 1;
+
+                // Clear dynamics Jacobian B; nonzero entries are assigned below.
                 kp.B.setZero();
                 kp.B(2,0) = tmp_d0*tmp_d13;
                 kp.B(3,0) = dt;
@@ -345,6 +353,8 @@ struct BicycleExtModel {
                 kp.f_resid(3) = kappa + 1.0*tmp_d10;
                 kp.f_resid(4) = tmp_d22*(6*a + 3.0*dt*jerk) + v;
                 kp.f_resid(5) = a + jerk*tmp_d34;
+
+                // Clear dynamics Jacobian A; nonzero entries are assigned below.
                 kp.A.setZero();
                 kp.A(0,0) = 1;
                 kp.A(0,2) = -tmp_d22*tmp_d31;
@@ -364,6 +374,8 @@ struct BicycleExtModel {
                 kp.A(4,4) = 1;
                 kp.A(4,5) = tmp_d34;
                 kp.A(5,5) = 1;
+
+                // Clear dynamics Jacobian B; nonzero entries are assigned below.
                 kp.B.setZero();
                 kp.B(0,0) = tmp_d22*(-tmp_d28*tmp_d50 - tmp_d51*tmp_d52);
                 kp.B(0,1) = tmp_d22*(0.5*tmp_d14*tmp_d40 + 0.5*tmp_d20*tmp_d40 - tmp_d28*tmp_d54 - tmp_d45*tmp_d55);
@@ -656,7 +668,7 @@ template<typename T>
 
         // r
 
-        // Clear terminal Hessian packets; nonzero entries are assigned below.
+        // Clear Hessian packets; nonzero entries are assigned below.
         kp.Q.setZero();
         kp.R.setZero();
         kp.H.setZero();
