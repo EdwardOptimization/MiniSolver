@@ -79,6 +79,7 @@ class OptimalControlModel:
         # Constraints (g <= 0)
         self.constraints = []
         self.true_constraints = []
+        self.constraint_include_terminal = []
         
         # Flags
         self.use_rk4 = True
@@ -310,6 +311,7 @@ class OptimalControlModel:
         add("residual_weights", self.residual_weights)
         add("constraints", self.constraints)
         add("true_constraints", self.true_constraints)
+        add("constraint_include_terminal", self.constraint_include_terminal)
         add("soft_constraints", self.soft_constraints)
         add("special_constraints", self.special_constraints)
 
@@ -329,7 +331,7 @@ class OptimalControlModel:
             hess += w_expr * (jac.T * jac)
         return sp.simplify(hess)
 
-    def subject_to(self, *constraints, weight=None, loss='L2'):
+    def subject_to(self, *constraints, weight=None, loss='L2', include_terminal=True):
         """
         Add inequality constraint.
         Accepts: 
@@ -363,6 +365,7 @@ class OptimalControlModel:
             # Add to constraints list
             self.constraints.append(expr)
             self.true_constraints.append(expr)
+            self.constraint_include_terminal.append(bool(include_terminal))
             idx = len(self.constraints) - 1
             
             if weight is not None:
@@ -386,10 +389,29 @@ class OptimalControlModel:
                 })
 
     def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside',
-                        linearize_at_boundary=False):
+                        linearize_at_boundary=False, rhs_mode='quadratic',
+                        include_terminal=True):
         """
-        Add a quadratic constraint: (x-center)^T Q (x-center) {sense} rhs
+        Add a quadratic constraint: (x-center)^T Q (x-center) {sense} rhs.
+
+        By default, rhs_mode='quadratic' generates a quadratic-form constraint:
+
+            (x-center)^T Q (x-center) {sense} rhs
+
+        With
+        rhs_mode='norm2', rhs is interpreted as the right-hand side of a
+        Euclidean norm constraint:
+
+            sqrt((x-center)^T Q (x-center) + eps) - rhs <= 0
+
+        This is the preferred form when the right-hand side is a decision
+        variable or parameter, because the squared form q(x) - rhs**2 <= 0 has
+        the same feasible set only when rhs >= 0 and loses the convex cone
+        expression used by the exact Hessian path.
         """
+        if rhs_mode not in ('quadratic', 'norm2'):
+            raise ValueError("rhs_mode must be 'quadratic' or 'norm2'")
+
         # Helper to process Q
         if not isinstance(Q, sp.Matrix):
             Q_mat = sp.Matrix(Q)
@@ -419,6 +441,24 @@ class OptimalControlModel:
         
         # Logic for Robust Formulation
         is_exclusion = (sense == '>=' or type == 'outside')
+        if rhs_mode == 'norm2':
+            if linearize_at_boundary:
+                raise ValueError("linearize_at_boundary requires rhs_mode='quadratic'")
+            self._validate_numeric_psd(Q_mat)
+            epsilon = 1e-10
+            rhs_expr = sp.sympify(rhs)
+            if self._is_numeric_expr(rhs_expr) and float(sp.N(rhs_expr)) < 0.0:
+                raise ValueError("norm2 rhs must be non-negative")
+            robust_dist = sp.sqrt(quad_term + epsilon)
+            if is_exclusion:
+                self.constraints.append(rhs_expr - robust_dist)
+                self.true_constraints.append(rhs_expr - robust_dist)
+            else:
+                self.constraints.append(robust_dist - rhs_expr)
+                self.true_constraints.append(robust_dist - rhs_expr)
+            self.constraint_include_terminal.append(bool(include_terminal))
+            return
+
         if is_exclusion:
             self._validate_numeric_positive("rhs", rhs)
             self._validate_numeric_psd(Q_mat)
@@ -438,6 +478,7 @@ class OptimalControlModel:
                 
                 self.constraints.append(boundary_linear_expr)
                 self.true_constraints.append(true_expr)
+                self.constraint_include_terminal.append(bool(include_terminal))
                 
                 # Store info to generate the xp calculation code
                 self.special_constraints.append({
@@ -458,6 +499,7 @@ class OptimalControlModel:
                 robust_rhs = sp.sqrt(rhs)
                 self.constraints.append(robust_rhs - robust_dist)
                 self.true_constraints.append(robust_rhs - robust_dist)
+                self.constraint_include_terminal.append(bool(include_terminal))
         else:
             # Standard form
             if sense == '<=':
@@ -466,6 +508,7 @@ class OptimalControlModel:
             else:
                 self.constraints.append(rhs - quad_term)
                 self.true_constraints.append(rhs - quad_term)
+            self.constraint_include_terminal.append(bool(include_terminal))
 
     def _generate_unpack_block(self, source_kp=True, expressions=None):
         code = ""
@@ -644,7 +687,11 @@ class OptimalControlModel:
         nx = len(self.states)
         nu = len(self.controls)
         u_zero = self._terminal_substitutions()
-        g_terminal = sp.Matrix([sp.simplify(c.subs(u_zero)) for c in self.constraints]) if nc > 0 else sp.Matrix.zeros(0, 1)
+        terminal_exprs = [
+            sp.simplify(c.subs(u_zero)) if self.constraint_include_terminal[i] else sp.Integer(0)
+            for i, c in enumerate(self.constraints)
+        ]
+        g_terminal = sp.Matrix(terminal_exprs) if nc > 0 else sp.Matrix.zeros(0, 1)
         C_terminal = g_terminal.jacobian(x_vec) if nc > 0 else sp.Matrix.zeros(0, nx)
         D_terminal = g_terminal.jacobian(u_vec) if nc > 0 else sp.Matrix.zeros(0, nu)
 
@@ -669,7 +716,10 @@ class OptimalControlModel:
         exprs = self.true_constraints
         if terminal:
             u_zero = self._terminal_substitutions()
-            exprs = [sp.simplify(c.subs(u_zero)) for c in exprs]
+            exprs = [
+                sp.simplify(c.subs(u_zero)) if self.constraint_include_terminal[i] else sp.Integer(0)
+                for i, c in enumerate(exprs)
+            ]
 
         g_true = sp.Matrix(exprs)
         code = self._generate_unpack_block(source_kp=True, expressions=[g_true])
@@ -772,7 +822,10 @@ class OptimalControlModel:
 
         objective_terminal = self._total_objective(u_zero)
         general_objective_terminal = sp.simplify(sp.sympify(self.objective).subs(u_zero))
-        constraints_terminal = [sp.simplify(c.subs(u_zero)) for c in self.constraints]
+        constraints_terminal = [
+            sp.simplify(c.subs(u_zero)) if self.constraint_include_terminal[i] else sp.Integer(0)
+            for i, c in enumerate(self.constraints)
+        ]
 
         grad_cost = sp.Matrix([objective_terminal]).jacobian(xu_vec).T
         q_grad = grad_cost[:nx, :]
@@ -1735,7 +1788,13 @@ class OptimalControlModel:
             "COMPUTE_TERMINAL_COST_SECTION": code_compute_terminal_cost,
         }, code_fused_riccati)
 
-        self._warn_terminal_control_projection(r_grad, D_expr, nu, nc)
+        terminal_D_expr = sp.zeros(nc, nu)
+        if nc > 0:
+            for r in range(nc):
+                if self.constraint_include_terminal[r]:
+                    for c in range(nu):
+                        terminal_D_expr[r, c] = D_expr[r, c]
+        self._warn_terminal_control_projection(r_grad, terminal_D_expr, nu, nc)
 
         # 7. Write Output
         self._write_generated_header(output_dir, content)

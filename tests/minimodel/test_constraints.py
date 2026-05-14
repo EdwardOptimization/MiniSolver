@@ -126,6 +126,93 @@ def test_quad_boundary_projection_splits_qp_and_true_residuals():
         )
 
 
+def test_quad_norm2_generates_exact_constraint_hessian():
+    model = OptimalControlModel("QuadNorm2Model")
+    x = model.state("x")
+    u0, u1, rho = model.control("u0", "u1", "rho")
+    model.subject_to(Dot(x) == 0)
+    model.subject_to_quad(
+        [[1, 0], [0, 1]], [u0, u1], rhs=rho, rhs_mode="norm2", type="inside")
+    model.minimize(rho + 1.0e-8 * (u0**2 + u1**2 + rho**2))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        compile_and_run(
+            tmpdir,
+            "quad_norm2_check.cpp",
+            "quad_norm2_check",
+            """
+            #include "quadnorm2model.h"
+            #include <cmath>
+
+            int main() {
+                using Model = minisolver::QuadNorm2Model;
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                kp.set_zero();
+                kp.u(0) = 3.0;
+                kp.u(1) = 4.0;
+                kp.u(2) = 5.0;
+                kp.lam(0) = 2.0;
+
+                Model::compute_constraints(kp);
+                if (std::abs(kp.g_val(0)) > 1e-8) return 1;
+                if (std::abs(kp.D(0, 0) - 0.6) > 1e-8) return 2;
+                if (std::abs(kp.D(0, 1) - 0.8) > 1e-8) return 3;
+                if (std::abs(kp.D(0, 2) + 1.0) > 1e-8) return 4;
+
+                Model::compute_cost_exact(kp);
+                const double base = 2.0e-8;
+                if (std::abs((kp.R(0, 0) - base) - 2.0 * 0.128) > 1e-6) return 5;
+                if (std::abs(kp.R(0, 1) - 2.0 * -0.096) > 1e-6) return 6;
+                if (std::abs((kp.R(1, 1) - base) - 2.0 * 0.072) > 1e-6) return 7;
+                return 0;
+            }
+            """,
+        )
+
+
+def test_stage_only_constraint_zeros_terminal_row():
+    model = OptimalControlModel("StageOnlyConstraintModel")
+    x = model.state("x")
+    u = model.control("u")
+    model.subject_to(Dot(x) == u)
+    model.subject_to(u - 2.0 <= 0, include_terminal=False)
+    model.subject_to_quad([[1]], [u], rhs=3.0, rhs_mode="norm2",
+                          type="inside", include_terminal=False)
+    model.minimize(x**2 + u**2)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        compile_and_run(
+            tmpdir,
+            "stage_only_constraint_check.cpp",
+            "stage_only_constraint_check",
+            """
+            #include "stageonlyconstraintmodel.h"
+            #include <cmath>
+
+            int main() {
+                using Model = minisolver::StageOnlyConstraintModel;
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                kp.set_zero();
+                kp.u(0) = 5.0;
+
+                Model::compute_constraints(kp);
+                if (std::abs(kp.g_val(0) - 3.0) > 1e-8) return 1;
+                if (std::abs(kp.g_val(1) - 2.0) > 1e-6) return 2;
+
+                Model::compute_terminal_qp_constraints(kp);
+                Model::compute_terminal_true_constraints(kp);
+                if (std::abs(kp.g_val(0)) > 1e-12) return 3;
+                if (std::abs(kp.g_val(1)) > 1e-12) return 4;
+                if (std::abs(kp.g_true(0)) > 1e-12) return 5;
+                if (std::abs(kp.g_true(1)) > 1e-12) return 6;
+                return 0;
+            }
+            """,
+        )
+
+
 def test_quad_constraint_domain_guards():
     def negative_rhs():
         model = OptimalControlModel("BadRhsModel")
@@ -137,8 +224,20 @@ def test_quad_constraint_domain_guards():
         x0, x1 = model.state("x0", "x1")
         model.subject_to_quad([[1, 0], [0, -1]], [x0, x1], rhs=1.0, type="outside")
 
+    def invalid_rhs_mode():
+        model = OptimalControlModel("BadModeModel")
+        x = model.state("x")
+        model.subject_to_quad([[1]], [x], rhs=1.0, rhs_mode="sqrt_norm2")
+
+    def negative_norm2_rhs():
+        model = OptimalControlModel("BadNorm2RhsModel")
+        x = model.state("x")
+        model.subject_to_quad([[1]], [x], rhs=-1.0, rhs_mode="norm2", type="inside")
+
     expect_value_error(negative_rhs, "rhs")
     expect_value_error(non_psd_q, "PSD")
+    expect_value_error(invalid_rhs_mode, "rhs_mode")
+    expect_value_error(negative_norm2_rhs, "norm2 rhs")
 
 
 def test_generated_model_uses_automatic_constraint_row_scaling():
@@ -190,5 +289,7 @@ if __name__ == "__main__":
     test_quad_boundary_projection_codegen_uses_unique_temps()
     test_quad_boundary_projection_generates_soc_override()
     test_quad_boundary_projection_splits_qp_and_true_residuals()
+    test_quad_norm2_generates_exact_constraint_hessian()
+    test_stage_only_constraint_zeros_terminal_row()
     test_quad_constraint_domain_guards()
     test_generated_model_uses_automatic_constraint_row_scaling()
