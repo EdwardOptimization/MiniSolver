@@ -528,6 +528,11 @@ class OptimalControlModel:
 
     def _generate_assign_block(self, assignments, reduced):
         code = ""
+        clear_names = [name for name, idx, _, _ in assignments if idx < len(reduced)]
+        if clear_names:
+            code += "\n        // Clear generated output packets; nonzero entries are assigned below.\n"
+            for name in clear_names:
+                code += f"        kp.{name}.setZero();\n"
         for name, idx, rows, cols in assignments:
             if idx >= len(reduced): continue
             mat = reduced[idx]
@@ -539,9 +544,7 @@ class OptimalControlModel:
                     else:
                         val = mat[r, c]
                     
-                    if sp.sympify(val).is_zero is True:
-                        code += f"        kp.{name}({r},{c}) = 0;\n"
-                    else:
+                    if sp.sympify(val).is_zero is not True:
                         code += f"        kp.{name}({r},{c}) = {sp.ccode(val)};\n"
         return code
 
@@ -799,6 +802,9 @@ class OptimalControlModel:
         target_names = ["Q", "R", "H"]
         gn_mats = [Q_hess_gn, R_hess_gn, H_hess_gn]
         delta_mats = [Q_hess_delta, R_hess_delta, H_hess_delta]
+        code += "\n        // Clear terminal Hessian packets; nonzero entries are assigned below.\n"
+        for name in target_names:
+            code += f"        kp.{name}.setZero();\n"
         for name, mat_gn, mat_delta in zip(target_names, gn_mats, delta_mats):
             code += f"\n        // terminal {name} (Mode 0=GN, 1=Exact)\n"
             rows = mat_gn.shape[0]
@@ -807,7 +813,8 @@ class OptimalControlModel:
                 for c in range(cols):
                     val_gn = mat_gn[r, c]
                     val_delta = mat_delta[r, c]
-                    code += f"        kp.{name}({r},{c}) = {sp.ccode(val_gn)};\n"
+                    if sp.sympify(val_gn).is_zero is not True:
+                        code += f"        kp.{name}({r},{c}) = {sp.ccode(val_gn)};\n"
                     if sp.sympify(val_delta).is_zero is not True:
                         code += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {sp.ccode(val_delta)};\n"
 
@@ -1331,14 +1338,16 @@ class OptimalControlModel:
             code_jac_body += f"        T {name} = {sp.ccode(val)};\n"
 
         # Assign Jx (NX x NX)
+        code_jac_body += "\n        // Clear continuous Jacobian packets; nonzero entries are assigned below.\n"
+        code_jac_body += "        jac.Jx.setZero();\n"
+        code_jac_body += "        jac.Ju.setZero();\n"
+
         code_jac_body += "\n        // Jx = df/dx\n"
         mat_jx = reduced_jac[0]
         for r in range(nx):
             for c in range(nx):
                 val = mat_jx[r, c]
-                if sp.sympify(val).is_zero is True:
-                    code_jac_body += f"        jac.Jx({r},{c}) = 0;\n"
-                else:
+                if sp.sympify(val).is_zero is not True:
                     code_jac_body += f"        jac.Jx({r},{c}) = {sp.ccode(val)};\n"
 
         # Assign Ju (NX x NU)
@@ -1347,9 +1356,7 @@ class OptimalControlModel:
         for r in range(nx):
             for c in range(nu):
                 val = mat_ju[r, c]
-                if sp.sympify(val).is_zero is True:
-                    code_jac_body += f"        jac.Ju({r},{c}) = 0;\n"
-                else:
+                if sp.sympify(val).is_zero is not True:
                     code_jac_body += f"        jac.Ju({r},{c}) = {sp.ccode(val)};\n"
 
         code_jac_body += "\n        return jac;\n"
@@ -1598,6 +1605,10 @@ class OptimalControlModel:
         target_names = ["Q", "R", "H"]
         offset_gn = 2
         offset_delta = 5
+
+        code_assign += "\n        // Clear Hessian packets; nonzero entries are assigned below.\n"
+        for name in target_names:
+            code_assign += f"        kp.{name}.setZero();\n"
         
         for i, name in enumerate(target_names):
             idx_gn = offset_gn + i
@@ -1618,10 +1629,9 @@ class OptimalControlModel:
                     code_val_gn = sp.ccode(val_gn)
                     code_val_delta = sp.ccode(val_delta)
                     
-                    if val_delta == 0:
+                    if sp.sympify(val_gn).is_zero is not True:
                         code_assign += f"        kp.{name}({r},{c}) = {code_val_gn};\n"
-                    else:
-                        code_assign += f"        kp.{name}({r},{c}) = {code_val_gn};\n"
+                    if sp.sympify(val_delta).is_zero is not True:
                         code_assign += f"        if constexpr (Mode == 1) kp.{name}({r},{c}) += {code_val_delta};\n"
         
         if len(reduced_cost) > 8:

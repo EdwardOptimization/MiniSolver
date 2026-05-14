@@ -2,7 +2,7 @@ import tempfile
 
 import sympy as sp
 
-from common import Dot, OptimalControlModel, compile_and_run, expect_value_error
+from common import Dot, OptimalControlModel, compile_and_run, expect_value_error, reject, require
 
 
 def test_add_residual_generates_true_gauss_newton_hessian():
@@ -218,6 +218,75 @@ def test_add_residual_accepts_parameter_reference():
         )
 
 
+def test_sparse_generated_packets_zero_first_then_assign_nonzero():
+    model = OptimalControlModel("SparsePacketModel")
+    x0, x1 = model.state("x0", "x1")
+    u0, u1 = model.control("u0", "u1")
+    model.subject_to(Dot(x0) == u0)
+    model.subject_to(Dot(x1) == 0)
+    model.subject_to(x0 <= 1.0)
+    model.subject_to(u1 <= 2.0)
+    model.minimize(x0**2 + 0.5 * u1**2)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        with open(f"{tmpdir}/sparsepacketmodel.h", "r", encoding="utf-8") as f:
+            text = f.read()
+
+        require(text, "kp.C.setZero();")
+        require(text, "kp.D.setZero();")
+        require(text, "kp.Q.setZero();")
+        require(text, "kp.R.setZero();")
+        require(text, "kp.H.setZero();")
+        require(text, "jac.Jx.setZero();")
+        require(text, "jac.Ju.setZero();")
+        reject(text, "kp.C(0,0) = 0;")
+        reject(text, "kp.D(0,0) = 0;")
+        reject(text, "kp.Q(0,1) = 0;")
+        reject(text, "kp.R(0,0) = 0;")
+        reject(text, "kp.H(0,0) = 0;")
+
+        compile_and_run(
+            tmpdir,
+            "sparse_packet_check.cpp",
+            "sparse_packet_check",
+            """
+            #include "sparsepacketmodel.h"
+            #include <cmath>
+            #include <cstdlib>
+
+            int main() {
+                using Model = minisolver::SparsePacketModel;
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                kp.set_zero();
+                kp.x(0) = 0.25;
+                kp.x(1) = -0.5;
+                kp.u(0) = 0.1;
+                kp.u(1) = 0.2;
+
+                Model::compute_constraints(kp);
+                if (std::abs(kp.C(0,0) - 1.0) > 1e-12) return 1;
+                if (std::abs(kp.C(0,1)) > 1e-12) return 2;
+                if (std::abs(kp.D(1,1) - 1.0) > 1e-12) return 3;
+                if (std::abs(kp.D(1,0)) > 1e-12) return 4;
+
+                Model::compute_cost_gn(kp);
+                if (std::abs(kp.Q(0,0) - 2.0) > 1e-12) return 5;
+                if (std::abs(kp.Q(0,1)) > 1e-12) return 6;
+                if (std::abs(kp.R(1,1) - 1.0) > 1e-12) return 7;
+                if (std::abs(kp.R(0,0)) > 1e-12) return 8;
+                if (std::abs(kp.H(0,0)) > 1e-12) return 9;
+
+                auto jac = Model::jacobian_continuous(kp.x, kp.u, kp.p);
+                if (std::abs(jac.Ju(0,0) - 1.0) > 1e-12) return 10;
+                if (std::abs(jac.Ju(0,1)) > 1e-12) return 11;
+                if (std::abs(jac.Jx(0,0)) > 1e-12) return 12;
+                return 0;
+            }
+            """,
+        )
+
+
 def test_add_residual_validates_weights():
     def negative_weight():
         model = OptimalControlModel("NegativeResidualWeightModel")
@@ -239,4 +308,5 @@ if __name__ == "__main__":
     test_add_residual_terminal_stage_projects_controls()
     test_add_residual_accepts_parameter_vector_weight()
     test_add_residual_accepts_parameter_reference()
+    test_sparse_generated_packets_zero_first_then_assign_nonzero()
     test_add_residual_validates_weights()

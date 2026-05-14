@@ -96,33 +96,20 @@ struct CarModel {
         T tmp_jc2 = tan(steer);
         T tmp_jc3 = 1.0/L;
 
+        // Clear continuous Jacobian packets; nonzero entries are assigned below.
+        jac.Jx.setZero();
+        jac.Ju.setZero();
+
         // Jx = df/dx
-        jac.Jx(0,0) = 0;
-        jac.Jx(0,1) = 0;
         jac.Jx(0,2) = -tmp_jc0*v;
         jac.Jx(0,3) = tmp_jc1;
-        jac.Jx(1,0) = 0;
-        jac.Jx(1,1) = 0;
         jac.Jx(1,2) = tmp_jc1*v;
         jac.Jx(1,3) = tmp_jc0;
-        jac.Jx(2,0) = 0;
-        jac.Jx(2,1) = 0;
-        jac.Jx(2,2) = 0;
         jac.Jx(2,3) = tmp_jc2*tmp_jc3;
-        jac.Jx(3,0) = 0;
-        jac.Jx(3,1) = 0;
-        jac.Jx(3,2) = 0;
-        jac.Jx(3,3) = 0;
 
         // Ju = df/du
-        jac.Ju(0,0) = 0;
-        jac.Ju(0,1) = 0;
-        jac.Ju(1,0) = 0;
-        jac.Ju(1,1) = 0;
-        jac.Ju(2,0) = 0;
         jac.Ju(2,1) = tmp_jc3*v*(pow(tmp_jc2, 2) + 1);
         jac.Ju(3,0) = 1;
-        jac.Ju(3,1) = 0;
 
         return jac;
 
@@ -371,6 +358,11 @@ struct CarModel {
         T tmp_c2 = sqrt(pow(tmp_c0, 2) + pow(tmp_c1, 2) + 9.9999999999999995e-7);
         T tmp_c3 = 1.0/tmp_c2;
 
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.g_val.setZero();
+        kp.C.setZero();
+        kp.D.setZero();
+
         // g_val
         kp.g_val(0,0) = acc - 3.0;
         kp.g_val(1,0) = -acc - 3.0;
@@ -379,38 +371,14 @@ struct CarModel {
         kp.g_val(4,0) = -tmp_c2 + sqrt(pow(car_rad + obs_rad, 2));
 
         // C
-        kp.C(0,0) = 0;
-        kp.C(0,1) = 0;
-        kp.C(0,2) = 0;
-        kp.C(0,3) = 0;
-        kp.C(1,0) = 0;
-        kp.C(1,1) = 0;
-        kp.C(1,2) = 0;
-        kp.C(1,3) = 0;
-        kp.C(2,0) = 0;
-        kp.C(2,1) = 0;
-        kp.C(2,2) = 0;
-        kp.C(2,3) = 0;
-        kp.C(3,0) = 0;
-        kp.C(3,1) = 0;
-        kp.C(3,2) = 0;
-        kp.C(3,3) = 0;
         kp.C(4,0) = -tmp_c0*tmp_c3;
         kp.C(4,1) = -tmp_c1*tmp_c3;
-        kp.C(4,2) = 0;
-        kp.C(4,3) = 0;
 
         // D
         kp.D(0,0) = 1;
-        kp.D(0,1) = 0;
         kp.D(1,0) = -1;
-        kp.D(1,1) = 0;
-        kp.D(2,0) = 0;
         kp.D(2,1) = 1;
-        kp.D(3,0) = 0;
         kp.D(3,1) = -1;
-        kp.D(4,0) = 0;
-        kp.D(4,1) = 0;
 
     }
 
@@ -432,6 +400,9 @@ struct CarModel {
         T obs_rad = kp.p(5);
         T car_rad = kp.p(7);
 
+
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.g_true.setZero();
 
         // g_true
         kp.g_true(0,0) = acc - 3.0;
@@ -455,6 +426,11 @@ struct CarModel {
         // --- Special Constraints Pre-Calculation ---
 
 
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.g_val.setZero();
+        kp.C.setZero();
+        kp.D.setZero();
+
         // g_val
         kp.g_val(0,0) = -3.0;
         kp.g_val(1,0) = -3.0;
@@ -463,38 +439,10 @@ struct CarModel {
         kp.g_val(4,0) = -sqrt(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7) + sqrt(pow(car_rad + obs_rad, 2));
 
         // C
-        kp.C(0,0) = 0;
-        kp.C(0,1) = 0;
-        kp.C(0,2) = 0;
-        kp.C(0,3) = 0;
-        kp.C(1,0) = 0;
-        kp.C(1,1) = 0;
-        kp.C(1,2) = 0;
-        kp.C(1,3) = 0;
-        kp.C(2,0) = 0;
-        kp.C(2,1) = 0;
-        kp.C(2,2) = 0;
-        kp.C(2,3) = 0;
-        kp.C(3,0) = 0;
-        kp.C(3,1) = 0;
-        kp.C(3,2) = 0;
-        kp.C(3,3) = 0;
         kp.C(4,0) = -(-obs_x + x)/sqrt(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7);
         kp.C(4,1) = -(-obs_y + y)/sqrt(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7);
-        kp.C(4,2) = 0;
-        kp.C(4,3) = 0;
 
         // D
-        kp.D(0,0) = 0;
-        kp.D(0,1) = 0;
-        kp.D(1,0) = 0;
-        kp.D(1,1) = 0;
-        kp.D(2,0) = 0;
-        kp.D(2,1) = 0;
-        kp.D(3,0) = 0;
-        kp.D(3,1) = 0;
-        kp.D(4,0) = 0;
-        kp.D(4,1) = 0;
 
     }
 
@@ -514,6 +462,9 @@ struct CarModel {
         T obs_rad = kp.p(5);
         T car_rad = kp.p(7);
 
+
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.g_true.setZero();
 
         // g_true
         kp.g_true(0,0) = -3.0;
@@ -567,6 +518,10 @@ struct CarModel {
         T tmp_j8 = lam_4/pow(tmp_j5 + tmp_j7, 3.0/2.0);
         T tmp_j9 = tmp_j4*tmp_j6*tmp_j8;
 
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.q.setZero();
+        kp.r.setZero();
+
         // q
         kp.q(0,0) = w_pos*(2*x - 2*x_ref);
         kp.q(1,0) = w_pos*(2*y - 2*y_ref);
@@ -577,43 +532,26 @@ struct CarModel {
         kp.r(0,0) = acc*tmp_j1;
         kp.r(1,0) = steer*tmp_j2;
 
+        // Clear Hessian packets; nonzero entries are assigned below.
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.H.setZero();
+
         // Q (Mode 0=GN, 1=Exact)
         kp.Q(0,0) = tmp_j3;
         if constexpr (Mode == 1) kp.Q(0,0) += -tmp_j5*tmp_j8;
-        kp.Q(0,1) = 0;
         if constexpr (Mode == 1) kp.Q(0,1) += tmp_j9;
-        kp.Q(0,2) = 0;
-        kp.Q(0,3) = 0;
-        kp.Q(1,0) = 0;
         if constexpr (Mode == 1) kp.Q(1,0) += tmp_j9;
         kp.Q(1,1) = tmp_j3;
         if constexpr (Mode == 1) kp.Q(1,1) += -tmp_j8*(tmp_j7 + 9.9999999999999995e-7);
-        kp.Q(1,2) = 0;
-        kp.Q(1,3) = 0;
-        kp.Q(2,0) = 0;
-        kp.Q(2,1) = 0;
         kp.Q(2,2) = tmp_j0;
-        kp.Q(2,3) = 0;
-        kp.Q(3,0) = 0;
-        kp.Q(3,1) = 0;
-        kp.Q(3,2) = 0;
         kp.Q(3,3) = 2*w_vel;
 
         // R (Mode 0=GN, 1=Exact)
         kp.R(0,0) = tmp_j1;
-        kp.R(0,1) = 0;
-        kp.R(1,0) = 0;
         kp.R(1,1) = tmp_j2;
 
         // H (Mode 0=GN, 1=Exact)
-        kp.H(0,0) = 0;
-        kp.H(0,1) = 0;
-        kp.H(0,2) = 0;
-        kp.H(0,3) = 0;
-        kp.H(1,0) = 0;
-        kp.H(1,1) = 0;
-        kp.H(1,2) = 0;
-        kp.H(1,3) = 0;
 
         kp.cost = pow(acc, 2)*w_acc + pow(steer, 2)*w_steer + pow(theta, 2)*w_theta + w_pos*pow(x - x_ref, 2) + w_pos*pow(y - y_ref, 2) + w_vel*pow(v - v_ref, 2);
     }
@@ -652,6 +590,10 @@ template<typename T>
         T lam_4 = kp.lam(4);
 
 
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.q.setZero();
+        kp.r.setZero();
+
         // q
         kp.q(0,0) = w_pos*(2*x - 2*x_ref);
         kp.q(1,0) = w_pos*(2*y - 2*y_ref);
@@ -659,46 +601,25 @@ template<typename T>
         kp.q(3,0) = w_vel*(2*v - 2*v_ref);
 
         // r
-        kp.r(0,0) = 0;
-        kp.r(1,0) = 0;
+
+        // Clear terminal Hessian packets; nonzero entries are assigned below.
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.H.setZero();
 
         // terminal Q (Mode 0=GN, 1=Exact)
         kp.Q(0,0) = 2*w_pos;
         if constexpr (Mode == 1) kp.Q(0,0) += -lam_4*(pow(obs_y - y, 2) + 9.9999999999999995e-7)/pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0/2.0);
-        kp.Q(0,1) = 0;
         if constexpr (Mode == 1) kp.Q(0,1) += lam_4*(obs_x - x)*(obs_y - y)/pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0/2.0);
-        kp.Q(0,2) = 0;
-        kp.Q(0,3) = 0;
-        kp.Q(1,0) = 0;
         if constexpr (Mode == 1) kp.Q(1,0) += lam_4*(obs_x - x)*(obs_y - y)/pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0/2.0);
         kp.Q(1,1) = 2*w_pos;
         if constexpr (Mode == 1) kp.Q(1,1) += -lam_4*(pow(obs_x - x, 2) + 9.9999999999999995e-7)/pow(pow(obs_x - x, 2) + pow(obs_y - y, 2) + 9.9999999999999995e-7, 3.0/2.0);
-        kp.Q(1,2) = 0;
-        kp.Q(1,3) = 0;
-        kp.Q(2,0) = 0;
-        kp.Q(2,1) = 0;
         kp.Q(2,2) = 2*w_theta;
-        kp.Q(2,3) = 0;
-        kp.Q(3,0) = 0;
-        kp.Q(3,1) = 0;
-        kp.Q(3,2) = 0;
         kp.Q(3,3) = 2*w_vel;
 
         // terminal R (Mode 0=GN, 1=Exact)
-        kp.R(0,0) = 0;
-        kp.R(0,1) = 0;
-        kp.R(1,0) = 0;
-        kp.R(1,1) = 0;
 
         // terminal H (Mode 0=GN, 1=Exact)
-        kp.H(0,0) = 0;
-        kp.H(0,1) = 0;
-        kp.H(0,2) = 0;
-        kp.H(0,3) = 0;
-        kp.H(1,0) = 0;
-        kp.H(1,1) = 0;
-        kp.H(1,2) = 0;
-        kp.H(1,3) = 0;
 
         kp.cost = pow(theta, 2)*w_theta + w_pos*pow(x - x_ref, 2) + w_pos*pow(y - y_ref, 2) + w_vel*pow(v - v_ref, 2);
     }

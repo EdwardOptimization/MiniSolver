@@ -103,56 +103,21 @@ struct BicycleExtModel {
         T tmp_jc0 = sin(theta);
         T tmp_jc1 = cos(theta);
 
+        // Clear continuous Jacobian packets; nonzero entries are assigned below.
+        jac.Jx.setZero();
+        jac.Ju.setZero();
+
         // Jx = df/dx
-        jac.Jx(0,0) = 0;
-        jac.Jx(0,1) = 0;
         jac.Jx(0,2) = -tmp_jc0*v;
-        jac.Jx(0,3) = 0;
         jac.Jx(0,4) = tmp_jc1;
-        jac.Jx(0,5) = 0;
-        jac.Jx(1,0) = 0;
-        jac.Jx(1,1) = 0;
         jac.Jx(1,2) = tmp_jc1*v;
-        jac.Jx(1,3) = 0;
         jac.Jx(1,4) = tmp_jc0;
-        jac.Jx(1,5) = 0;
-        jac.Jx(2,0) = 0;
-        jac.Jx(2,1) = 0;
-        jac.Jx(2,2) = 0;
         jac.Jx(2,3) = v;
         jac.Jx(2,4) = kappa;
-        jac.Jx(2,5) = 0;
-        jac.Jx(3,0) = 0;
-        jac.Jx(3,1) = 0;
-        jac.Jx(3,2) = 0;
-        jac.Jx(3,3) = 0;
-        jac.Jx(3,4) = 0;
-        jac.Jx(3,5) = 0;
-        jac.Jx(4,0) = 0;
-        jac.Jx(4,1) = 0;
-        jac.Jx(4,2) = 0;
-        jac.Jx(4,3) = 0;
-        jac.Jx(4,4) = 0;
         jac.Jx(4,5) = 1;
-        jac.Jx(5,0) = 0;
-        jac.Jx(5,1) = 0;
-        jac.Jx(5,2) = 0;
-        jac.Jx(5,3) = 0;
-        jac.Jx(5,4) = 0;
-        jac.Jx(5,5) = 0;
 
         // Ju = df/du
-        jac.Ju(0,0) = 0;
-        jac.Ju(0,1) = 0;
-        jac.Ju(1,0) = 0;
-        jac.Ju(1,1) = 0;
-        jac.Ju(2,0) = 0;
-        jac.Ju(2,1) = 0;
         jac.Ju(3,0) = 1;
-        jac.Ju(3,1) = 0;
-        jac.Ju(4,0) = 0;
-        jac.Ju(4,1) = 0;
-        jac.Ju(5,0) = 0;
         jac.Ju(5,1) = 1;
 
         return jac;
@@ -428,6 +393,11 @@ struct BicycleExtModel {
         // --- Special Constraints Pre-Calculation ---
 
 
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.g_val.setZero();
+        kp.C.setZero();
+        kp.D.setZero();
+
         // g_val
         kp.g_val(0,0) = v - 15.0;
         kp.g_val(1,0) = -v;
@@ -441,88 +411,18 @@ struct BicycleExtModel {
         kp.g_val(9,0) = -dkappa - 2.0;
 
         // C
-        kp.C(0,0) = 0;
-        kp.C(0,1) = 0;
-        kp.C(0,2) = 0;
-        kp.C(0,3) = 0;
         kp.C(0,4) = 1;
-        kp.C(0,5) = 0;
-        kp.C(1,0) = 0;
-        kp.C(1,1) = 0;
-        kp.C(1,2) = 0;
-        kp.C(1,3) = 0;
         kp.C(1,4) = -1;
-        kp.C(1,5) = 0;
-        kp.C(2,0) = 0;
-        kp.C(2,1) = 0;
-        kp.C(2,2) = 0;
-        kp.C(2,3) = 0;
-        kp.C(2,4) = 0;
         kp.C(2,5) = 1;
-        kp.C(3,0) = 0;
-        kp.C(3,1) = 0;
-        kp.C(3,2) = 0;
-        kp.C(3,3) = 0;
-        kp.C(3,4) = 0;
         kp.C(3,5) = -1;
-        kp.C(4,0) = 0;
-        kp.C(4,1) = 0;
-        kp.C(4,2) = 0;
         kp.C(4,3) = 1;
-        kp.C(4,4) = 0;
-        kp.C(4,5) = 0;
-        kp.C(5,0) = 0;
-        kp.C(5,1) = 0;
-        kp.C(5,2) = 0;
         kp.C(5,3) = -1;
-        kp.C(5,4) = 0;
-        kp.C(5,5) = 0;
-        kp.C(6,0) = 0;
-        kp.C(6,1) = 0;
-        kp.C(6,2) = 0;
-        kp.C(6,3) = 0;
-        kp.C(6,4) = 0;
-        kp.C(6,5) = 0;
-        kp.C(7,0) = 0;
-        kp.C(7,1) = 0;
-        kp.C(7,2) = 0;
-        kp.C(7,3) = 0;
-        kp.C(7,4) = 0;
-        kp.C(7,5) = 0;
-        kp.C(8,0) = 0;
-        kp.C(8,1) = 0;
-        kp.C(8,2) = 0;
-        kp.C(8,3) = 0;
-        kp.C(8,4) = 0;
-        kp.C(8,5) = 0;
-        kp.C(9,0) = 0;
-        kp.C(9,1) = 0;
-        kp.C(9,2) = 0;
-        kp.C(9,3) = 0;
-        kp.C(9,4) = 0;
-        kp.C(9,5) = 0;
 
         // D
-        kp.D(0,0) = 0;
-        kp.D(0,1) = 0;
-        kp.D(1,0) = 0;
-        kp.D(1,1) = 0;
-        kp.D(2,0) = 0;
-        kp.D(2,1) = 0;
-        kp.D(3,0) = 0;
-        kp.D(3,1) = 0;
-        kp.D(4,0) = 0;
-        kp.D(4,1) = 0;
-        kp.D(5,0) = 0;
-        kp.D(5,1) = 0;
-        kp.D(6,0) = 0;
         kp.D(6,1) = 1;
-        kp.D(7,0) = 0;
         kp.D(7,1) = -1;
         kp.D(8,0) = 1;
-        kp.D(8,1) = 0;
         kp.D(9,0) = -1;
-        kp.D(9,1) = 0;
 
     }
 
@@ -541,6 +441,9 @@ struct BicycleExtModel {
         T dkappa = kp.u(0);
         T jerk = kp.u(1);
 
+
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.g_true.setZero();
 
         // g_true
         kp.g_true(0,0) = v - 15.0;
@@ -566,6 +469,11 @@ struct BicycleExtModel {
         // --- Special Constraints Pre-Calculation ---
 
 
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.g_val.setZero();
+        kp.C.setZero();
+        kp.D.setZero();
+
         // g_val
         kp.g_val(0,0) = v - 15.0;
         kp.g_val(1,0) = -v;
@@ -579,88 +487,14 @@ struct BicycleExtModel {
         kp.g_val(9,0) = -2.0;
 
         // C
-        kp.C(0,0) = 0;
-        kp.C(0,1) = 0;
-        kp.C(0,2) = 0;
-        kp.C(0,3) = 0;
         kp.C(0,4) = 1;
-        kp.C(0,5) = 0;
-        kp.C(1,0) = 0;
-        kp.C(1,1) = 0;
-        kp.C(1,2) = 0;
-        kp.C(1,3) = 0;
         kp.C(1,4) = -1;
-        kp.C(1,5) = 0;
-        kp.C(2,0) = 0;
-        kp.C(2,1) = 0;
-        kp.C(2,2) = 0;
-        kp.C(2,3) = 0;
-        kp.C(2,4) = 0;
         kp.C(2,5) = 1;
-        kp.C(3,0) = 0;
-        kp.C(3,1) = 0;
-        kp.C(3,2) = 0;
-        kp.C(3,3) = 0;
-        kp.C(3,4) = 0;
         kp.C(3,5) = -1;
-        kp.C(4,0) = 0;
-        kp.C(4,1) = 0;
-        kp.C(4,2) = 0;
         kp.C(4,3) = 1;
-        kp.C(4,4) = 0;
-        kp.C(4,5) = 0;
-        kp.C(5,0) = 0;
-        kp.C(5,1) = 0;
-        kp.C(5,2) = 0;
         kp.C(5,3) = -1;
-        kp.C(5,4) = 0;
-        kp.C(5,5) = 0;
-        kp.C(6,0) = 0;
-        kp.C(6,1) = 0;
-        kp.C(6,2) = 0;
-        kp.C(6,3) = 0;
-        kp.C(6,4) = 0;
-        kp.C(6,5) = 0;
-        kp.C(7,0) = 0;
-        kp.C(7,1) = 0;
-        kp.C(7,2) = 0;
-        kp.C(7,3) = 0;
-        kp.C(7,4) = 0;
-        kp.C(7,5) = 0;
-        kp.C(8,0) = 0;
-        kp.C(8,1) = 0;
-        kp.C(8,2) = 0;
-        kp.C(8,3) = 0;
-        kp.C(8,4) = 0;
-        kp.C(8,5) = 0;
-        kp.C(9,0) = 0;
-        kp.C(9,1) = 0;
-        kp.C(9,2) = 0;
-        kp.C(9,3) = 0;
-        kp.C(9,4) = 0;
-        kp.C(9,5) = 0;
 
         // D
-        kp.D(0,0) = 0;
-        kp.D(0,1) = 0;
-        kp.D(1,0) = 0;
-        kp.D(1,1) = 0;
-        kp.D(2,0) = 0;
-        kp.D(2,1) = 0;
-        kp.D(3,0) = 0;
-        kp.D(3,1) = 0;
-        kp.D(4,0) = 0;
-        kp.D(4,1) = 0;
-        kp.D(5,0) = 0;
-        kp.D(5,1) = 0;
-        kp.D(6,0) = 0;
-        kp.D(6,1) = 0;
-        kp.D(7,0) = 0;
-        kp.D(7,1) = 0;
-        kp.D(8,0) = 0;
-        kp.D(8,1) = 0;
-        kp.D(9,0) = 0;
-        kp.D(9,1) = 0;
 
     }
 
@@ -677,6 +511,9 @@ struct BicycleExtModel {
         T v = kp.x(4);
         T a = kp.x(5);
 
+
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.g_true.setZero();
 
         // g_true
         kp.g_true(0,0) = v - 15.0;
@@ -732,6 +569,10 @@ struct BicycleExtModel {
         T tmp_j4 = 2*w_jerk;
         T tmp_j5 = 2*w_pos;
 
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.q.setZero();
+        kp.r.setZero();
+
         // q
         kp.q(0,0) = w_pos*(2*x - 2*x_ref);
         kp.q(1,0) = w_pos*(2*y - 2*y_ref);
@@ -744,63 +585,24 @@ struct BicycleExtModel {
         kp.r(0,0) = dkappa*tmp_j3;
         kp.r(1,0) = jerk*tmp_j4;
 
+        // Clear Hessian packets; nonzero entries are assigned below.
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.H.setZero();
+
         // Q (Mode 0=GN, 1=Exact)
         kp.Q(0,0) = tmp_j5;
-        kp.Q(0,1) = 0;
-        kp.Q(0,2) = 0;
-        kp.Q(0,3) = 0;
-        kp.Q(0,4) = 0;
-        kp.Q(0,5) = 0;
-        kp.Q(1,0) = 0;
         kp.Q(1,1) = tmp_j5;
-        kp.Q(1,2) = 0;
-        kp.Q(1,3) = 0;
-        kp.Q(1,4) = 0;
-        kp.Q(1,5) = 0;
-        kp.Q(2,0) = 0;
-        kp.Q(2,1) = 0;
         kp.Q(2,2) = tmp_j0;
-        kp.Q(2,3) = 0;
-        kp.Q(2,4) = 0;
-        kp.Q(2,5) = 0;
-        kp.Q(3,0) = 0;
-        kp.Q(3,1) = 0;
-        kp.Q(3,2) = 0;
         kp.Q(3,3) = tmp_j1;
-        kp.Q(3,4) = 0;
-        kp.Q(3,5) = 0;
-        kp.Q(4,0) = 0;
-        kp.Q(4,1) = 0;
-        kp.Q(4,2) = 0;
-        kp.Q(4,3) = 0;
         kp.Q(4,4) = 2*w_vel;
-        kp.Q(4,5) = 0;
-        kp.Q(5,0) = 0;
-        kp.Q(5,1) = 0;
-        kp.Q(5,2) = 0;
-        kp.Q(5,3) = 0;
-        kp.Q(5,4) = 0;
         kp.Q(5,5) = tmp_j2;
 
         // R (Mode 0=GN, 1=Exact)
         kp.R(0,0) = tmp_j3;
-        kp.R(0,1) = 0;
-        kp.R(1,0) = 0;
         kp.R(1,1) = tmp_j4;
 
         // H (Mode 0=GN, 1=Exact)
-        kp.H(0,0) = 0;
-        kp.H(0,1) = 0;
-        kp.H(0,2) = 0;
-        kp.H(0,3) = 0;
-        kp.H(0,4) = 0;
-        kp.H(0,5) = 0;
-        kp.H(1,0) = 0;
-        kp.H(1,1) = 0;
-        kp.H(1,2) = 0;
-        kp.H(1,3) = 0;
-        kp.H(1,4) = 0;
-        kp.H(1,5) = 0;
 
         kp.cost = pow(a, 2)*w_a + pow(dkappa, 2)*w_dkappa + pow(jerk, 2)*w_jerk + pow(kappa, 2)*w_kappa + pow(theta, 2)*w_theta + w_pos*(pow(x - x_ref, 2) + pow(y - y_ref, 2)) + w_vel*pow(v - v_ref, 2);
     }
@@ -840,6 +642,10 @@ template<typename T>
         T w_a = kp.p(12);
 
 
+        // Clear generated output packets; nonzero entries are assigned below.
+        kp.q.setZero();
+        kp.r.setZero();
+
         // q
         kp.q(0,0) = w_pos*(2*x - 2*x_ref);
         kp.q(1,0) = w_pos*(2*y - 2*y_ref);
@@ -849,66 +655,23 @@ template<typename T>
         kp.q(5,0) = 2*a*w_a;
 
         // r
-        kp.r(0,0) = 0;
-        kp.r(1,0) = 0;
+
+        // Clear terminal Hessian packets; nonzero entries are assigned below.
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.H.setZero();
 
         // terminal Q (Mode 0=GN, 1=Exact)
         kp.Q(0,0) = 2*w_pos;
-        kp.Q(0,1) = 0;
-        kp.Q(0,2) = 0;
-        kp.Q(0,3) = 0;
-        kp.Q(0,4) = 0;
-        kp.Q(0,5) = 0;
-        kp.Q(1,0) = 0;
         kp.Q(1,1) = 2*w_pos;
-        kp.Q(1,2) = 0;
-        kp.Q(1,3) = 0;
-        kp.Q(1,4) = 0;
-        kp.Q(1,5) = 0;
-        kp.Q(2,0) = 0;
-        kp.Q(2,1) = 0;
         kp.Q(2,2) = 2*w_theta;
-        kp.Q(2,3) = 0;
-        kp.Q(2,4) = 0;
-        kp.Q(2,5) = 0;
-        kp.Q(3,0) = 0;
-        kp.Q(3,1) = 0;
-        kp.Q(3,2) = 0;
         kp.Q(3,3) = 2*w_kappa;
-        kp.Q(3,4) = 0;
-        kp.Q(3,5) = 0;
-        kp.Q(4,0) = 0;
-        kp.Q(4,1) = 0;
-        kp.Q(4,2) = 0;
-        kp.Q(4,3) = 0;
         kp.Q(4,4) = 2*w_vel;
-        kp.Q(4,5) = 0;
-        kp.Q(5,0) = 0;
-        kp.Q(5,1) = 0;
-        kp.Q(5,2) = 0;
-        kp.Q(5,3) = 0;
-        kp.Q(5,4) = 0;
         kp.Q(5,5) = 2*w_a;
 
         // terminal R (Mode 0=GN, 1=Exact)
-        kp.R(0,0) = 0;
-        kp.R(0,1) = 0;
-        kp.R(1,0) = 0;
-        kp.R(1,1) = 0;
 
         // terminal H (Mode 0=GN, 1=Exact)
-        kp.H(0,0) = 0;
-        kp.H(0,1) = 0;
-        kp.H(0,2) = 0;
-        kp.H(0,3) = 0;
-        kp.H(0,4) = 0;
-        kp.H(0,5) = 0;
-        kp.H(1,0) = 0;
-        kp.H(1,1) = 0;
-        kp.H(1,2) = 0;
-        kp.H(1,3) = 0;
-        kp.H(1,4) = 0;
-        kp.H(1,5) = 0;
 
         kp.cost = pow(a, 2)*w_a + pow(kappa, 2)*w_kappa + pow(theta, 2)*w_theta + w_pos*(pow(x - x_ref, 2) + pow(y - y_ref, 2)) + w_vel*pow(v - v_ref, 2);
     }
