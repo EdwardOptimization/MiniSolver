@@ -840,6 +840,111 @@ class OptimalControlModel:
         code += "    }\n"
         return code
 
+    def _generate_stage_cost_section(self, x_vec, u_vec):
+        nx = len(self.states)
+        nu = len(self.controls)
+        nc = len(self.constraints)
+        xu_vec = sp.Matrix.vstack(x_vec, u_vec)
+
+        total_objective = self._total_objective()
+        general_objective = sp.sympify(self.objective)
+
+        grad_cost = sp.Matrix([total_objective]).jacobian(xu_vec).T
+        q_grad = grad_cost[:nx, :]
+        r_grad = grad_cost[nx:, :]
+
+        # Mode 0 uses exact general-objective Hessian plus the residual
+        # Gauss-Newton term. Mode 1 adds residual second-order terms and
+        # constraint Hessians.
+        hess_cost_exact = sp.hessian(total_objective, xu_vec)
+        hess_cost_gn = sp.hessian(general_objective, xu_vec)
+        hess_cost_gn += self._residual_gauss_newton_hessian(xu_vec)
+        hess_cost_delta = sp.simplify(hess_cost_exact - hess_cost_gn)
+        Q_hess_gn = hess_cost_gn[:nx, :nx]
+        R_hess_gn = hess_cost_gn[nx:, nx:]
+        H_hess_gn = hess_cost_gn[nx:, :nx]
+
+        lam_sym = [sp.symbols(f"lam_{i}") for i in range(nc)]
+        hess_con_total = sp.zeros(nx + nu, nx + nu)
+        if nc > 0:
+            for i in range(nc):
+                hess_g_i = sp.hessian(self.constraints[i], xu_vec)
+                hess_con_total += lam_sym[i] * hess_g_i
+
+        hess_mode1_delta = sp.simplify(hess_cost_delta + hess_con_total)
+        Q_hess_delta = hess_mode1_delta[:nx, :nx]
+        R_hess_delta = hess_mode1_delta[nx:, nx:]
+        H_hess_delta = hess_mode1_delta[nx:, :nx]
+
+        repl_cost, reduced_cost = sp.cse(
+            [
+                q_grad, r_grad, Q_hess_gn, R_hess_gn, H_hess_gn,
+                Q_hess_delta, R_hess_delta, H_hess_delta, total_objective,
+            ],
+            symbols=sp.numbered_symbols("tmp_j"),
+        )
+
+        code_cost_impl = "template<typename T, int Mode>\n"
+        code_cost_impl += "    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+
+        # Determine symbols used in cost + constraint Hessians. Parameters used
+        # only in linear primal expressions disappear from derivatives and do
+        # not need unpacking here.
+        cost_exprs = [
+            q_grad, r_grad, Q_hess_gn, R_hess_gn, H_hess_gn,
+            Q_hess_delta, R_hess_delta, H_hess_delta, total_objective,
+        ]
+
+        code_unpack = self._generate_unpack_block(source_kp=True, expressions=cost_exprs)
+        if nc > 0:
+            hess_exprs = [Q_hess_delta, R_hess_delta, H_hess_delta]
+            used_syms = set()
+            for expr in hess_exprs:
+                if hasattr(expr, 'free_symbols'):
+                    used_syms.update(expr.free_symbols)
+
+            for i in range(nc):
+                s_lam = sp.symbols(f"lam_{i}")
+                if s_lam in used_syms:
+                    code_unpack += f"        T lam_{i} = kp.lam({i});\n"
+
+        code_cse = "\n"
+        code_cse += self._emit_cse_assignments(repl_cost)
+
+        code_assign = ""
+        code_assign += self._generate_assign_block(
+            [("q", 0, nx, 1), ("r", 1, nu, 1)],
+            reduced_cost,
+        )
+        code_assign += self._generate_mode_hessian_packets(
+            ["Q", "R", "H"],
+            reduced_cost[2:5],
+            reduced_cost[5:8],
+        )
+        if len(reduced_cost) > 8:
+            code_assign += f"\n        kp.cost = {sp.ccode(reduced_cost[8])};\n"
+
+        code_cost_impl += code_unpack + code_cse + code_assign
+        code_cost_impl += "    }\n\n"
+
+        code_wrappers = "template<typename T>\n"
+        code_wrappers += "    static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code_wrappers += "        compute_cost_impl<T, 0>(kp);\n"
+        code_wrappers += "    }\n\n"
+
+        code_wrappers += "    template<typename T>\n"
+        code_wrappers += "    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
+        code_wrappers += "    }\n\n"
+
+        # Default alias stays exact for backward compatibility.
+        code_wrappers += "    template<typename T>\n"
+        code_wrappers += "    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
+        code_wrappers += "    }\n"
+
+        return code_cost_impl + code_wrappers, r_grad
+
     def _generate_sparse_matmul(self, mat_symbol, non_zeros, input_name, output_name, R, C, common_dim):
         """
         Generates C++ code for: output = input * mat
@@ -1536,53 +1641,14 @@ class OptimalControlModel:
         code_jac_body += "\n        return jac;\n"
 
         # 3.5 Derivatives for Cost & Constraints (Independent of Integrator)
-        xu_vec = sp.Matrix.vstack(x_vec, u_vec)
-        
-        total_objective = self._total_objective()
-        general_objective = sp.sympify(self.objective)
-
-        # Cost Derivatives
-        grad_cost = sp.Matrix([total_objective]).jacobian(xu_vec).T
-        q_grad = grad_cost[:nx, :]
-        r_grad = grad_cost[nx:, :]
-        
-        # Cost Hessians:
-        # - Mode 0 uses the exact general-objective Hessian plus the true
-        #   Gauss-Newton residual Hessian J^T W J.
-        # - Mode 1 adds the residual second-order terms and constraint Hessians.
-        hess_cost_exact = sp.hessian(total_objective, xu_vec)
-        hess_cost_gn = sp.hessian(general_objective, xu_vec)
-        hess_cost_gn += self._residual_gauss_newton_hessian(xu_vec)
-        hess_cost_delta = sp.simplify(hess_cost_exact - hess_cost_gn)
-        Q_hess_gn = hess_cost_gn[:nx, :nx]
-        R_hess_gn = hess_cost_gn[nx:, nx:]
-        H_hess_gn = hess_cost_gn[nx:, :nx]
-        
-        # Constraint Derivatives
         g_vec = sp.Matrix(self.constraints) if nc > 0 else sp.Matrix.zeros(0,1)
         C_expr = g_vec.jacobian(x_vec) if nc > 0 else sp.Matrix.zeros(0, nx)
         D_expr = g_vec.jacobian(u_vec) if nc > 0 else sp.Matrix.zeros(0, nu)
-        
-        # Hessian Constraints
-        lam_sym = [sp.symbols(f"lam_{i}") for i in range(nc)]
-        hess_con_total = sp.zeros(nx+nu, nx+nu)
-        if nc > 0:
-            for i in range(nc):
-                hess_g_i = sp.hessian(self.constraints[i], xu_vec)
-                hess_con_total += lam_sym[i] * hess_g_i
-        
-        hess_mode1_delta = sp.simplify(hess_cost_delta + hess_con_total)
-        Q_hess_delta = hess_mode1_delta[:nx, :nx]
-        R_hess_delta = hess_mode1_delta[nx:, nx:]
-        H_hess_delta = hess_mode1_delta[nx:, :nx]
-        
+
         # CSE Constraints/Cost
         print("Optimizing expressions (CSE)...")
         repl_con, reduced_con = sp.cse([g_vec, C_expr, D_expr], symbols=sp.numbered_symbols("tmp_c"))
-        repl_cost, reduced_cost = sp.cse(
-            [q_grad, r_grad, Q_hess_gn, R_hess_gn, H_hess_gn, Q_hess_delta, R_hess_delta, H_hess_delta, total_objective],
-            symbols=sp.numbered_symbols("tmp_j")
-        )
+        code_compute_cost, r_grad = self._generate_stage_cost_section(x_vec, u_vec)
         
         # 5. Code Construction
         
@@ -1627,83 +1693,7 @@ class OptimalControlModel:
         code_compute_terminal_true_con = self._generate_true_constraints_body(terminal=True)
         code_compute_soc_con = self._generate_soc_constraints_body()
 
-        # Compute Cost Body
-        # Mode 0: Gauss-Newton residual Hessian + exact general-objective Hessian.
-        # Mode 1: Exact objective Hessian + constraint Hessian.
-        
-        code_cost_impl = "template<typename T, int Mode>\n"
-        code_cost_impl += "    static void compute_cost_impl(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
-        
-        # Determine symbols used in Cost + Constraint Hessians
-        # We must use the *derivative* expressions, because parameters used only in linear terms
-        # of the cost/constraints will disappear from the derivatives (gradients/Hessians),
-        # but would still be flagged as "used" if we checked the primal expressions.
-        cost_exprs = [
-            q_grad, r_grad, Q_hess_gn, R_hess_gn, H_hess_gn,
-            Q_hess_delta, R_hess_delta, H_hess_delta, total_objective
-        ]
-        
-        code_unpack = self._generate_unpack_block(source_kp=True, expressions=cost_exprs)
-        if nc > 0:
-            # Check if lambdas are used in the exact-mode delta expressions
-            # H_delta includes sum(lam_i * H_g_i) plus residual second-order terms.
-            
-            # Combine all Hessian expressions for check
-            hess_exprs = [Q_hess_delta, R_hess_delta, H_hess_delta]
-            used_syms = set()
-            for expr in hess_exprs:
-                if hasattr(expr, 'free_symbols'):
-                    used_syms.update(expr.free_symbols)
-            
-            for i in range(nc):
-                # We need to construct the symbol matching what sympy used
-                # In step 3.5, we defined: lam_sym = [sp.symbols(f"lam_{i}") for i in range(nc)]
-                # We should re-create or reuse that list. 
-                # It's local to generate(). Ideally we should have stored it.
-                # Re-creating with same name works in SymPy.
-                s_lam = sp.symbols(f"lam_{i}")
-                if s_lam in used_syms:
-                    code_unpack += f"        T lam_{i} = kp.lam({i});\n"
-        
-        code_cse = "\n"
-        code_cse += self._emit_cse_assignments(repl_cost)
-            
-        code_assign = ""
-        assign_grads = [("q", 0, nx, 1), ("r", 1, nu, 1)]
-        code_assign += self._generate_assign_block(assign_grads, reduced_cost)
-        
-        code_assign += self._generate_mode_hessian_packets(
-            ["Q", "R", "H"],
-            reduced_cost[2:5],
-            reduced_cost[5:8],
-        )
-        
-        if len(reduced_cost) > 8:
-            code_assign += f"\n        kp.cost = {sp.ccode(reduced_cost[8])};\n"
-            
-        code_cost_impl += code_unpack + code_cse + code_assign
-        code_cost_impl += "    }\n\n"
-        
-        # Wrappers
-        code_wrappers = "template<typename T>\n"
-        code_wrappers += "    static void compute_cost_gn(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
-        code_wrappers += "        compute_cost_impl<T, 0>(kp);\n"
-        code_wrappers += "    }\n\n"
-        
-        code_wrappers += "    template<typename T>\n"
-        code_wrappers += "    static void compute_cost_exact(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
-        code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
-        code_wrappers += "    }\n\n"
-        
-        # Default alias (Exact for backward compat, or GN?)
-        # Let's make it Exact to be safe.
-        code_wrappers += "    template<typename T>\n"
-        code_wrappers += "    static void compute_cost(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
-        code_wrappers += "        compute_cost_impl<T, 1>(kp);\n"
-        code_wrappers += "    }\n"
         code_compute_terminal_cost = self._generate_terminal_cost_section(x_vec, u_vec)
-        
-        code_compute_cost = code_cost_impl + code_wrappers
         
         # [NEW] Generate Fused Riccati Kernel
         code_fused_riccati = ""
