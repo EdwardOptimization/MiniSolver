@@ -1129,7 +1129,7 @@ class OptimalControlModel:
                 
         return code
 
-    def generate(self, output_dir="include/model", use_fused_riccati=True, integrator_type=None):
+    def _resolve_integrator_type(self, integrator_type):
         if integrator_type is None:
             integrator_type = "DISCRETE" if self.dynamics_mode == "next" else "RK4_EXPLICIT"
 
@@ -1152,6 +1152,178 @@ class OptimalControlModel:
             raise ValueError("DISCRETE integrator requires Next(state) dynamics")
         if self.dynamics_mode == "next" and integrator_type != "DISCRETE":
             raise ValueError("Next(state) dynamics require integrator_type='DISCRETE'")
+
+        return integrator_type
+
+    def _generate_model_constants(self, nx, nu, nc, np_param, integrator_type):
+        code = f"static const int NX={nx};\n    static const int NU={nu};\n    static const int NC={nc};\n    static const int NP={np_param};"
+
+        fingerprint = self._compute_model_fingerprint(integrator_type)
+        code += f"\n\n    static constexpr std::uint64_t model_fingerprint = 0x{fingerprint:016x}ull;"
+
+        # Marker: which integrator the fused Riccati kernel was CSE'd against.
+        # MiniSolver's constructor reads this (SFINAE-detected) and warns on a
+        # mismatched runtime config.integrator. Riccati dispatch then skips the
+        # fused kernel because its sparsity pattern is pinned to this integrator.
+        code += f"\n\n    static constexpr IntegratorType generated_integrator = IntegratorType::{integrator_type};"
+
+        weights_list = [0.0] * nc
+        types_list = [0] * nc
+        for sc in self.soft_constraints:
+            idx = sc['index']
+            if idx < nc:
+                weights_list[idx] = sc['weight']
+                types_list[idx] = 2 if sc['type'] == 'L2' else 1
+
+        soft_weights = "{" + ", ".join([str(w) for w in weights_list]) + "}"
+        soft_types = "{" + ", ".join([str(t) for t in types_list]) + "}"
+        code += "\n\n"
+        code += f"    static constexpr std::array<double, NC> constraint_weights = {soft_weights};\n"
+        code += f"    static constexpr std::array<int, NC> constraint_types = {soft_types};\n"
+        return code
+
+    def _generate_name_arrays(self):
+        code = "static constexpr std::array<const char*, NX> state_names = {\n"
+        for s in self.states:
+            code += f'        "{s.name}",\n'
+        code += "    };\n\n"
+        code += "    static constexpr std::array<const char*, NU> control_names = {\n"
+        for u in self.controls:
+            code += f'        "{u.name}",\n'
+        code += "    };\n\n"
+        code += "    static constexpr std::array<const char*, NP> param_names = {\n"
+        for p in self.parameters:
+            code += f'        "{p.name}",\n'
+        code += "    };\n"
+        return code
+
+    def _generate_continuous_dynamics_body(self, f_cont, nx):
+        code = self._generate_unpack_block(source_kp=False, expressions=f_cont)
+        code += "\n        MSVec<T, NX> xdot;\n"
+        for i in range(nx):
+            code += f"        xdot({i}) = {sp.ccode(f_cont[i])};\n"
+        code += "        return xdot;\n"
+        return code
+
+    def _generate_integrate_body(self, x_next_direct, nx):
+        if self.dynamics_mode == "dot":
+            return """        switch(type) {
+            case IntegratorType::EULER_EXPLICIT:
+                return x_in + dynamics_continuous(x_in, u_in, p_in) * dt;
+
+            case IntegratorType::RK2_EXPLICIT:
+            {
+               auto k1 = dynamics_continuous(x_in, u_in, p_in);
+               auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
+               return x_in + k2 * dt;
+            }
+
+            case IntegratorType::EULER_IMPLICIT:
+            {
+                // Simple Fixed-Point Iteration for x_next = x + f(x_next, u) * dt
+                MSVec<T, NX> x_next = x_in; // Guess
+                for(int i=0; i<5; ++i) {
+                    x_next = x_in + dynamics_continuous(x_next, u_in, p_in) * dt;
+                }
+                return x_next;
+            }
+
+            case IntegratorType::RK2_IMPLICIT:
+            {
+                // Implicit Midpoint: k = f(x + 0.5*dt*k). x_next = x + dt*k
+                MSVec<T, NX> k = dynamics_continuous(x_in, u_in, p_in); // Guess k0
+                for(int i=0; i<5; ++i) {
+                    k = dynamics_continuous<T>(x_in + k * (0.5 * dt), u_in, p_in);
+                }
+                return x_in + k * dt;
+            }
+
+            case IntegratorType::RK4_EXPLICIT:
+            case IntegratorType::RK4_IMPLICIT:
+            {
+               auto k1 = dynamics_continuous(x_in, u_in, p_in);
+               auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
+               auto k3 = dynamics_continuous<T>(x_in + k2 * (0.5 * dt), u_in, p_in);
+               auto k4 = dynamics_continuous<T>(x_in + k3 * dt, u_in, p_in);
+               return x_in + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
+            }
+
+            case IntegratorType::DISCRETE:
+                throw std::invalid_argument("DISCRETE integrator requires Next(state) dynamics");
+        }
+        throw std::invalid_argument("Unsupported integrator type");
+"""
+
+        code = ""
+        code += "        if (type != IntegratorType::DISCRETE) {\n"
+        code += "            throw std::invalid_argument(\"Next(state) dynamics require IntegratorType::DISCRETE\");\n"
+        code += "        }\n"
+        code += "        (void)dt;\n"
+        code += self._generate_unpack_block(source_kp=False, expressions=x_next_direct)
+        code += "\n        MSVec<T, NX> x_next;\n"
+        for i in range(nx):
+            code += f"        x_next({i}) = {sp.ccode(x_next_direct[i])};\n"
+        code += "        return x_next;\n"
+        return code
+
+    def _render_model_header(self, replacements, code_fused_riccati):
+        template_path = os.path.join(os.path.dirname(__file__), "templates", "model.h.in")
+        with open(template_path, 'r') as f:
+            content = f.read()
+
+        for marker, code in replacements.items():
+            content = content.replace(f"{{{{{marker}}}}}", code)
+
+        if self.use_fused_riccati:
+            content = content.replace("{{FUSED_RICCATI_STEP_BODY}}", code_fused_riccati)
+            content = re.sub(r"// \[\[SPARSE_KERNELS_START\]\]", "", content)
+            content = re.sub(r"// \[\[SPARSE_KERNELS_END\]\]", "", content)
+        else:
+            content = re.sub(
+                r"// \[\[SPARSE_KERNELS_START\]\].*?// \[\[SPARSE_KERNELS_END\]\]",
+                "",
+                content,
+                flags=re.DOTALL,
+            )
+
+        return "\n".join(line.rstrip() for line in content.splitlines()) + "\n"
+
+    def _warn_terminal_control_projection(self, r_grad, D_expr, nu, nc):
+        if nu <= 0:
+            return
+
+        u_used_in_cost = any(not sp.sympify(r_grad[i]).is_zero for i in range(nu))
+        u_used_in_con = False
+        if nc > 0:
+            for r in range(nc):
+                for c in range(nu):
+                    if not sp.sympify(D_expr[r, c]).is_zero:
+                        u_used_in_con = True
+                        break
+                if u_used_in_con:
+                    break
+
+        if u_used_in_cost:
+            print(f"WARNING: cost depends on u. Terminal stage (k=N) has no "
+                  f"control decision; terminal cost will project controls to 0.")
+        if u_used_in_con:
+            print(f"WARNING: constraints depend on u. Terminal stage (k=N) has "
+                  f"no control decision; terminal constraints will project controls to 0.")
+
+    def _write_generated_header(self, output_dir, content):
+        file_name = "car_model.h"
+        if self.name != "CarModel":
+            file_name = f"{self.name.lower()}.h"
+
+        output_path = os.path.join(output_dir, file_name)
+        os.makedirs(output_dir, exist_ok=True)
+
+        print(f"Generating {output_path}...")
+        with open(output_path, 'w') as f:
+            f.write(content)
+
+    def generate(self, output_dir="include/model", use_fused_riccati=True, integrator_type=None):
+        integrator_type = self._resolve_integrator_type(integrator_type)
 
         # 1. Vectorize
         x_vec = sp.Matrix(self.states)
@@ -1414,114 +1586,13 @@ class OptimalControlModel:
         
         # 5. Code Construction
         
-        # Constants
-        code_constants = f"static const int NX={nx};\n    static const int NU={nu};\n    static const int NC={nc};\n    static const int NP={np_param};"
-
-        fingerprint = self._compute_model_fingerprint(integrator_type)
-        code_constants += f"\n\n    static constexpr std::uint64_t model_fingerprint = 0x{fingerprint:016x}ull;"
-
-        # Marker: which integrator the fused Riccati kernel was CSE'd against.
-        # MiniSolver's constructor reads this (SFINAE-detected) and warns on a
-        # mismatched runtime config.integrator. Riccati dispatch then skips the
-        # fused kernel because its sparsity pattern is pinned to target_A_expr /
-        # target_B_expr for this specific integrator.
-        code_constants += f"\n\n    static constexpr IntegratorType generated_integrator = IntegratorType::{integrator_type};"
-        
-        # Generate Soft Constraints Meta-Data Array
-        soft_weights_str = "{"
-        soft_types_str = "{"
-        weights_list = [0.0] * nc
-        types_list = [0] * nc 
-        for sc in self.soft_constraints:
-            idx = sc['index']
-            w = sc['weight']
-            t = 2 if sc['type'] == 'L2' else 1
-            if idx < nc:
-                weights_list[idx] = w
-                types_list[idx] = t
-        soft_weights_str += ", ".join([str(w) for w in weights_list]) + "}"
-        soft_types_str += ", ".join([str(t) for t in types_list]) + "}"
-        code_soft = f"    static constexpr std::array<double, NC> constraint_weights = {soft_weights_str};\n"
-        code_soft += f"    static constexpr std::array<int, NC> constraint_types = {soft_types_str};\n"
-        code_constants += "\n\n" + code_soft
-        
-        # Name Arrays
-        code_names = f"static constexpr std::array<const char*, NX> state_names = {{\n"
-        for s in self.states: code_names += f'        "{s.name}",\n'
-        code_names += "    };\n\n"
-        code_names += f"    static constexpr std::array<const char*, NU> control_names = {{\n"
-        for u in self.controls: code_names += f'        "{u.name}",\n'
-        code_names += "    };\n\n"
-        code_names += f"    static constexpr std::array<const char*, NP> param_names = {{\n"
-        for p in self.parameters: code_names += f'        "{p.name}",\n'
-        code_names += "    };\n"
+        code_constants = self._generate_model_constants(
+            nx, nu, nc, np_param, integrator_type)
+        code_names = self._generate_name_arrays()
 
         # Continuous Dynamics Body
-        code_dyn_cont = ""
-        code_dyn_cont += self._generate_unpack_block(source_kp=False, expressions=f_cont)
-        code_dyn_cont += "\n        MSVec<T, NX> xdot;\n"
-        for i in range(nx):
-            code_dyn_cont += f"        xdot({i}) = {sp.ccode(f_cont[i])};\n"
-        code_dyn_cont += "        return xdot;\n"
-
-        if self.dynamics_mode == "dot":
-            code_integrate = """        switch(type) {
-            case IntegratorType::EULER_EXPLICIT:
-                return x_in + dynamics_continuous(x_in, u_in, p_in) * dt;
-
-            case IntegratorType::RK2_EXPLICIT:
-            {
-               auto k1 = dynamics_continuous(x_in, u_in, p_in);
-               auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
-               return x_in + k2 * dt;
-            }
-
-            case IntegratorType::EULER_IMPLICIT:
-            {
-                // Simple Fixed-Point Iteration for x_next = x + f(x_next, u) * dt
-                MSVec<T, NX> x_next = x_in; // Guess
-                for(int i=0; i<5; ++i) {
-                    x_next = x_in + dynamics_continuous(x_next, u_in, p_in) * dt;
-                }
-                return x_next;
-            }
-
-            case IntegratorType::RK2_IMPLICIT:
-            {
-                // Implicit Midpoint: k = f(x + 0.5*dt*k). x_next = x + dt*k
-                MSVec<T, NX> k = dynamics_continuous(x_in, u_in, p_in); // Guess k0
-                for(int i=0; i<5; ++i) {
-                    k = dynamics_continuous<T>(x_in + k * (0.5 * dt), u_in, p_in);
-                }
-                return x_in + k * dt;
-            }
-
-            case IntegratorType::RK4_EXPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
-            {
-               auto k1 = dynamics_continuous(x_in, u_in, p_in);
-               auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
-               auto k3 = dynamics_continuous<T>(x_in + k2 * (0.5 * dt), u_in, p_in);
-               auto k4 = dynamics_continuous<T>(x_in + k3 * dt, u_in, p_in);
-               return x_in + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
-            }
-
-            case IntegratorType::DISCRETE:
-                throw std::invalid_argument("DISCRETE integrator requires Next(state) dynamics");
-        }
-        throw std::invalid_argument("Unsupported integrator type");
-"""
-        else:
-            code_integrate = ""
-            code_integrate += "        if (type != IntegratorType::DISCRETE) {\n"
-            code_integrate += "            throw std::invalid_argument(\"Next(state) dynamics require IntegratorType::DISCRETE\");\n"
-            code_integrate += "        }\n"
-            code_integrate += "        (void)dt;\n"
-            code_integrate += self._generate_unpack_block(source_kp=False, expressions=x_next_direct)
-            code_integrate += "\n        MSVec<T, NX> x_next;\n"
-            for i in range(nx):
-                code_integrate += f"        x_next({i}) = {sp.ccode(x_next_direct[i])};\n"
-            code_integrate += "        return x_next;\n"
+        code_dyn_cont = self._generate_continuous_dynamics_body(f_cont, nx)
+        code_integrate = self._generate_integrate_body(x_next_direct, nx)
 
         # Compute Dynamics Body
         # Note: Discrete dynamics depends on f_cont logic (and thus same symbols), 
@@ -1656,67 +1727,24 @@ class OptimalControlModel:
                 print(f"Warning: Integrator type '{integrator_type}' not found in generated groups. Fused Riccati Kernel will be empty.")
 
         # 6. Read Template & Replace
-        template_path = os.path.join(os.path.dirname(__file__), "templates", "model.h.in")
-        with open(template_path, 'r') as f:
-            template_content = f.read()
-            
-        content = template_content.replace("{{MODEL_NAME}}", self.name)
-        content = content.replace("{{CONSTANTS}}", code_constants)
-        content = content.replace("{{NAME_ARRAYS}}", code_names)
-        content = content.replace("{{DYNAMICS_CONTINUOUS_BODY}}", code_dyn_cont)
-        content = content.replace("{{JACOBIAN_CONTINUOUS_BODY}}", code_jac_body)
-        content = content.replace("{{INTEGRATE_BODY}}", code_integrate)
-        content = content.replace("{{COMPUTE_DYNAMICS_BODY}}", code_compute_dyn)
-        content = content.replace("{{COMPUTE_CONSTRAINTS_BODY}}", code_compute_con)
-        content = content.replace("{{COMPUTE_TRUE_CONSTRAINTS_BODY}}", code_compute_true_con)
-        content = content.replace("{{COMPUTE_TERMINAL_CONSTRAINTS_BODY}}", code_compute_terminal_con)
-        content = content.replace("{{COMPUTE_TERMINAL_TRUE_CONSTRAINTS_BODY}}", code_compute_terminal_true_con)
-        content = content.replace("{{COMPUTE_SOC_CONSTRAINTS_BODY}}", code_compute_soc_con)
-        content = content.replace("{{COMPUTE_COST_SECTION}}", code_compute_cost)
-        content = content.replace("{{COMPUTE_TERMINAL_COST_SECTION}}", code_compute_terminal_cost)
-        
-        if self.use_fused_riccati:
-            content = content.replace("{{FUSED_RICCATI_STEP_BODY}}", code_fused_riccati)
-            # Remove markers
-            content = re.sub(r"// \[\[SPARSE_KERNELS_START\]\]", "", content)
-            content = re.sub(r"// \[\[SPARSE_KERNELS_END\]\]", "", content)
-        else:
-            # Remove the whole section
-            content = re.sub(r"// \[\[SPARSE_KERNELS_START\]\].*?// \[\[SPARSE_KERNELS_END\]\]", "", content, flags=re.DOTALL)
+        content = self._render_model_header({
+            "MODEL_NAME": self.name,
+            "CONSTANTS": code_constants,
+            "NAME_ARRAYS": code_names,
+            "DYNAMICS_CONTINUOUS_BODY": code_dyn_cont,
+            "JACOBIAN_CONTINUOUS_BODY": code_jac_body,
+            "INTEGRATE_BODY": code_integrate,
+            "COMPUTE_DYNAMICS_BODY": code_compute_dyn,
+            "COMPUTE_CONSTRAINTS_BODY": code_compute_con,
+            "COMPUTE_TRUE_CONSTRAINTS_BODY": code_compute_true_con,
+            "COMPUTE_TERMINAL_CONSTRAINTS_BODY": code_compute_terminal_con,
+            "COMPUTE_TERMINAL_TRUE_CONSTRAINTS_BODY": code_compute_terminal_true_con,
+            "COMPUTE_SOC_CONSTRAINTS_BODY": code_compute_soc_con,
+            "COMPUTE_COST_SECTION": code_compute_cost,
+            "COMPUTE_TERMINAL_COST_SECTION": code_compute_terminal_cost,
+        }, code_fused_riccati)
 
-        # 6.5 Terminal u_N guard: warn if cost or constraints depend on u.
-        # In NMPC, terminal stage (k=N) has no control decision. Generated
-        # terminal cost/constraints project all controls to 0, so coupled
-        # x/u expressions keep only their x-only projection at terminal.
-        if nu > 0:
-            u_used_in_cost = any(
-                not sp.sympify(r_grad[i]).is_zero for i in range(nu)
-            )
-            u_used_in_con = False
-            if nc > 0:
-                for r in range(nc):
-                    for c in range(nu):
-                        if not sp.sympify(D_expr[r, c]).is_zero:
-                            u_used_in_con = True
-                            break
-                    if u_used_in_con:
-                        break
-            if u_used_in_cost:
-                print(f"WARNING: cost depends on u. Terminal stage (k=N) has no "
-                      f"control decision; terminal cost will project controls to 0.")
-            if u_used_in_con:
-                print(f"WARNING: constraints depend on u. Terminal stage (k=N) has "
-                      f"no control decision; terminal constraints will project controls to 0.")
+        self._warn_terminal_control_projection(r_grad, D_expr, nu, nc)
 
         # 7. Write Output
-        file_name = "car_model.h"
-        if self.name != "CarModel":
-            file_name = f"{self.name.lower()}.h"
-        
-        output_path = os.path.join(output_dir, file_name)
-        os.makedirs(output_dir, exist_ok=True)
-        content = "\n".join(line.rstrip() for line in content.splitlines()) + "\n"
-
-        print(f"Generating {output_path}...")
-        with open(output_path, 'w') as f:
-            f.write(content)
+        self._write_generated_header(output_dir, content)
