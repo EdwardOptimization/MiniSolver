@@ -1371,6 +1371,159 @@ class OptimalControlModel:
         code += "        return x_next;\n"
         return code
 
+    def _build_dynamics_expressions(self):
+        # Continuous f(x,u) for Dot mode. Next mode is a direct discrete map and
+        # intentionally provides a zero continuous placeholder only for generic
+        # interfaces that are not used by the DISCRETE dispatch path.
+        if self.dynamics_mode == "dot":
+            f_cont_list = [self.dynamics_rhs[s] for s in self.states]
+            x_next_direct = None
+        else:
+            f_cont_list = [0 for _ in self.states]
+            x_next_direct = sp.Matrix([self.next_state_rhs[s] for s in self.states])
+        return sp.Matrix(f_cont_list), x_next_direct
+
+    def _generate_integrator_groups(self, x_vec, u_vec, f_cont, x_next_direct, dt_sym):
+        integrators = {}
+
+        if self.dynamics_mode == "dot":
+            def get_f_subs(x_in, u_in):
+                repl = {self.states[i]: x_in[i] for i in range(len(self.states))}
+                return f_cont.subs(repl)
+
+            x_next_euler = x_vec + dt_sym * f_cont
+            integrators['EULER_EXPLICIT'] = x_next_euler
+
+            k1_rk2 = f_cont
+            k2_rk2 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk2, u_vec)
+            x_next_rk2 = x_vec + dt_sym * k2_rk2
+            integrators['RK2_EXPLICIT'] = x_next_rk2
+
+            k1_rk4 = f_cont
+            k2_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk4, u_vec)
+            k3_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k2_rk4, u_vec)
+            k4_rk4 = get_f_subs(x_vec + dt_sym*k3_rk4, u_vec)
+            x_next_rk4 = x_vec + (dt_sym / 6.0) * (k1_rk4 + 2*k2_rk4 + 2*k3_rk4 + k4_rk4)
+            integrators['RK4_EXPLICIT'] = x_next_rk4
+
+            # Map implicit to explicit for the generated switch cases.
+            # The runtime ImplicitIntegrator handles the actual implicit solve.
+            integrators['EULER_IMPLICIT'] = x_next_euler
+            integrators['RK2_IMPLICIT'] = x_next_rk2
+            integrators['RK4_IMPLICIT'] = x_next_rk4
+
+            return [
+                (['EULER_EXPLICIT', 'EULER_IMPLICIT'], integrators['EULER_EXPLICIT']),
+                (['RK2_EXPLICIT', 'RK2_IMPLICIT'], integrators['RK2_EXPLICIT']),
+                (['RK4_EXPLICIT', 'RK4_IMPLICIT'], integrators['RK4_EXPLICIT']),
+            ]
+
+        integrators['DISCRETE'] = x_next_direct
+        return [(['DISCRETE'], integrators['DISCRETE'])]
+
+    def _generate_compute_dynamics_dispatch(self, groups, integrator_type, x_vec, u_vec, nx, nu):
+        code = ""
+        if self.dynamics_mode == "dot":
+            code = "        switch(type) {\n"
+
+        target_A_expr = None
+        target_B_expr = None
+
+        for labels, x_next_expr in groups:
+            print(f"Generating derivatives for {labels}...")
+
+            A_expr = x_next_expr.jacobian(x_vec)
+            B_expr = x_next_expr.jacobian(u_vec)
+
+            if integrator_type in labels:
+                target_A_expr = A_expr
+                target_B_expr = B_expr
+
+            repl_dyn, reduced_dyn = sp.cse(
+                [x_next_expr, A_expr, B_expr],
+                symbols=sp.numbered_symbols("tmp_d"),
+            )
+
+            # Generate Case Statements. DISCRETE models are direct maps, so the
+            # runtime integrator enum and dt are intentionally ignored.
+            if self.dynamics_mode == "dot":
+                for label in labels:
+                    code += f"            case IntegratorType::{label}:\n"
+                code += "            {\n"
+            else:
+                code += "        // Direct discrete dynamics generated from Next(state) equations.\n"
+                code += "        if (type != IntegratorType::DISCRETE) {\n"
+                code += "            throw std::invalid_argument(\"Next(state) dynamics require IntegratorType::DISCRETE\");\n"
+                code += "        }\n"
+                code += "        (void)dt;\n"
+
+            code += self._emit_cse_assignments(repl_dyn, indent="                ")
+
+            if nx > 0:
+                mat = reduced_dyn[0]
+                for r in range(nx):
+                    val = mat[r]
+                    code += f"                kp.f_resid({r}) = {sp.ccode(val)};\n"
+
+                mat = reduced_dyn[1]
+                code += self._emit_clear_block(
+                    "kp",
+                    ["A"],
+                    "Clear dynamics Jacobian A; nonzero entries are assigned below.",
+                    indent="                ",
+                )
+                code += self._emit_sparse_packet_assign(
+                    "kp", "A", mat, nx, nx, indent="                ")
+
+            if nx > 0 and nu > 0:
+                mat = reduced_dyn[2]
+                code += self._emit_clear_block(
+                    "kp",
+                    ["B"],
+                    "Clear dynamics Jacobian B; nonzero entries are assigned below.",
+                    indent="                ",
+                )
+                code += self._emit_sparse_packet_assign(
+                    "kp", "B", mat, nx, nu, indent="                ")
+
+            if self.dynamics_mode == "dot":
+                code += "                break;\n"
+                code += "            }\n"
+
+        if self.dynamics_mode == "dot":
+            code += "            case IntegratorType::DISCRETE:\n"
+            code += "                throw std::invalid_argument(\"DISCRETE integrator requires Next(state) dynamics\");\n"
+            code += "        }"
+
+        return code, target_A_expr, target_B_expr
+
+    def _generate_continuous_jacobian_body(self, f_cont, x_vec, u_vec, nx, nu):
+        print("Generating continuous Jacobians for implicit integrators...")
+        Jx_cont = f_cont.jacobian(x_vec)
+        Ju_cont = f_cont.jacobian(u_vec)
+
+        repl_jac, reduced_jac = sp.cse(
+            [Jx_cont, Ju_cont],
+            symbols=sp.numbered_symbols("tmp_jc"))
+
+        jac_exprs = [Jx_cont, Ju_cont]
+        code = self._generate_unpack_block(source_kp=False, expressions=jac_exprs)
+        code += "\n        ContinuousJacobians<T, NX, NU> jac;\n"
+        code += self._emit_cse_assignments(repl_jac)
+        code += self._emit_clear_block(
+            "jac",
+            ["Jx", "Ju"],
+            "Clear continuous Jacobian packets; nonzero entries are assigned below.",
+        )
+
+        code += "\n        // Jx = df/dx\n"
+        code += self._emit_sparse_packet_assign("jac", "Jx", reduced_jac[0], nx, nx)
+        code += "\n        // Ju = df/du\n"
+        code += self._emit_sparse_packet_assign("jac", "Ju", reduced_jac[1], nx, nu)
+        code += "\n        return jac;\n"
+
+        return code, Jx_cont, Ju_cont
+
     def _render_model_header(self, replacements, code_fused_riccati):
         template_path = os.path.join(os.path.dirname(__file__), "templates", "model.h.in")
         with open(template_path, 'r') as f:
@@ -1433,212 +1586,32 @@ class OptimalControlModel:
         # 1. Vectorize
         x_vec = sp.Matrix(self.states)
         u_vec = sp.Matrix(self.controls)
-        
+
         nx = len(self.states)
         nu = len(self.controls)
         np_param = len(self.parameters)
         nc = len(self.constraints)
 
-        # Heuristic: Disable Fused Riccati if dimensions are very small, 
+        # Heuristic: Disable Fused Riccati if dimensions are very small,
         # as the overhead of huge code generation might outweigh benefits,
         # or if it's too large (compilation time).
         # For now, default to True but warn if tiny.
         if use_fused_riccati and (nx <= 4):
              print(f"Note: Dimension NX={nx} is small. Fused Riccati might not be necessary, but enabling as requested.")
-        
+
         self.use_fused_riccati = use_fused_riccati
-        
+
         # 2. Dynamics
         dt_sym = sp.symbols('dt')
-        
-        # Continuous f(x,u) for Dot mode. Next mode is a direct discrete map and
-        # intentionally provides a zero continuous placeholder only for generic
-        # interfaces that are not used by the DISCRETE dispatch path.
-        if self.dynamics_mode == "dot":
-            f_cont_list = [self.dynamics_rhs[s] for s in self.states]
-            x_next_direct = None
-        else:
-            f_cont_list = [0 for _ in self.states]
-            x_next_direct = sp.Matrix([self.next_state_rhs[s] for s in self.states])
-        f_cont = sp.Matrix(f_cont_list)
-        
-        # Helper for variable substitution
-        def get_f_subs(x_in, u_in):
-            repl = {self.states[i]: x_in[i] for i in range(nx)}
-            return f_cont.subs(repl)
-
-        # --- Discrete Integrators (Explicit) ---
-        # Note: Implicit integrators (EULER_IMPLICIT, RK2_IMPLICIT, RK4_IMPLICIT)
-        # are handled at runtime by ImplicitIntegrator<Model> in
-        # include/minisolver/integrator/implicit_integrator.h. The generated
-        # model only needs dynamics_continuous() — the Newton solve and
-        # discrete Jacobian computation happen in the integrator module.
-        integrators = {}
-
-        if self.dynamics_mode == "dot":
-            # Euler Explicit
-            x_next_euler = x_vec + dt_sym * f_cont
-            integrators['EULER_EXPLICIT'] = x_next_euler
-
-            # RK2 Explicit (Heun's / Midpoint)
-            k1_rk2 = f_cont
-            k2_rk2 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk2, u_vec)
-            x_next_rk2 = x_vec + dt_sym * k2_rk2
-            integrators['RK2_EXPLICIT'] = x_next_rk2
-
-            # RK4 Explicit
-            k1_rk4 = f_cont
-            k2_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk4, u_vec)
-            k3_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k2_rk4, u_vec)
-            k4_rk4 = get_f_subs(x_vec + dt_sym*k3_rk4, u_vec)
-            x_next_rk4 = x_vec + (dt_sym / 6.0) * (k1_rk4 + 2*k2_rk4 + 2*k3_rk4 + k4_rk4)
-            integrators['RK4_EXPLICIT'] = x_next_rk4
-
-            # Map implicit to explicit for the generated switch cases.
-            # The runtime ImplicitIntegrator handles the actual implicit solve.
-            integrators['EULER_IMPLICIT'] = x_next_euler
-            integrators['RK2_IMPLICIT'] = x_next_rk2
-            integrators['RK4_IMPLICIT'] = x_next_rk4
-        else:
-            integrators['DISCRETE'] = x_next_direct
-
-        # 3. Derivatives & CSE per Integrator
-        code_compute_dyn_body = ""
-        
-        if self.dynamics_mode == "dot":
-            code_compute_dyn_body = "        switch(type) {\n"
-            groups = [
-                (['EULER_EXPLICIT', 'EULER_IMPLICIT'], integrators['EULER_EXPLICIT']),
-                (['RK2_EXPLICIT', 'RK2_IMPLICIT'], integrators['RK2_EXPLICIT']),
-                (['RK4_EXPLICIT', 'RK4_IMPLICIT'], integrators['RK4_EXPLICIT'])
-            ]
-        else:
-            groups = [(['DISCRETE'], integrators['DISCRETE'])]
-        
-        # Track sparsity union across all integrators
-        non_zeros_A = set()
-        non_zeros_B = set()
-        
-        # Keep track of the most general expressions for fused kernel generation (usually RK4)
-        target_A_expr = None
-        target_B_expr = None
-        
-        for labels, x_next_expr in groups:
-            print(f"Generating derivatives for {labels}...")
-            
-            A_expr = x_next_expr.jacobian(x_vec)
-            B_expr = x_next_expr.jacobian(u_vec)
-            
-            if integrator_type in labels:
-                target_A_expr = A_expr
-                target_B_expr = B_expr
-            
-            # Analyze sparsity
-            for r in range(nx):
-                for c in range(nx):
-                    if sp.sympify(A_expr[r, c]).is_zero is not True: 
-                        non_zeros_A.add((r, c))
-            for r in range(nx):
-                for c in range(nu):
-                    if sp.sympify(B_expr[r, c]).is_zero is not True: 
-                        non_zeros_B.add((r, c))
-            
-            # CSE
-            repl_dyn, reduced_dyn = sp.cse([x_next_expr, A_expr, B_expr], symbols=sp.numbered_symbols("tmp_d"))
-            
-            # Generate Case Statements. DISCRETE models are direct maps, so the
-            # runtime integrator enum and dt are intentionally ignored.
-            if self.dynamics_mode == "dot":
-                for label in labels:
-                    code_compute_dyn_body += f"            case IntegratorType::{label}:\n"
-                code_compute_dyn_body += "            {\n"
-            else:
-                code_compute_dyn_body += "        // Direct discrete dynamics generated from Next(state) equations.\n"
-                code_compute_dyn_body += "        if (type != IntegratorType::DISCRETE) {\n"
-                code_compute_dyn_body += "            throw std::invalid_argument(\"Next(state) dynamics require IntegratorType::DISCRETE\");\n"
-                code_compute_dyn_body += "        }\n"
-                code_compute_dyn_body += "        (void)dt;\n"
-            
-            # Body
-            code_compute_dyn_body += self._emit_cse_assignments(repl_dyn, indent="                ")
-            
-            # Assignments
-            # f_resid (x_next)
-            if nx > 0:
-                mat = reduced_dyn[0]
-                for r in range(nx):
-                    val = mat[r]
-                    code_compute_dyn_body += f"                kp.f_resid({r}) = {sp.ccode(val)};\n"
-            
-            # A
-            if nx > 0:
-                mat = reduced_dyn[1]
-                code_compute_dyn_body += self._emit_clear_block(
-                    "kp",
-                    ["A"],
-                    "Clear dynamics Jacobian A; nonzero entries are assigned below.",
-                    indent="                ",
-                )
-                code_compute_dyn_body += self._emit_sparse_packet_assign(
-                    "kp", "A", mat, nx, nx, indent="                ")
-            
-            # B
-            if nx > 0 and nu > 0:
-                mat = reduced_dyn[2]
-                code_compute_dyn_body += self._emit_clear_block(
-                    "kp",
-                    ["B"],
-                    "Clear dynamics Jacobian B; nonzero entries are assigned below.",
-                    indent="                ",
-                )
-                code_compute_dyn_body += self._emit_sparse_packet_assign(
-                    "kp", "B", mat, nx, nu, indent="                ")
-
-            if self.dynamics_mode == "dot":
-                code_compute_dyn_body += "                break;\n"
-                code_compute_dyn_body += "            }\n"
-
-        if self.dynamics_mode == "dot":
-            code_compute_dyn_body += "            case IntegratorType::DISCRETE:\n"
-            code_compute_dyn_body += "                throw std::invalid_argument(\"DISCRETE integrator requires Next(state) dynamics\");\n"
-            code_compute_dyn_body += "        }"
-
-        # 3.2 Continuous Jacobians for implicit integrators
-        # Compute Jx = df/dx and Ju = df/du symbolically from f_cont.
-        print("Generating continuous Jacobians for implicit integrators...")
-        Jx_cont = f_cont.jacobian(x_vec)  # NX x NX
-        Ju_cont = f_cont.jacobian(u_vec)  # NX x NU
-
-        # CSE for continuous Jacobians
-        repl_jac, reduced_jac = sp.cse(
-            [Jx_cont, Ju_cont],
-            symbols=sp.numbered_symbols("tmp_jc"))
-
-        # Generate jacobian_continuous() body
-        jac_exprs = [Jx_cont, Ju_cont]
-        code_jac_body = self._generate_unpack_block(source_kp=False, expressions=jac_exprs)
-        code_jac_body += "\n        ContinuousJacobians<T, NX, NU> jac;\n"
-
-        # CSE intermediates
-        code_jac_body += self._emit_cse_assignments(repl_jac)
-
-        # Assign Jx (NX x NX)
-        code_jac_body += self._emit_clear_block(
-            "jac",
-            ["Jx", "Ju"],
-            "Clear continuous Jacobian packets; nonzero entries are assigned below.",
+        f_cont, x_next_direct = self._build_dynamics_expressions()
+        groups = self._generate_integrator_groups(
+            x_vec, u_vec, f_cont, x_next_direct, dt_sym)
+        code_compute_dyn_body, target_A_expr, target_B_expr = (
+            self._generate_compute_dynamics_dispatch(
+                groups, integrator_type, x_vec, u_vec, nx, nu)
         )
-
-        code_jac_body += "\n        // Jx = df/dx\n"
-        mat_jx = reduced_jac[0]
-        code_jac_body += self._emit_sparse_packet_assign("jac", "Jx", mat_jx, nx, nx)
-
-        # Assign Ju (NX x NU)
-        code_jac_body += "\n        // Ju = df/du\n"
-        mat_ju = reduced_jac[1]
-        code_jac_body += self._emit_sparse_packet_assign("jac", "Ju", mat_ju, nx, nu)
-
-        code_jac_body += "\n        return jac;\n"
+        code_jac_body, Jx_cont, Ju_cont = self._generate_continuous_jacobian_body(
+            f_cont, x_vec, u_vec, nx, nu)
 
         # 3.5 Derivatives for Cost & Constraints (Independent of Integrator)
         g_vec = sp.Matrix(self.constraints) if nc > 0 else sp.Matrix.zeros(0,1)
