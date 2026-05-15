@@ -171,6 +171,42 @@ def test_quad_norm2_generates_exact_constraint_hessian():
         )
 
 
+def test_quad_norm2_allows_symbolic_rhs_and_q_contract():
+    model = OptimalControlModel("QuadNorm2SymbolicDomainModel")
+    x = model.state("x")
+    u = model.control("u")
+    q_scale, rho = model.parameter("q_scale", "rho")
+    model.subject_to(Dot(x) == 0)
+    model.subject_to_quad([[q_scale]], [u], rhs=rho, rhs_mode="norm2", type="inside")
+    model.minimize(u**2)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        compile_and_run(
+            tmpdir,
+            "quad_norm2_symbolic_domain_check.cpp",
+            "quad_norm2_symbolic_domain_check",
+            """
+            #include "quadnorm2symbolicdomainmodel.h"
+            #include <cmath>
+
+            int main() {
+                using Model = minisolver::QuadNorm2SymbolicDomainModel;
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                kp.set_zero();
+                kp.u(0) = 3.0;
+                kp.p(0) = 4.0;  // q_scale, user-guaranteed PSD at runtime.
+                kp.p(1) = 6.0;  // rho, user-guaranteed non-negative at runtime.
+
+                Model::compute_constraints(kp);
+                if (std::abs(kp.g_val(0)) > 1e-8) return 1;
+                if (std::abs(kp.D(0, 0) - 2.0) > 1e-8) return 2;
+                return 0;
+            }
+            """,
+        )
+
+
 def test_stage_only_constraint_zeros_terminal_row():
     model = OptimalControlModel("StageOnlyConstraintModel")
     x = model.state("x")

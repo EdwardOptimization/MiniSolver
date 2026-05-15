@@ -408,6 +408,11 @@ class OptimalControlModel:
         variable or parameter, because the squared form q(x) - rhs**2 <= 0 has
         the same feasible set only when rhs >= 0 and loses the convex cone
         expression used by the exact Hessian path.
+
+        MiniModel can statically reject negative numeric rhs values and
+        non-PSD numeric Q matrices. If rhs or Q contains symbolic parameters,
+        the model author must ensure rhs >= 0 and Q is PSD over the operating
+        domain, for example by adding explicit model constraints.
         """
         if rhs_mode not in ('quadratic', 'norm2'):
             raise ValueError("rhs_mode must be 'quadratic' or 'norm2'")

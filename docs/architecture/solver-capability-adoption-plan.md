@@ -238,6 +238,11 @@ Current direction:
 - `add_residual` is the right high-level interface for least-squares costs.
 - True constraint residuals, QP linearization residuals, and SOC correction
   residuals should remain semantically distinct.
+- `subject_to_quad(..., rhs_mode="norm2")` belongs to MiniModel/codegen. It
+  represents `sqrt((x-c)^T Q (x-c) + eps) <= rhs` or the corresponding outside
+  form. Numeric `rhs` and `Q` are checked at generation time; symbolic or
+  parameter-dependent `rhs/Q` are a model contract, so users must ensure
+  `rhs >= 0` and `Q` is PSD over the operating domain.
 - Circle/ellipse/obstacle-specific projected-boundary logic belongs in
   MiniModel/codegen-generated packets, not in the solver core.
 
