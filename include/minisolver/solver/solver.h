@@ -150,6 +150,10 @@ public:
     // Reset Function
     void reset(ResetOption option = ResetOption::ALG_STATE)
     {
+        if (reject_callback_structural_mutation_()) {
+            return;
+        }
+
         // 1. Reset Algorithmic Scalars
         context_.reset_algorithmic(config.mu_init, config.reg_init);
         // 2. Reset Components
@@ -199,6 +203,9 @@ public:
 
     ApiStatus resize_horizon(int new_n)
     {
+        if (reject_callback_structural_mutation_()) {
+            return ApiStatus::InvalidArgument;
+        }
         if (new_n < 0 || new_n > MAX_N) {
             MLOG_ERROR("new_n outside valid range [0, MAX_N]");
             return ApiStatus::InvalidHorizon;
@@ -219,6 +226,9 @@ public:
 
     ApiStatus set_config(const SolverConfig& conf)
     {
+        if (reject_callback_structural_mutation_()) {
+            return ApiStatus::InvalidArgument;
+        }
         // Backend is fixed at construction time (see ctor note: "explicit
         // backend argument; keep it as the source of truth"). Preserve it
         // across set_config so a caller passing a default-constructed conf
@@ -1857,8 +1867,22 @@ public:
     }
 
 private:
+    void begin_callback_invocation_()
+    {
+        callback_contract_violated_ = false;
+        callback_active_ = true;
+    }
+
+    void end_callback_invocation_() { callback_active_ = false; }
+
     bool begin_solve_()
     {
+        if (reject_callback_structural_mutation_()) {
+            context_.info.reset();
+            record_terminal_info_(SolverStatus::INVALID_INPUT, SolverStatus::INVALID_INPUT);
+            return false;
+        }
+
         rebuild_solver_components_if_dirty_();
         // Diagnostic line-search trace — fresh per solve. Reserve once at the
         // configured max iteration count so the hot-path push_back stays
@@ -1895,9 +1919,14 @@ private:
             return ApiStatus::OK;
         }
 
+        begin_callback_invocation_();
         const ApiStatus status = model_update_callback_(*this, model_update_callback_user_);
+        end_callback_invocation_();
         if (status != ApiStatus::OK) {
             return status;
+        }
+        if (callback_contract_violated_) {
+            return ApiStatus::InvalidArgument;
         }
 
         // This hook updates model data before evaluation. Rebuilding solver components
@@ -1906,6 +1935,15 @@ private:
             return ApiStatus::InvalidArgument;
         }
         return ApiStatus::OK;
+    }
+
+    bool reject_callback_structural_mutation_()
+    {
+        if (!callback_active_) {
+            return false;
+        }
+        callback_contract_violated_ = true;
+        return true;
     }
 
     LoopExitDecision should_exit_after_step_status_(SolverStatus step_stat, int iter) const
@@ -2555,6 +2593,8 @@ private:
 
     ModelUpdateCallback model_update_callback_ = nullptr;
     void* model_update_callback_user_ = nullptr;
+    bool callback_active_ = false;
+    bool callback_contract_violated_ = false;
 
     SolverContext context_;
 

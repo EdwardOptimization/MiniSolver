@@ -67,14 +67,11 @@ Operations that should not be used from the callback:
 - `reset()`;
 - `resize_horizon()`.
 
-If a callback changes solver configuration and marks the internal build state
-dirty, the current solve exits as `INVALID_INPUT`. Execution plans must be
-rebuilt at construction, `set_config()`, snapshot restore, or solve-entry build
+MiniSolver rejects these structural operations while a callback is active. If a
+callback attempts them, the current solve exits as `INVALID_INPUT` and the
+structural mutation is not applied. Execution plans must be rebuilt at
+construction, `set_config()`, snapshot restore, or solve-entry build
 boundaries, not mid-iteration.
-
-Other structural mutations such as recursive `solve()`, `reset()`, or
-`resize_horizon()` are unsupported inside the callback. They may leave the
-current solve without a meaningful algorithmic interpretation.
 
 If the callback returns any status other than `ApiStatus::OK`, the solve exits
 with `SolverStatus::INVALID_INPUT`.
