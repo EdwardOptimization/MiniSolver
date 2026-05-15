@@ -9,7 +9,8 @@ failure or compare solver behavior across commits.
 Snapshot I/O may save and restore:
 
 - `SolverConfig`
-- runtime metadata such as status, iterations, `mu`, `reg`, and total cost
+- runtime metadata such as status, iterations, `mu`, `reg`, and internal total
+  cost
 - horizon length and `dt` trajectory
 - primal, slack, soft-slack, and dual trajectory values
 
@@ -73,6 +74,17 @@ the snapshot config round-trip test in the same commit.
 Snapshot load validates the restored config before mutating the target solver.
 Invalid config, invalid enum values, bad dimensions, model mismatch, truncated
 files, and trailing bytes are rejected atomically.
+
+## Cost Metadata
+
+`Snapshot::total_cost` is the internal solver cost stored in the active
+trajectory (`kp.cost`). If objective or problem scaling is enabled, this value
+is scaled and is intended for replay diagnostics, not model-unit reporting.
+
+For model-unit objective comparisons, use the solver-facing stage-cost accessors
+or accumulate `kp.cost_unscaled` in diagnostics that are built for that purpose.
+Do not compare snapshot `total_cost` across different scaling configurations as
+if it were a physical objective value.
 
 ## Model Fingerprint Contract
 
