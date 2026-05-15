@@ -2173,14 +2173,16 @@ private:
 
             detail::evaluate_model_stage<Model>(traj[k], config, current_dt, k == N);
 
-            // 2. Check NaNs (bit-level, works under -ffast-math)
-            for (int i = 0; i < NC; ++i) {
-                if (MatOps::is_nan_scalar(traj[k].g_val(i))
-                    || MatOps::is_nan_scalar(detail::true_constraint_value<Model>(traj[k], i))
-                    || MatOps::is_nan_scalar(traj[k].s(i))) {
-                    residuals.residuals_ok = false;
-                    return residuals;
-                }
+            // 2. Check model and primal-dual data used by postsolve metrics.
+            if (!MatOps::is_finite_scalar(traj[k].cost)
+                || !MatOps::is_finite_scalar(traj[k].cost_unscaled)
+                || !MatOps::is_finite_scalar(traj[k].objective_scale)
+                || !MatOps::all_finite(traj[k].f_resid) || !MatOps::all_finite(traj[k].g_val)
+                || !MatOps::all_finite(traj[k].g_true) || !MatOps::all_finite(traj[k].g_unscaled)
+                || !MatOps::all_finite(traj[k].s) || !MatOps::all_finite(traj[k].lam)
+                || !MatOps::all_finite(traj[k].soft_s)) {
+                residuals.residuals_ok = false;
+                return residuals;
             }
 
             // 3. Barrier complementarity (including L1-soft secondary pair).
