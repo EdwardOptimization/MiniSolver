@@ -203,6 +203,54 @@ Candidate modes:
 Every fallback must be visible in diagnostics. Silent subproblem changes should
 not be reported as normal solves.
 
+### P2: Barrier And Globalization Strategy Scope
+
+Source systems:
+
+- Ipopt: monotone/adaptive barrier updates, quality-function centering, filter
+  line search, watchdog, and restoration.
+- acados/HPIPM: real-time SQP/RTI globalization choices and aggressive
+  warm-started steps.
+- Clarabel/ECOS/SCS: homogeneous self-dual embedding for conic certificate
+  workflows, which is not MiniSolver's current NMPC/Riccati route.
+
+MiniSolver should not become a catalog of every NLP globalization variant. The
+current strategy families cover the important fixed-size NMPC/IPM skeleton:
+
+- Barrier update: `MONOTONE`, `ADAPTIVE`, and `MEHROTRA`.
+- Step acceptance: `NONE`, `MERIT`, and `FILTER`.
+
+Near-term work should strengthen these existing strategies before adding new
+ones:
+
+- Improve the robustness of the existing Mehrotra path, including clearer
+  diagnostics, better fallback behavior, and benchmark evidence for any change
+  to centering or affine-step handling.
+- Keep filter diagnostics and SOC/restoration triggers explainable before
+  extending the filter theory surface.
+- Keep `MONOTONE + MERIT` as the simple reference-style path and avoid
+  weakening it with advanced heuristics.
+
+Future additions require a concrete failure case or benchmark:
+
+- Watchdog / nonmonotone filter support is the most plausible next
+  globalization feature for warm-started NMPC, because it can reduce overly
+  conservative backtracking while preserving a rollback path.
+- Trust-region globalization is useful for bad initial guesses and strongly
+  nonlinear problems, but it changes the step/globalization contract and should
+  be designed as a separate phase, not patched into line search.
+- Quality-function or oracle-style barrier updates may be useful if
+  `ADAPTIVE` and `MEHROTRA` repeatedly fail on benchmarked cases, but they
+  should not be added as another default knob without evidence.
+
+Deferred or out-of-scope for the current route:
+
+- Homogeneous self-dual embedding as a primary solve route.
+- A broad menu of named barrier schedules that duplicate the existing three
+  barrier families.
+- Pareto-frontier filter history, funnel methods, or penalty-filter hybrids
+  without a real NMPC failure that current `MERIT`/`FILTER` cannot explain.
+
 ### P0: Constraint Scaling / Per-Row Normalization
 
 This is listed separately from general scaling because it is the most likely
