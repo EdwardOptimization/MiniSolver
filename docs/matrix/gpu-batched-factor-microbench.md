@@ -12,6 +12,9 @@ Cholesky decomposition.
 Implemented variants:
 
 - `CPU`: sequential host Cholesky for every matrix in the batch.
+- `CPU-threaded`: persistent `std::thread` workers over the batch. The benchmark
+  uses one thread for small batches and increases thread count only when each
+  worker has enough matrices to amortize launch overhead.
 - `GPU`: one CUDA thread factors one matrix.
 
 This GPU kernel is intentionally a simple baseline. It is not a tuned
@@ -51,24 +54,26 @@ precision and reconstruction error around `1e-15`.
 
 Key timing observations:
 
-| DIM | Batch | GPU speedup | Interpretation |
-| --- | ---: | ---: | --- |
-| 4 | 1 | 0.00x | Kernel launch dominates |
-| 4 | 256 | 0.49x | Still slower than CPU |
-| 4 | 4096 | 8.81x | Batch factorization starts to win |
-| 4 | 65536 | 30.48x | Strong batched speedup |
-| 8 | 256 | 0.62x | Still slower than CPU |
-| 8 | 4096 | 9.88x | Batch factorization starts to win |
-| 8 | 65536 | 22.63x | Strong batched speedup |
-| 12 | 4096 | 6.74x | Batch factorization wins |
-| 12 | 65536 | 4.30x | Memory/register pressure reduces benefit |
-| 16 | 4096 | 4.68x | Batch factorization wins |
-| 16 | 65536 | 5.05x | Moderate batched speedup |
+| DIM | Batch | Threads | GPU vs seq CPU | GPU vs threaded CPU | Interpretation |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 4 | 256 | 1 | 0.50x | 0.49x | Still slower than CPU |
+| 4 | 4096 | 8 | 8.05x | 4.13x | GPU wins even against threaded CPU |
+| 4 | 65536 | 32 | 29.44x | 3.39x | Strong batched speedup, but less dramatic vs threaded CPU |
+| 8 | 256 | 1 | 0.61x | 0.63x | Still slower than CPU |
+| 8 | 4096 | 8 | 9.62x | 2.36x | GPU wins against threaded CPU |
+| 8 | 65536 | 32 | 22.12x | 1.70x | GPU still wins, but threaded CPU closes the gap |
+| 12 | 4096 | 8 | 6.63x | 1.30x | Marginal win against threaded CPU |
+| 12 | 65536 | 32 | 4.45x | 0.64x | Threaded CPU wins |
+| 16 | 4096 | 8 | 5.91x | 1.36x | Marginal win against threaded CPU |
+| 16 | 65536 | 32 | 3.06x | 0.62x | Threaded CPU wins |
 
 This supports investigating GPU batched matrix kernels for workloads with many
-independent small systems. It does not support a single-problem GPU backend for
-normal NMPC horizons by itself: batches of `1-256` are still slower than CPU in
-this baseline.
+independent small systems, but the threaded CPU baseline makes the conclusion
+more specific: the simple one-thread-per-matrix CUDA kernel is strong for very
+small matrices at large batch, and much less convincing for larger `DIM` once a
+reasonable CPU threaded baseline is used. It does not support a single-problem
+GPU backend for normal NMPC horizons by itself: batches of `1-256` are still
+slower than CPU in this baseline.
 
 ## Next Routes To Investigate
 
@@ -78,7 +83,8 @@ this baseline.
 - Batching across many MPC problems, samples, shooting guesses, or replay cases.
 - Fusion with stage assembly so factorization input is produced directly on
   device.
-- CPU SIMD/threaded baselines before claiming GPU wins.
+- Better CPU SIMD baselines before claiming GPU wins beyond the simple
+  sequential and threaded baselines recorded here.
 
 Until these routes show speedups at the intended workload shape,
 `Backend::GPU_MPX` and `Backend::GPU_PCR` should remain unsupported

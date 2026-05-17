@@ -10,7 +10,7 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | --- | --- | --- |
 | `tools/parallel_scan_gpu_bench.cu` | MPX/PCR-style affine prefix scan benchmark | Correctness error around `1e-15`; normal NMPC-scale horizons are slower on GPU |
 | `docs/matrix/gpu-prefix-scan-microbench.md` | Scan benchmark contract and RTX 5080 results | Records reproduction commands and scale crossover observations |
-| `tools/cuda_batched_factor_bench.cu` | Batched small dense Cholesky benchmark | Correctness error around `1e-15`; large batches show GPU speedup |
+| `tools/cuda_batched_factor_bench.cu` | Batched small dense Cholesky benchmark with sequential and threaded CPU baselines | Correctness error around `1e-15`; GPU wins mainly for large batches of very small matrices |
 | `docs/matrix/gpu-batched-factor-microbench.md` | Batched factorization benchmark contract and RTX 5080 results | Records reproduction commands and batch-size crossover observations |
 | `tools/cuda_scalar_riccati_scan_bench.cu` | Scalar Riccati recurrence as MPX/PCR-style fractional-linear scan | Correctness error around `1e-14`; large `N` crossover only |
 | `docs/matrix/gpu-scalar-riccati-scan-microbench.md` | Riccati-specific scan benchmark contract and RTX 5080 results | Records reproduction commands and why this still is not a backend |
@@ -74,7 +74,9 @@ backend implementation.
 
 Batched small dense Cholesky is more promising for workloads with many
 independent small systems. The baseline kernel wins only when the batch is large
-enough. This suggests GPU acceleration should first target batched workloads:
+enough, and the threaded CPU baseline narrows or reverses the win for larger
+matrix dimensions. This suggests GPU acceleration should first target batched
+workloads with small matrices or a more cooperative GPU kernel:
 
 - many MPC problems;
 - many shooting guesses;
@@ -114,7 +116,7 @@ area, not a solver backend claim.
 
 ## Recommended Next Steps
 
-1. Add a batched CPU SIMD/threaded baseline for small dense factorization.
+1. Add a CPU SIMD baseline for small dense factorization.
 2. Add a cooperative one-block-per-matrix Cholesky kernel for `DIM >= 12`.
 3. Extend the block-LFT benchmark into a full block Riccati direction benchmark
    before touching `RiccatiSolver`.
