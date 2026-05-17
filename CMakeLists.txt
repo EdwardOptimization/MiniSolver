@@ -40,7 +40,10 @@ option(MINISOLVER_ENABLE_NATIVE_ARCH "Enable -march=native for local benchmark b
 option(MINISOLVER_BUILD_TESTS "Build MiniSolver tests" ON)
 option(MINISOLVER_BUILD_EXAMPLES "Build MiniSolver examples" ON)
 option(MINISOLVER_BUILD_TOOLS "Build MiniSolver tools and local benchmarks" ON)
+option(MINISOLVER_BUILD_CUDA_BENCHMARKS "Build standalone CUDA exploratory benchmarks" OFF)
 option(MINISOLVER_FETCH_DEPS "Fetch missing third-party dependencies during configure" ON)
+set(MINISOLVER_CUDA_ARCHITECTURES "native" CACHE STRING
+    "CUDA architectures for standalone CUDA benchmarks, e.g. native, 90, 120")
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-O3 -Wall -Wextra)
@@ -279,6 +282,17 @@ if(MINISOLVER_BUILD_TOOLS)
 
     add_executable(replay_solver tools/replay_solver.cpp)
     target_link_libraries(replay_solver minisolver_lib)
+endif()
+
+if(MINISOLVER_BUILD_CUDA_BENCHMARKS)
+    enable_language(CUDA)
+    add_executable(parallel_scan_gpu_bench EXCLUDE_FROM_ALL tools/parallel_scan_gpu_bench.cu)
+    target_link_libraries(parallel_scan_gpu_bench minisolver_lib)
+    set_target_properties(parallel_scan_gpu_bench PROPERTIES
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+        CUDA_ARCHITECTURES "${MINISOLVER_CUDA_ARCHITECTURES}"
+    )
 endif()
 
 # --- Unit Tests ---
