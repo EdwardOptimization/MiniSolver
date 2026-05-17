@@ -46,13 +46,15 @@ Original request:
 | Requirement | Current evidence | Status |
 | --- | --- | --- |
 | New branch | `feat/gpu-mpx-pcr-microbench` pushed to remote | Done |
-| Implement MPX/PCR | Standalone MPX-like Thrust scan and PCR-like Hillis-Steele scan exist in `parallel_scan_gpu_bench.cu`; scalar Riccati scan variant exists in `cuda_scalar_riccati_scan_bench.cu` | Partial, benchmark-only |
+| Implement MPX/PCR | Standalone MPX-like Thrust scan and PCR-like Hillis-Steele scan exist in `parallel_scan_gpu_bench.cu`; scalar Riccati and block-LFT scan variants cover Riccati-adjacent recurrences | Done for exploratory benchmarks |
 | Reference old GPU branch | Old branch was inspected; direct cherry-pick was rejected because it is highly stale | Done as design input |
 | Confirm speedup at different scales | Scan benchmark covers `NX={2,4,8,12}`, `N={64..65536}`; scalar Riccati scan covers `N={64..65536}` | Done for scan microbenchmarks |
 | First compare matrix decomposition speed | Batched Cholesky benchmark covers `DIM={4,8,12,16}`, `batch={1..65536}` | Done |
 | Avoid end-to-end comparison | No end-to-end solver benchmark was added | Done |
 | Explore other route | Batched small dense factorization, scalar Riccati scan, block-LFT scan, batched scalar Riccati, and batched block LQR Riccati routes added | Done |
-| Working solver GPU backend | `Backend::GPU_MPX/GPU_PCR` still explicitly unsupported | Not done |
+
+Working `Backend::GPU_MPX` / `Backend::GPU_PCR` integration is intentionally
+not part of this exploratory microbenchmark branch. It remains gated below.
 
 ## Interpretation
 

@@ -54,8 +54,10 @@ backend integration gate is met.
   horizons.
 * `cuda_batched_lqr_riccati_bench.cu`: batched barrier-affine block Riccati
   recursion with synthetic defect RHS and mixed hard/L1/L2 recovery.
-* `cuda_generated_packet_upload_bench.cu`: generated-model packet eval/pack and
-  host-to-device upload timing for existing example generated models.
+* `cuda_generated_packet_upload_bench.cu`: generated-model packet eval/pack,
+  host-to-device upload timing, synthetic device packet fill, and a
+  hand-transcribed CUDA `CarModel` packet-assembly prototype for existing
+  example generated models.
 
 See `docs/matrix/gpu-route-triage.md` before interpreting these as solver
 backend evidence.
