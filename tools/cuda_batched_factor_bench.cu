@@ -121,6 +121,69 @@ __global__ void cholesky_batch_kernel(const double* input, double* output, int* 
 }
 
 template <int DIM>
+__global__ void cholesky_batch_cooperative_kernel(
+    const double* input, double* output, int* info, int count)
+{
+    const int matrix_idx = blockIdx.x;
+    if (matrix_idx >= count) {
+        return;
+    }
+
+    __shared__ double L[DIM * DIM];
+    __shared__ int status;
+
+    const int tid = threadIdx.x;
+    const double* A = input + static_cast<std::size_t>(matrix_idx * DIM * DIM);
+    double* out = output + static_cast<std::size_t>(matrix_idx * DIM * DIM);
+
+    if (tid == 0) {
+        status = 0;
+    }
+    for (int idx = tid; idx < DIM * DIM; idx += blockDim.x) {
+        const int row = idx / DIM;
+        const int col = idx - row * DIM;
+        L[idx] = (col <= row) ? A[idx] : 0.0;
+    }
+    __syncthreads();
+
+    for (int j = 0; j < DIM; ++j) {
+        if (tid == 0) {
+            double diag = L[j * DIM + j];
+            for (int k = 0; k < j; ++k) {
+                const double v = L[j * DIM + k];
+                diag -= v * v;
+            }
+            if (!(diag > 0.0)) {
+                status = 1;
+            } else {
+                L[j * DIM + j] = sqrt(diag);
+            }
+        }
+        __syncthreads();
+        if (status != 0) {
+            break;
+        }
+
+        const double diag_l = L[j * DIM + j];
+        for (int i = j + 1 + tid; i < DIM; i += blockDim.x) {
+            double acc = L[i * DIM + j];
+            for (int k = 0; k < j; ++k) {
+                acc -= L[i * DIM + k] * L[j * DIM + k];
+            }
+            L[i * DIM + j] = acc / diag_l;
+        }
+        __syncthreads();
+    }
+
+    for (int idx = tid; idx < DIM * DIM; idx += blockDim.x) {
+        out[idx] = L[idx];
+    }
+    if (tid == 0) {
+        info[matrix_idx] = status;
+    }
+}
+
+template <int DIM>
 void cpu_factor_batch(const std::vector<double>& input, std::vector<double>& output, int count)
 {
     output.resize(static_cast<std::size_t>(count * DIM * DIM));
@@ -253,7 +316,7 @@ double max_reconstruction_error(
 }
 
 template <int DIM>
-float gpu_factor_batch(
+float gpu_factor_batch_simple(
     const std::vector<double>& input, std::vector<double>& output, int count, int repeats)
 {
     double* d_input = nullptr;
@@ -299,13 +362,62 @@ float gpu_factor_batch(
     return total_ms / static_cast<float>(repeats);
 }
 
+template <int DIM>
+float gpu_factor_batch_cooperative(
+    const std::vector<double>& input, std::vector<double>& output, int count, int repeats)
+{
+    double* d_input = nullptr;
+    double* d_output = nullptr;
+    int* d_info = nullptr;
+    const std::size_t bytes = static_cast<std::size_t>(count * DIM * DIM) * sizeof(double);
+
+    CUDA_CHECK(cudaMalloc(&d_input, bytes));
+    CUDA_CHECK(cudaMalloc(&d_output, bytes));
+    CUDA_CHECK(cudaMalloc(&d_info, static_cast<std::size_t>(count) * sizeof(int)));
+    CUDA_CHECK(cudaMemcpy(d_input, input.data(), bytes, cudaMemcpyHostToDevice));
+
+    constexpr int threads = 32;
+    const int blocks = count;
+    cholesky_batch_cooperative_kernel<DIM><<<blocks, threads>>>(d_input, d_output, d_info, count);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    const float total_ms = time_cuda_ms([&]() {
+        for (int r = 0; r < repeats; ++r) {
+            cholesky_batch_cooperative_kernel<DIM>
+                <<<blocks, threads>>>(d_input, d_output, d_info, count);
+            CUDA_CHECK(cudaGetLastError());
+        }
+    });
+
+    output.resize(static_cast<std::size_t>(count * DIM * DIM));
+    std::vector<int> info(static_cast<std::size_t>(count));
+    CUDA_CHECK(cudaMemcpy(output.data(), d_output, bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(info.data(), d_info, static_cast<std::size_t>(count) * sizeof(int),
+        cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
+    CUDA_CHECK(cudaFree(d_info));
+
+    for (int i = 0; i < count; ++i) {
+        if (info[static_cast<std::size_t>(i)] != 0) {
+            std::cerr << "Cooperative GPU Cholesky failed at matrix " << i << "\n";
+            std::exit(1);
+        }
+    }
+
+    return total_ms / static_cast<float>(repeats);
+}
+
 template <int DIM> void run_case(int count, int repeats)
 {
     std::vector<double> input;
     generate_spd_batch<DIM>(input, count);
     std::vector<double> cpu_output;
     std::vector<double> threaded_output;
-    std::vector<double> gpu_output;
+    std::vector<double> gpu_simple_output;
+    std::vector<double> gpu_coop_output;
 
     cpu_factor_batch<DIM>(input, cpu_output, count);
     const auto cpu_start = std::chrono::steady_clock::now();
@@ -322,19 +434,26 @@ template <int DIM> void run_case(int count, int repeats)
     const double threaded_us = time_cpu_factor_batch_threaded_us<DIM>(
         input, threaded_output, count, num_threads, repeats);
 
-    const float gpu_ms = gpu_factor_batch<DIM>(input, gpu_output, count, repeats);
-    const double gpu_us = 1000.0 * static_cast<double>(gpu_ms);
-    const double l_err = max_l_error<DIM>(cpu_output, gpu_output);
+    const float gpu_simple_ms
+        = gpu_factor_batch_simple<DIM>(input, gpu_simple_output, count, repeats);
+    const float gpu_coop_ms
+        = gpu_factor_batch_cooperative<DIM>(input, gpu_coop_output, count, repeats);
+    const double gpu_simple_us = 1000.0 * static_cast<double>(gpu_simple_ms);
+    const double gpu_coop_us = 1000.0 * static_cast<double>(gpu_coop_ms);
+    const double simple_l_err = max_l_error<DIM>(cpu_output, gpu_simple_output);
+    const double coop_l_err = max_l_error<DIM>(cpu_output, gpu_coop_output);
     const double threaded_err = max_l_error<DIM>(cpu_output, threaded_output);
-    const double recon_err = max_reconstruction_error<DIM>(input, gpu_output, count);
+    const double recon_err = max_reconstruction_error<DIM>(input, gpu_coop_output, count);
 
     std::cout << std::setw(3) << DIM << " " << std::setw(7) << count << " " << std::setw(4)
               << repeats << " " << std::setw(3) << num_threads << " " << std::setw(12) << std::fixed
               << std::setprecision(2) << cpu_us << " " << std::setw(12) << threaded_us << " "
-              << std::setw(12) << gpu_us << " " << std::setw(9) << std::setprecision(2)
-              << (cpu_us / gpu_us) << " " << std::setw(10) << (threaded_us / gpu_us) << " "
-              << std::scientific << std::setprecision(2) << std::setw(11) << l_err << " "
-              << std::setw(11) << threaded_err << " " << std::setw(11) << recon_err << "\n";
+              << std::setw(12) << gpu_simple_us << " " << std::setw(12) << gpu_coop_us << " "
+              << std::setw(9) << std::setprecision(2) << (threaded_us / gpu_simple_us) << " "
+              << std::setw(9) << (threaded_us / gpu_coop_us) << " " << std::scientific
+              << std::setprecision(2) << std::setw(11) << simple_l_err << " " << std::setw(11)
+              << coop_l_err << " " << std::setw(11) << threaded_err << " " << std::setw(11)
+              << recon_err << "\n";
 }
 
 template <int DIM> void run_dimension_suite()
@@ -357,9 +476,10 @@ int main()
     std::cout << "MiniSolver CUDA batched Cholesky microbenchmark\n";
     std::cout << "Device: " << props.name << "\n";
     std::cout << "Metric: device-resident factorization time; host<->device transfers excluded\n";
-    std::cout << "Kernel: one CUDA thread factorizes one SPD matrix; baseline only\n";
-    std::cout << "DIM   batch    R   T       CPU_us    CPUthr_us       GPU_us   GPU_spd"
-                 "  GPU_spd_thr       L_err   Thr_L_err   recon_err\n";
+    std::cout << "Simple GPU: one CUDA thread factorizes one SPD matrix\n";
+    std::cout << "Coop GPU: one CUDA block factorizes one SPD matrix with 32 threads\n";
+    std::cout << "DIM   batch    R   T       CPU_us    CPUthr_us    GPUseq_us   GPUcoop_us"
+                 "  seq_spdT coop_spdT  Seq_L_err  Coop_L_err   Thr_L_err   recon_err\n";
 
     run_dimension_suite<4>();
     run_dimension_suite<8>();
