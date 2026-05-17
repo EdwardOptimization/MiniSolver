@@ -18,7 +18,7 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | `docs/matrix/gpu-batched-scalar-riccati-microbench.md` | Batched short-horizon Riccati benchmark contract and RTX 5080 results | Records reproduction commands and why batched workloads are the strongest GPU signal |
 | `tools/cuda_block_lft_scan_bench.cu` | Block linear-fractional transform scan as a block-Riccati-adjacent MPX/PCR route | Correctness error around `1e-14` to `1e-13`; only marginal large-`N` PCR crossover |
 | `docs/matrix/gpu-block-lft-scan-microbench.md` | Block-LFT scan benchmark contract and RTX 5080 results | Records why block operator scans still do not justify a normal GPU backend |
-| `tools/cuda_batched_lqr_riccati_bench.cu` | Batched barrier-affine block Riccati direction recursion | Correctness error around `1e-15`; large batches show GPU speedup, small batches do not |
+| `tools/cuda_batched_lqr_riccati_bench.cu` | Batched barrier-affine block Riccati direction recursion with synthetic defect RHS and hard-constraint dual recovery | Correctness error around `1e-15`; large batches show GPU speedup, small batches do not |
 | `docs/matrix/gpu-batched-lqr-riccati-microbench.md` | Batched barrier-affine block Riccati benchmark contract and RTX 5080 results | Records the strongest Riccati-specific evidence for batched GPU workloads |
 
 The branch deliberately does not modify:
@@ -74,9 +74,10 @@ backend implementation.
 
 The batched barrier-affine block Riccati benchmark is the closest current
 artifact to a real Riccati direction workload. It executes Hessian,
-feedforward, and synthetic barrier-derived packet recursions and shows GPU wins
-only when there are thousands of independent horizons. It reinforces that the
-credible near-term GPU target is batched work, not a single-horizon backend.
+feedforward, synthetic barrier-derived packet, dynamics-defect RHS, and
+hard-constraint dual recovery work and shows GPU wins only when there are
+thousands of independent horizons. It reinforces that the credible near-term
+GPU target is batched work, not a single-horizon backend.
 
 ### Batched Factorization Route
 
@@ -107,9 +108,9 @@ one CPU Riccati solve.
 
 The batched barrier-affine block Riccati benchmark strengthens this conclusion
 with a multi-state, multi-control, feedforward recursion plus synthetic
-constraint/barrier packet assembly. For batch `1` and `256`, GPU is much slower
-than CPU; for batch `4096` and `65536`, GPU starts to beat the threaded CPU
-baseline.
+constraint/barrier packet assembly, defect RHS propagation, and hard-constraint
+dual recovery. For batch `1` and `256`, GPU is much slower than CPU; for batch
+`4096` and `65536`, GPU starts to beat the threaded CPU baseline.
 
 ### Neural-Network / Differentiable Workloads
 
@@ -163,8 +164,8 @@ area, not a solver backend claim.
 1. Add a CPU SIMD baseline for small dense factorization.
 2. Tune the cooperative Cholesky kernel for `DIM >= 12` if a batched workload
    needs that shape.
-3. If GPU work continues, add dynamics-defect and slack/dual recovery coverage
-   to the barrier-affine benchmark before touching `RiccatiSolver`.
+3. If GPU work continues, add stage-varying packets and L1/L2 soft recovery
+   coverage before touching `RiccatiSolver`.
 4. If a real workload appears, benchmark batched MPC or sampled-control
    workloads instead of single-horizon solve time.
 5. Keep `src/cuda/gpu_ops.cu` as unsupported until the integration gate passes.

@@ -1,4 +1,4 @@
-// Standalone exploratory benchmark for batched affine block LQR Riccati recursions.
+// Standalone exploratory benchmark for batched barrier-affine block Riccati recursions.
 //
 // This benchmark is closer to a real Riccati workload than prefix-scan
 // microbenchmarks, but it is still not wired into Backend::GPU_*.
@@ -65,15 +65,20 @@ template <int NX, int NU> struct LqrProblem {
     double q[NX];
     double r[NU];
     double qf[NX];
+    double defect[NX];
+    double dx_seed[NX];
     double C[NC * NX];
     double D[NC * NU];
+    double gval[NC];
+    double slack[NC];
+    double lambda[NC];
     double sigma[NC];
     double grad[NC];
 };
 
-template <int NX> constexpr int riccati_output_size()
+template <int NX, int NU> constexpr int riccati_output_size()
 {
-    return NX * NX + NX;
+    return NX * NX + NX + 2 * LqrProblem<NX, NU>::NC;
 }
 
 template <int NX, int NU> LqrProblem<NX, NU> make_problem()
@@ -92,6 +97,8 @@ template <int NX, int NU> LqrProblem<NX, NU> make_problem()
         }
         p.q[r] = 0.01 * static_cast<double>(r + 1);
         p.qf[r] = 0.02 * static_cast<double>(r + 1);
+        p.defect[r] = 0.002 * static_cast<double>((r % 3) - 1);
+        p.dx_seed[r] = 0.01 * static_cast<double>((r % 4) - 1);
     }
     for (int r = 0; r < NU; ++r) {
         for (int c = 0; c < NU; ++c) {
@@ -104,6 +111,9 @@ template <int NX, int NU> LqrProblem<NX, NU> make_problem()
     }
 
     for (int row = 0; row < LqrProblem<NX, NU>::NC; ++row) {
+        p.gval[row] = -0.02 + 0.002 * static_cast<double>(row % 4);
+        p.slack[row] = 0.10 + 0.01 * static_cast<double>((row % 5) + 1);
+        p.lambda[row] = 0.04 + 0.003 * static_cast<double>((row % 7) + 1);
         p.sigma[row] = 0.02 + 0.003 * static_cast<double>((row % 5) + 1);
         p.grad[row] = 0.001 * static_cast<double>((row % 3) - 1);
         for (int col = 0; col < NX; ++col) {
@@ -158,6 +168,29 @@ __host__ __device__ void build_barrier_packet(const LqrProblem<NX, NU>& p, doubl
                 Hbar[r * NX + c] += Dr * weight * p.C[row * NX + c];
             }
         }
+    }
+}
+
+template <int NX, int NU>
+__host__ __device__ void recover_hard_constraint_directions(
+    const LqrProblem<NX, NU>& p, const double* dx, const double* du, double* ds, double* dlam)
+{
+    constexpr int NC = LqrProblem<NX, NU>::NC;
+    constexpr double mu = 1.0e-3;
+
+    for (int row = 0; row < NC; ++row) {
+        double constraint_step = 0.0;
+        for (int col = 0; col < NX; ++col) {
+            constraint_step += p.C[row * NX + col] * dx[col];
+        }
+        for (int col = 0; col < NU; ++col) {
+            constraint_step += p.D[row * NU + col] * du[col];
+        }
+
+        const double r_prim = p.gval[row] + p.slack[row];
+        const double r_y = p.slack[row] * p.lambda[row] - mu;
+        dlam[row] = (-r_y + p.lambda[row] * (r_prim + constraint_step)) / p.slack[row];
+        ds[row] = -r_prim - constraint_step;
     }
 }
 
@@ -259,6 +292,10 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
     double g[NU];
     double K[NU * NX];
     double kff[NU];
+    double direction_u[NU];
+    double rhs_v[NX];
+    double ds[LqrProblem<NX, NU>::NC];
+    double dlam[LqrProblem<NX, NU>::NC];
     double AtPA[NX * NX];
     double Atp[NX];
     double nextP[NX * NX];
@@ -273,6 +310,14 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
 
     for (int step = 0; step < horizon; ++step) {
         build_barrier_packet<NX, NU>(p, Qbar, Rbar, Hbar, qbar, rbar);
+
+        for (int r = 0; r < NX; ++r) {
+            double acc = pvec[r];
+            for (int k = 0; k < NX; ++k) {
+                acc += P[r * NX + k] * p.defect[k];
+            }
+            rhs_v[r] = acc;
+        }
 
         for (int r = 0; r < NX; ++r) {
             for (int c = 0; c < NU; ++c) {
@@ -308,7 +353,7 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
             }
             double g_acc = rbar[r];
             for (int k = 0; k < NX; ++k) {
-                g_acc += p.B[k * NU + r] * pvec[k];
+                g_acc += p.B[k * NU + r] * rhs_v[k];
             }
             g[r] = g_acc;
         }
@@ -323,7 +368,7 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
             }
             double p_acc = 0.0;
             for (int k = 0; k < NX; ++k) {
-                p_acc += p.A[k * NX + r] * pvec[k];
+                p_acc += p.A[k * NX + r] * rhs_v[k];
             }
             Atp[r] = p_acc;
         }
@@ -334,6 +379,10 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
         if (!solve_spd_vector<NU>(S, g, kff)) {
             return false;
         }
+        for (int u = 0; u < NU; ++u) {
+            direction_u[u] = -kff[u];
+        }
+        recover_hard_constraint_directions<NX, NU>(p, p.dx_seed, direction_u, ds, dlam);
 
         for (int r = 0; r < NX; ++r) {
             for (int c = 0; c < NX; ++c) {
@@ -365,6 +414,11 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
     for (int i = 0; i < NX; ++i) {
         output[NX * NX + i] = pvec[i];
     }
+    int offset = NX * NX + NX;
+    for (int i = 0; i < LqrProblem<NX, NU>::NC; ++i) {
+        output[offset + i] = ds[i];
+        output[offset + LqrProblem<NX, NU>::NC + i] = dlam[i];
+    }
     return true;
 }
 
@@ -376,7 +430,7 @@ __global__ void riccati_batch_kernel(
     if (idx >= count) {
         return;
     }
-    constexpr int output_size = NX * NX + NX;
+    constexpr int output_size = NX * NX + NX + 2 * (NX + NU);
     double* out = output + static_cast<std::size_t>(idx * output_size);
     info[idx] = riccati_one<NX, NU>(problem, horizon, out) ? 0 : 1;
 }
@@ -386,7 +440,7 @@ void cpu_riccati_range(
     const LqrProblem<NX, NU>& problem, int horizon, std::vector<double>& output, int begin, int end)
 {
     for (int idx = begin; idx < end; ++idx) {
-        double* out = output.data() + static_cast<std::size_t>(idx * riccati_output_size<NX>());
+        double* out = output.data() + static_cast<std::size_t>(idx * riccati_output_size<NX, NU>());
         if (!riccati_one<NX, NU>(problem, horizon, out)) {
             std::cerr << "CPU Riccati failed at problem " << idx << "\n";
             std::exit(1);
@@ -406,7 +460,7 @@ template <int NX, int NU>
 void cpu_riccati_batch(
     const LqrProblem<NX, NU>& problem, int horizon, std::vector<double>& output, int count)
 {
-    output.resize(static_cast<std::size_t>(count * riccati_output_size<NX>()));
+    output.resize(static_cast<std::size_t>(count * riccati_output_size<NX, NU>()));
     cpu_riccati_range<NX, NU>(problem, horizon, output, 0, count);
 }
 
@@ -414,7 +468,7 @@ template <int NX, int NU>
 double time_cpu_threaded_us(const LqrProblem<NX, NU>& problem, int horizon,
     std::vector<double>& output, int count, int num_threads, int repeats)
 {
-    output.resize(static_cast<std::size_t>(count * riccati_output_size<NX>()));
+    output.resize(static_cast<std::size_t>(count * riccati_output_size<NX, NU>()));
     const auto start = std::chrono::steady_clock::now();
     if (num_threads <= 1 || count <= 1) {
         for (int r = 0; r < repeats; ++r) {
@@ -453,7 +507,7 @@ float gpu_riccati_batch(const LqrProblem<NX, NU>& problem, int horizon, std::vec
     double* d_output = nullptr;
     int* d_info = nullptr;
     const std::size_t output_bytes
-        = static_cast<std::size_t>(count * riccati_output_size<NX>()) * sizeof(double);
+        = static_cast<std::size_t>(count * riccati_output_size<NX, NU>()) * sizeof(double);
     CUDA_CHECK(cudaMalloc(&d_output, output_bytes));
     CUDA_CHECK(cudaMalloc(&d_info, static_cast<std::size_t>(count) * sizeof(int)));
 
@@ -471,7 +525,7 @@ float gpu_riccati_batch(const LqrProblem<NX, NU>& problem, int horizon, std::vec
         }
     });
 
-    output.resize(static_cast<std::size_t>(count * riccati_output_size<NX>()));
+    output.resize(static_cast<std::size_t>(count * riccati_output_size<NX, NU>()));
     std::vector<int> info(static_cast<std::size_t>(count));
     CUDA_CHECK(cudaMemcpy(output.data(), d_output, output_bytes, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(info.data(), d_info, static_cast<std::size_t>(count) * sizeof(int),
@@ -554,7 +608,8 @@ int main()
     std::cout << "Device: " << props.name << "\n";
     std::cout << "Metric: device-resident Riccati direction recursion time; host<->device "
                  "transfers excluded\n";
-    std::cout << "Packet: synthetic C/D/sigma/grad barrier contribution folded into Q/R/H/q/r\n";
+    std::cout << "Packet: synthetic barrier packet, defect RHS, and hard-constraint dual "
+                 "recovery\n";
     std::cout << "GPU kernel: one CUDA thread solves one independent LQR horizon\n";
     std::cout << " NX  NU    N   batch    R   T       CPU_us    CPUthr_us       GPU_us  GPU_spdT"
                  "     GPU_err     Thr_err\n";

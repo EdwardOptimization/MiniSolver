@@ -3,8 +3,9 @@
 This note records an exploratory benchmark for many independent block LQR
 Riccati direction recursions. It is closer to a real Riccati workload than the
 prefix-scan and block-LFT scan microbenchmarks because it includes Hessian,
-affine feedforward, and synthetic barrier-derived constraint packet terms, but
-it is still not a MiniSolver backend.
+affine feedforward, synthetic barrier-derived constraint packet terms,
+dynamics-defect RHS propagation, and hard-constraint slack/dual direction
+recovery, but it is still not a MiniSolver backend.
 
 ## Benchmark Contract
 
@@ -16,14 +17,19 @@ Rbar = R + D^T Sigma D
 Hbar = H + D^T Sigma C
 qbar = q + C^T grad
 rbar = r + D^T grad
+v = p_next + P_next defect
 
 S = Rbar + B^T P_next B
 G = Hbar + B^T P_next A
-g = rbar + B^T p_next
+g = rbar + B^T v
 K = S^-1 G
 k = S^-1 g
 P = Qbar + A^T P_next A - G^T K
-p = qbar + A^T p_next - G^T k
+p = qbar + A^T v - G^T k
+
+du = -k
+constraint_step = C dx_seed + D du
+ds, dlam = hard-constraint primal-dual recovery
 ```
 
 Implemented variants:
@@ -35,8 +41,8 @@ Implemented variants:
 
 Timing excludes host/device transfer and measures device-resident GPU recursion
 time. The benchmark uses fixed synthetic stable `A/B/Q/R/H/Qf/q/r/qf` packets
-and fixed synthetic `C/D/Sigma/grad` barrier-like packets. It does not include
-model evaluation, slack/dual recovery, dynamics-defect RHS assembly,
+and fixed synthetic `C/D/Sigma/grad`, defect, slack, lambda, and constraint
+residual packets. It does not include model evaluation, stage-varying packets,
 line-search interaction, SOC, restoration, or postsolve.
 
 ## Reproduction
@@ -72,20 +78,21 @@ Key timing observations:
 | NX | NU | Horizon N | Batch | Threads | GPU vs threaded CPU | Interpretation |
 | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | 4 | 2 | 32 | 1 | 1 | 0.00x | GPU launch/occupancy overhead dominates |
-| 4 | 2 | 32 | 256 | 2 | 0.64x | GPU still slower |
-| 4 | 2 | 32 | 4096 | 32 | 2.32x | Batch crossover appears |
-| 4 | 2 | 32 | 65536 | 32 | 3.48x | GPU wins for large batch |
-| 4 | 2 | 128 | 4096 | 32 | 1.63x | GPU wins for large batch |
-| 4 | 2 | 128 | 65536 | 32 | 3.49x | GPU wins for large batch |
-| 8 | 4 | 32 | 4096 | 32 | 1.84x | Batch crossover appears |
-| 8 | 4 | 32 | 65536 | 32 | 3.97x | GPU wins for large batch |
-| 8 | 4 | 128 | 4096 | 32 | 1.67x | Batch crossover appears |
-| 8 | 4 | 128 | 65536 | 32 | 3.88x | GPU wins for large batch |
+| 4 | 2 | 32 | 256 | 2 | 0.69x | GPU still slower |
+| 4 | 2 | 32 | 4096 | 32 | 2.66x | Batch crossover appears |
+| 4 | 2 | 32 | 65536 | 32 | 3.82x | GPU wins for large batch |
+| 4 | 2 | 128 | 4096 | 32 | 1.74x | GPU wins for large batch |
+| 4 | 2 | 128 | 65536 | 32 | 3.88x | GPU wins for large batch |
+| 8 | 4 | 32 | 4096 | 32 | 1.97x | Batch crossover appears |
+| 8 | 4 | 32 | 65536 | 32 | 3.99x | GPU wins for large batch |
+| 8 | 4 | 128 | 4096 | 32 | 1.72x | Batch crossover appears |
+| 8 | 4 | 128 | 65536 | 32 | 3.96x | GPU wins for large batch |
 
-This is the most Riccati-specific benchmark on the branch. Adding the
-barrier-like packet assembly strengthens the same core conclusion as the scalar
-batched Riccati benchmark: GPU is attractive when there are many independent
-horizons, but not as a drop-in backend for one normal NMPC solve.
+This is the most Riccati-specific benchmark on the branch. Adding synthetic
+defect RHS propagation and hard-constraint slack/dual recovery keeps the same
+core conclusion as the scalar batched Riccati benchmark: GPU is attractive when
+there are many independent horizons, but not as a drop-in backend for one normal
+NMPC solve.
 
 The exact speedup varies across runs, especially at the largest batch sizes, so
 the result should be read as microbenchmark evidence for a workload shape rather
@@ -101,7 +108,7 @@ primitive. It is still insufficient for enabling `Backend::GPU_MPX` or
 - full dynamics-defect and inequality RHS assembly;
 - per-stage varying model and constraint packets;
 - host/device transfer or fused model evaluation;
-- slack/dual direction recovery;
+- L1/L2 soft-constraint recovery;
 - solver residuals, globalization, SOC, restoration, or postsolve.
 
 The strongest near-term GPU route remains a separate batched workload path:
