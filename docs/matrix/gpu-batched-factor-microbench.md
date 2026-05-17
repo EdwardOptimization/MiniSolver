@@ -15,11 +15,12 @@ Implemented variants:
 - `CPU-threaded`: persistent `std::thread` workers over the batch. The benchmark
   uses one thread for small batches and increases thread count only when each
   worker has enough matrices to amortize launch overhead.
-- `GPU`: one CUDA thread factors one matrix.
+- `GPU-simple`: one CUDA thread factors one matrix.
+- `GPU-coop`: one CUDA block factors one matrix with 32 threads and shared
+  memory.
 
-This GPU kernel is intentionally a simple baseline. It is not a tuned
-cooperative/shared-memory factorization and should not be treated as the final
-GPU backend design.
+These GPU kernels are exploratory baselines. They are not tuned enough to be
+treated as the final GPU backend design.
 
 Timing excludes host/device transfer and measures device-resident factorization
 time for the GPU variant.
@@ -54,31 +55,34 @@ precision and reconstruction error around `1e-15`.
 
 Key timing observations:
 
-| DIM | Batch | Threads | GPU vs seq CPU | GPU vs threaded CPU | Interpretation |
+| DIM | Batch | Threads | GPU-simple vs threaded CPU | GPU-coop vs threaded CPU | Interpretation |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 4 | 256 | 1 | 0.50x | 0.49x | Still slower than CPU |
-| 4 | 4096 | 8 | 8.05x | 4.13x | GPU wins even against threaded CPU |
-| 4 | 65536 | 32 | 29.44x | 3.39x | Strong batched speedup, but less dramatic vs threaded CPU |
-| 8 | 256 | 1 | 0.61x | 0.63x | Still slower than CPU |
-| 8 | 4096 | 8 | 9.62x | 2.36x | GPU wins against threaded CPU |
-| 8 | 65536 | 32 | 22.12x | 1.70x | GPU still wins, but threaded CPU closes the gap |
-| 12 | 4096 | 8 | 6.63x | 1.30x | Marginal win against threaded CPU |
-| 12 | 65536 | 32 | 4.45x | 0.64x | Threaded CPU wins |
-| 16 | 4096 | 8 | 5.91x | 1.36x | Marginal win against threaded CPU |
-| 16 | 65536 | 32 | 3.06x | 0.62x | Threaded CPU wins |
+| 4 | 256 | 1 | 0.49x | 0.58x | GPU is still slower |
+| 4 | 4096 | 8 | 3.87x | 1.56x | Simple GPU wins; cooperative overhead hurts |
+| 4 | 65536 | 32 | 3.37x | 0.38x | Simple GPU wins; cooperative is worse than threaded CPU |
+| 8 | 256 | 1 | 0.61x | 1.85x | Cooperative GPU crosses over |
+| 8 | 4096 | 8 | 2.60x | 1.29x | Both win, simple is better |
+| 8 | 65536 | 32 | 1.66x | 0.42x | Simple GPU wins; cooperative is worse than threaded CPU |
+| 12 | 256 | 1 | 0.41x | 2.06x | Cooperative GPU helps mid-size batches |
+| 12 | 4096 | 8 | 1.20x | 0.89x | Around parity; threaded CPU remains competitive |
+| 12 | 65536 | 32 | 0.53x | 0.69x | Threaded CPU wins |
+| 16 | 256 | 1 | 0.36x | 2.66x | Cooperative GPU helps mid-size batches |
+| 16 | 4096 | 8 | 1.09x | 0.98x | Around parity |
+| 16 | 65536 | 32 | 0.77x | 1.65x | Cooperative GPU wins |
 
 This supports investigating GPU batched matrix kernels for workloads with many
 independent small systems, but the threaded CPU baseline makes the conclusion
 more specific: the simple one-thread-per-matrix CUDA kernel is strong for very
-small matrices at large batch, and much less convincing for larger `DIM` once a
-reasonable CPU threaded baseline is used. It does not support a single-problem
-GPU backend for normal NMPC horizons by itself: batches of `1-256` are still
-slower than CPU in this baseline.
+small matrices at large batch, while the cooperative kernel helps some larger
+matrix cases but is not uniformly better. It does not support a single-problem
+GPU backend for normal NMPC horizons by itself.
 
 ## Next Routes To Investigate
 
-- Cooperative one-block-per-matrix Cholesky for `DIM >= 12`.
-- Shared-memory/register tiling to reduce global-memory traffic.
+- Tune cooperative one-block-per-matrix Cholesky for `DIM >= 12`, including
+  block size and occupancy.
+- Shared-memory/register tiling and batched layout tuning to reduce memory and
+  scheduling overhead.
 - cuSOLVER or CUB-backed batched factorization baselines where available.
 - Batching across many MPC problems, samples, shooting guesses, or replay cases.
 - Fusion with stage assembly so factorization input is produced directly on
