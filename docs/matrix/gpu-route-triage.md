@@ -110,6 +110,34 @@ multi-state, multi-control, feedforward recursion. For batch `1` and `256`, GPU
 is much slower than CPU; for batch `4096` and `65536`, GPU starts to beat the
 threaded CPU baseline.
 
+### Neural-Network / Differentiable Workloads
+
+If MiniSolver is used inside a neural-network training or inference loop, the
+best-supported GPU direction is still batched structured solves rather than a
+single-horizon `Backend::GPU_MPX` or `Backend::GPU_PCR` replacement.
+
+The useful workload shape is:
+
+- many independent horizons from a training batch;
+- many sampled controls or policy rollouts;
+- many replay/corpus cases;
+- many implicit-differentiation linear solves with shared structure.
+
+For that use case, the current batched Riccati results are directly relevant:
+the GPU only becomes competitive once there is enough independent work to fill
+the device. This also matches the likely differentiable-solver contract: the
+forward solve should remain the normal MiniSolver path, and any extra cost
+should come from the explicit implicit-differentiation pass, not from changing
+ordinary solves into a GPU-only mode.
+
+PDLP/HPR-LP-style first-order LP routes are interesting for very large sparse LP
+problems, but they are not the first fit for MiniSolver's small dense structured
+Riccati direction solves. Using them here would require reformulating the local
+QP/KKT work into a generic LP or first-order fixed-point problem, losing much of
+the NMPC block structure that MiniSolver already exploits. They should be
+revisited only if a future differentiable workload is dominated by large sparse
+linear or conic subproblems rather than batched Riccati/KKT solves.
+
 ## Backend Integration Gate
 
 Do not enable `Backend::GPU_MPX` or `Backend::GPU_PCR` until all of these are
