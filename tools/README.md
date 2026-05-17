@@ -25,6 +25,39 @@ cross-solver benchmark suite.
 * `barrier_fusion_bench.cpp`: barrier derivative fusion timing.
 * `block_copy_bench.cpp`: fixed-size block-copy timing.
 
+## CUDA Exploratory Benchmarks
+
+CUDA benchmarks are opt-in and are not part of the default build:
+
+```bash
+cmake -S . -B .build_cuda_bench \
+  -DMINISOLVER_BUILD_CUDA_BENCHMARKS=ON \
+  -DMINISOLVER_BUILD_TESTS=OFF \
+  -DMINISOLVER_BUILD_EXAMPLES=OFF \
+  -DMINISOLVER_BUILD_TOOLS=OFF \
+  -DMINISOLVER_FETCH_DEPS=OFF \
+  -DMINISOLVER_CUDA_ARCHITECTURES=native
+```
+
+These targets are standalone route probes. They do not enable
+`Backend::GPU_MPX` or `Backend::GPU_PCR`, which remain unsupported until a real
+backend integration gate is met.
+
+* `parallel_scan_gpu_bench.cu`: MPX/PCR-style affine prefix scan.
+* `cuda_scalar_riccati_scan_bench.cu`: scalar Riccati recurrence as an
+  MPX/PCR-style scan.
+* `cuda_block_lft_scan_bench.cu`: block linear-fractional-transform scan near a
+  block-Riccati operator composition route.
+* `cuda_batched_factor_bench.cu`: batched small dense Cholesky with sequential
+  CPU, threaded CPU, simple GPU, and cooperative GPU baselines.
+* `cuda_batched_scalar_riccati_bench.cu`: many independent scalar Riccati
+  horizons.
+* `cuda_batched_lqr_riccati_bench.cu`: batched barrier-affine block Riccati
+  recursion with synthetic defect RHS and mixed hard/L1/L2 recovery.
+
+See `docs/matrix/gpu-route-triage.md` before interpreting these as solver
+backend evidence.
+
 ## Debug And Tuning Utilities
 
 * `auto_tuner.cpp`: Monte-Carlo search over MiniSolver configuration choices
