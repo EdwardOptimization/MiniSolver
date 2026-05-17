@@ -10,7 +10,7 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | --- | --- | --- |
 | `tools/parallel_scan_gpu_bench.cu` | MPX/PCR-style affine prefix scan benchmark | Correctness error around `1e-15`; normal NMPC-scale horizons are slower on GPU |
 | `docs/matrix/gpu-prefix-scan-microbench.md` | Scan benchmark contract and RTX 5080 results | Records reproduction commands and scale crossover observations |
-| `tools/cuda_batched_factor_bench.cu` | Batched small dense Cholesky benchmark with sequential/threaded CPU, simple GPU, and cooperative GPU baselines | Correctness error around `1e-15`; GPU wins are workload-shape dependent |
+| `tools/cuda_batched_factor_bench.cu` | Batched small dense Cholesky benchmark with sequential/threaded/Eigen CPU, simple GPU, and cooperative GPU baselines | Correctness error around `1e-15`; GPU wins are workload-shape dependent |
 | `docs/matrix/gpu-batched-factor-microbench.md` | Batched factorization benchmark contract and RTX 5080 results | Records reproduction commands and batch-size crossover observations |
 | `tools/cuda_scalar_riccati_scan_bench.cu` | Scalar Riccati recurrence as MPX/PCR-style fractional-linear scan | Correctness error around `1e-14`; large `N` crossover only |
 | `docs/matrix/gpu-scalar-riccati-scan-microbench.md` | Riccati-specific scan benchmark contract and RTX 5080 results | Records reproduction commands and why this still is not a backend |
@@ -87,9 +87,10 @@ Batched small dense Cholesky is more promising for workloads with many
 independent small systems. The simple one-thread-per-matrix kernel is strongest
 for very small matrices at large batch. The cooperative one-block-per-matrix
 kernel helps some larger-matrix cases, but it is not uniformly better and still
-loses to threaded CPU for several large-batch shapes. This suggests GPU
-acceleration should first target specific batched workloads instead of a generic
-single-problem backend:
+loses to the best CPU baseline for several large-batch shapes. A fixed-size
+Eigen `LLT` baseline improves the smallest `DIM=4` CPU case but does not erase
+the batched GPU signal. This suggests GPU acceleration should first target
+specific batched workloads instead of a generic single-problem backend:
 
 - many MPC problems;
 - many shooting guesses;
@@ -170,11 +171,10 @@ area, not a solver backend claim.
 
 ## Recommended Next Steps
 
-1. Add a CPU SIMD baseline for small dense factorization.
-2. Tune the cooperative Cholesky kernel for `DIM >= 12` if a batched workload
+1. Tune the cooperative Cholesky kernel for `DIM >= 12` if a batched workload
    needs that shape.
-3. If GPU work continues, prototype a fused or persistent-buffer generated-model
+2. If GPU work continues, prototype a fused or persistent-buffer generated-model
    packet path before touching `RiccatiSolver`.
-4. If a real workload appears, benchmark batched MPC or sampled-control
+3. If a real workload appears, benchmark batched MPC or sampled-control
    workloads instead of single-horizon solve time.
-5. Keep `src/cuda/gpu_ops.cu` as unsupported until the integration gate passes.
+4. Keep `src/cuda/gpu_ops.cu` as unsupported until the integration gate passes.

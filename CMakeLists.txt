@@ -296,6 +296,11 @@ if(MINISOLVER_BUILD_CUDA_BENCHMARKS)
 
     add_executable(cuda_batched_factor_bench EXCLUDE_FROM_ALL tools/cuda_batched_factor_bench.cu)
     target_link_libraries(cuda_batched_factor_bench minisolver_lib)
+    target_compile_options(cuda_batched_factor_bench PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=20012>
+        $<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=20014>
+        $<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=20015>
+    )
     set_target_properties(cuda_batched_factor_bench PROPERTIES
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED ON

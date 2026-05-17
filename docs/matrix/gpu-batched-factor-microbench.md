@@ -15,6 +15,8 @@ Implemented variants:
 - `CPU-threaded`: persistent `std::thread` workers over the batch. The benchmark
   uses one thread for small batches and increases thread count only when each
   worker has enough matrices to amortize launch overhead.
+- `CPU-eigenT`: fixed-size Eigen `LLT` with the same batch threading policy. This
+  is a stronger host-library baseline, not a solver dependency change.
 - `GPU-simple`: one CUDA thread factors one matrix.
 - `GPU-coop`: one CUDA block factors one matrix with 32 threads and shared
   memory.
@@ -55,27 +57,29 @@ precision and reconstruction error around `1e-15`.
 
 Key timing observations:
 
-| DIM | Batch | Threads | GPU-simple vs threaded CPU | GPU-coop vs threaded CPU | Interpretation |
+| DIM | Batch | Threads | GPU-simple vs best CPU | GPU-coop vs best CPU | Interpretation |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 4 | 256 | 1 | 0.49x | 0.58x | GPU is still slower |
-| 4 | 4096 | 8 | 3.87x | 1.56x | Simple GPU wins; cooperative overhead hurts |
-| 4 | 65536 | 32 | 3.37x | 0.38x | Simple GPU wins; cooperative is worse than threaded CPU |
-| 8 | 256 | 1 | 0.61x | 1.85x | Cooperative GPU crosses over |
-| 8 | 4096 | 8 | 2.60x | 1.29x | Both win, simple is better |
-| 8 | 65536 | 32 | 1.66x | 0.42x | Simple GPU wins; cooperative is worse than threaded CPU |
-| 12 | 256 | 1 | 0.41x | 2.06x | Cooperative GPU helps mid-size batches |
-| 12 | 4096 | 8 | 1.20x | 0.89x | Around parity; threaded CPU remains competitive |
-| 12 | 65536 | 32 | 0.53x | 0.69x | Threaded CPU wins |
-| 16 | 256 | 1 | 0.36x | 2.66x | Cooperative GPU helps mid-size batches |
-| 16 | 4096 | 8 | 1.09x | 0.98x | Around parity |
-| 16 | 65536 | 32 | 0.77x | 1.65x | Cooperative GPU wins |
+| 4 | 256 | 1 | 0.24x | 0.31x | Fixed-size Eigen is faster than scalar CPU here; GPU is still slower |
+| 4 | 4096 | 8 | 3.17x | 1.14x | Simple GPU wins; cooperative is around parity |
+| 4 | 65536 | 32 | 2.59x | 0.30x | Simple GPU wins; cooperative is worse than best CPU |
+| 8 | 256 | 1 | 0.62x | 1.94x | Cooperative GPU crosses over |
+| 8 | 4096 | 8 | 3.26x | 1.62x | Both win, simple is better |
+| 8 | 65536 | 32 | 2.02x | 0.52x | Simple GPU wins; cooperative is worse than best CPU |
+| 12 | 256 | 1 | 0.41x | 2.00x | Cooperative GPU helps mid-size batches |
+| 12 | 4096 | 8 | 1.22x | 0.90x | Around parity; best CPU remains competitive |
+| 12 | 65536 | 32 | 0.52x | 0.68x | Best CPU wins |
+| 16 | 256 | 1 | 0.36x | 2.63x | Cooperative GPU helps mid-size batches |
+| 16 | 4096 | 8 | 1.15x | 1.04x | Around parity |
+| 16 | 65536 | 32 | 0.77x | 1.66x | Cooperative GPU wins |
 
 This supports investigating GPU batched matrix kernels for workloads with many
-independent small systems, but the threaded CPU baseline makes the conclusion
-more specific: the simple one-thread-per-matrix CUDA kernel is strong for very
-small matrices at large batch, while the cooperative kernel helps some larger
-matrix cases but is not uniformly better. It does not support a single-problem
-GPU backend for normal NMPC horizons by itself.
+independent small systems, but the stronger CPU baselines make the conclusion
+more specific: fixed-size Eigen helps the smallest `DIM=4` case, the hand-written
+threaded CPU loop remains stronger for several larger dimensions, the simple
+one-thread-per-matrix CUDA kernel is strong for very small matrices at large
+batch, and the cooperative kernel helps some larger matrix cases but is not
+uniformly better. It does not support a single-problem GPU backend for normal
+NMPC horizons by itself.
 
 ## Next Routes To Investigate
 
@@ -87,8 +91,9 @@ GPU backend for normal NMPC horizons by itself.
 - Batching across many MPC problems, samples, shooting guesses, or replay cases.
 - Fusion with stage assembly so factorization input is produced directly on
   device.
-- Better CPU SIMD baselines before claiming GPU wins beyond the simple
-  sequential and threaded baselines recorded here.
+- If needed, add architecture-specific SIMD intrinsics or vendor library
+  baselines. The current fixed-size Eigen baseline is a portable host-library
+  check, not a final CPU microkernel.
 
 Until these routes show speedups at the intended workload shape,
 `Backend::GPU_MPX` and `Backend::GPU_PCR` should remain unsupported
