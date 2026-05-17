@@ -12,6 +12,8 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | `docs/matrix/gpu-prefix-scan-microbench.md` | Scan benchmark contract and RTX 5080 results | Records reproduction commands and scale crossover observations |
 | `tools/cuda_batched_factor_bench.cu` | Batched small dense Cholesky benchmark | Correctness error around `1e-15`; large batches show GPU speedup |
 | `docs/matrix/gpu-batched-factor-microbench.md` | Batched factorization benchmark contract and RTX 5080 results | Records reproduction commands and batch-size crossover observations |
+| `tools/cuda_scalar_riccati_scan_bench.cu` | Scalar Riccati recurrence as MPX/PCR-style fractional-linear scan | Correctness error around `1e-14`; large `N` crossover only |
+| `docs/matrix/gpu-scalar-riccati-scan-microbench.md` | Riccati-specific scan benchmark contract and RTX 5080 results | Records reproduction commands and why this still is not a backend |
 
 The branch deliberately does not modify:
 
@@ -36,9 +38,9 @@ Original request:
 | Requirement | Current evidence | Status |
 | --- | --- | --- |
 | New branch | `feat/gpu-mpx-pcr-microbench` pushed to remote | Done |
-| Implement MPX/PCR | Standalone MPX-like Thrust scan and PCR-like Hillis-Steele scan exist in `parallel_scan_gpu_bench.cu` | Partial, benchmark-only |
+| Implement MPX/PCR | Standalone MPX-like Thrust scan and PCR-like Hillis-Steele scan exist in `parallel_scan_gpu_bench.cu`; scalar Riccati scan variant exists in `cuda_scalar_riccati_scan_bench.cu` | Partial, benchmark-only |
 | Reference old GPU branch | Old branch was inspected; direct cherry-pick was rejected because it is highly stale | Done as design input |
-| Confirm speedup at different scales | Scan benchmark covers `NX={2,4,8,12}`, `N={64..65536}` | Done for scan microbenchmark |
+| Confirm speedup at different scales | Scan benchmark covers `NX={2,4,8,12}`, `N={64..65536}`; scalar Riccati scan covers `N={64..65536}` | Done for scan microbenchmarks |
 | First compare matrix decomposition speed | Batched Cholesky benchmark covers `DIM={4,8,12,16}`, `batch={1..65536}` | Done |
 | Avoid end-to-end comparison | No end-to-end solver benchmark was added | Done |
 | Explore other route | Batched small dense factorization route added | Done |
@@ -53,6 +55,10 @@ algorithms, but the current single-problem benchmark does not justify solver
 integration. For normal NMPC horizon lengths, launch overhead and generic scan
 cost dominate. Positive signals only appear for very large `N` or future batched
 multi-problem workloads.
+
+The scalar Riccati scan benchmark confirms the same conclusion in a more
+Riccati-specific setting: the fractional-linear transform scan is correct, but
+single-problem horizons below several thousand stages remain slower than CPU.
 
 ### Batched Factorization Route
 
