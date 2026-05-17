@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <thread>
 #include <vector>
@@ -431,8 +432,8 @@ float gpu_factor_batch_simple(
 }
 
 template <int DIM>
-float gpu_factor_batch_cooperative(
-    const std::vector<double>& input, std::vector<double>& output, int count, int repeats)
+float gpu_factor_batch_cooperative(const std::vector<double>& input, std::vector<double>& output,
+    int count, int repeats, int coop_threads)
 {
     double* d_input = nullptr;
     double* d_output = nullptr;
@@ -444,16 +445,16 @@ float gpu_factor_batch_cooperative(
     CUDA_CHECK(cudaMalloc(&d_info, static_cast<std::size_t>(count) * sizeof(int)));
     CUDA_CHECK(cudaMemcpy(d_input, input.data(), bytes, cudaMemcpyHostToDevice));
 
-    constexpr int threads = 32;
     const int blocks = count;
-    cholesky_batch_cooperative_kernel<DIM><<<blocks, threads>>>(d_input, d_output, d_info, count);
+    cholesky_batch_cooperative_kernel<DIM>
+        <<<blocks, coop_threads>>>(d_input, d_output, d_info, count);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
     const float total_ms = time_cuda_ms([&]() {
         for (int r = 0; r < repeats; ++r) {
             cholesky_batch_cooperative_kernel<DIM>
-                <<<blocks, threads>>>(d_input, d_output, d_info, count);
+                <<<blocks, coop_threads>>>(d_input, d_output, d_info, count);
             CUDA_CHECK(cudaGetLastError());
         }
     });
@@ -476,6 +477,24 @@ float gpu_factor_batch_cooperative(
     }
 
     return total_ms / static_cast<float>(repeats);
+}
+
+template <int DIM>
+float gpu_factor_batch_cooperative_best(const std::vector<double>& input,
+    std::vector<double>& output, int count, int repeats, int& best_threads)
+{
+    float best_ms = std::numeric_limits<float>::infinity();
+    std::vector<double> candidate_output;
+    for (const int coop_threads : { 8, 16, 32, 64 }) {
+        const float ms = gpu_factor_batch_cooperative<DIM>(
+            input, candidate_output, count, repeats, coop_threads);
+        if (ms < best_ms) {
+            best_ms = ms;
+            best_threads = coop_threads;
+            output = candidate_output;
+        }
+    }
+    return best_ms;
 }
 
 template <int DIM> void run_case(int count, int repeats)
@@ -508,8 +527,9 @@ template <int DIM> void run_case(int count, int repeats)
 
     const float gpu_simple_ms
         = gpu_factor_batch_simple<DIM>(input, gpu_simple_output, count, repeats);
-    const float gpu_coop_ms
-        = gpu_factor_batch_cooperative<DIM>(input, gpu_coop_output, count, repeats);
+    int best_coop_threads = 0;
+    const float gpu_coop_ms = gpu_factor_batch_cooperative_best<DIM>(
+        input, gpu_coop_output, count, repeats, best_coop_threads);
     const double gpu_simple_us = 1000.0 * static_cast<double>(gpu_simple_ms);
     const double gpu_coop_us = 1000.0 * static_cast<double>(gpu_coop_ms);
     const double simple_l_err = max_l_error<DIM>(cpu_output, gpu_simple_output);
@@ -522,11 +542,12 @@ template <int DIM> void run_case(int count, int repeats)
               << repeats << " " << std::setw(3) << num_threads << " " << std::setw(12) << std::fixed
               << std::setprecision(2) << cpu_us << " " << std::setw(12) << threaded_us << " "
               << std::setw(12) << eigen_us << " " << std::setw(12) << gpu_simple_us << " "
-              << std::setw(12) << gpu_coop_us << " " << std::setw(9) << std::setprecision(2)
-              << (best_cpu_us / gpu_simple_us) << " " << std::setw(9) << (best_cpu_us / gpu_coop_us)
-              << " " << std::scientific << std::setprecision(2) << std::setw(11) << simple_l_err
-              << " " << std::setw(11) << coop_l_err << " " << std::setw(11) << threaded_err << " "
-              << std::setw(11) << eigen_err << " " << std::setw(11) << recon_err << "\n";
+              << std::setw(12) << gpu_coop_us << " " << std::setw(3) << best_coop_threads << " "
+              << std::setw(9) << std::setprecision(2) << (best_cpu_us / gpu_simple_us) << " "
+              << std::setw(9) << (best_cpu_us / gpu_coop_us) << " " << std::scientific
+              << std::setprecision(2) << std::setw(11) << simple_l_err << " " << std::setw(11)
+              << coop_l_err << " " << std::setw(11) << threaded_err << " " << std::setw(11)
+              << eigen_err << " " << std::setw(11) << recon_err << "\n";
 }
 
 template <int DIM> void run_dimension_suite()
@@ -550,9 +571,9 @@ int main()
     std::cout << "Device: " << props.name << "\n";
     std::cout << "Metric: device-resident factorization time; host<->device transfers excluded\n";
     std::cout << "Simple GPU: one CUDA thread factorizes one SPD matrix\n";
-    std::cout << "Coop GPU: one CUDA block factorizes one SPD matrix with 32 threads\n";
+    std::cout << "Coop GPU: one CUDA block factorizes one SPD matrix; best of 8/16/32/64 threads\n";
     std::cout << "DIM   batch    R   T       CPU_us    CPUthr_us  CPUeigT_us    GPUseq_us"
-                 "   GPUcoop_us  seq_spdB coop_spdB  Seq_L_err  Coop_L_err   Thr_L_err"
+                 "   GPUcoop_us  CT  seq_spdB coop_spdB  Seq_L_err  Coop_L_err   Thr_L_err"
                  " Eigen_L_err   recon_err\n";
 
     run_dimension_suite<4>();

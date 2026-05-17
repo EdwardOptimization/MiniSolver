@@ -18,8 +18,8 @@ Implemented variants:
 - `CPU-eigenT`: fixed-size Eigen `LLT` with the same batch threading policy. This
   is a stronger host-library baseline, not a solver dependency change.
 - `GPU-simple`: one CUDA thread factors one matrix.
-- `GPU-coop`: one CUDA block factors one matrix with 32 threads and shared
-  memory.
+- `GPU-coop`: one CUDA block factors one matrix with shared memory. The
+  benchmark tries `8/16/32/64` threads per block and reports the fastest one.
 
 These GPU kernels are exploratory baselines. They are not tuned enough to be
 treated as the final GPU backend design.
@@ -57,34 +57,34 @@ precision and reconstruction error around `1e-15`.
 
 Key timing observations:
 
-| DIM | Batch | Threads | GPU-simple vs best CPU | GPU-coop vs best CPU | Interpretation |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 4 | 256 | 1 | 0.24x | 0.31x | Fixed-size Eigen is faster than scalar CPU here; GPU is still slower |
-| 4 | 4096 | 8 | 3.17x | 1.14x | Simple GPU wins; cooperative is around parity |
-| 4 | 65536 | 32 | 2.59x | 0.30x | Simple GPU wins; cooperative is worse than best CPU |
-| 8 | 256 | 1 | 0.62x | 1.94x | Cooperative GPU crosses over |
-| 8 | 4096 | 8 | 3.26x | 1.62x | Both win, simple is better |
-| 8 | 65536 | 32 | 2.02x | 0.52x | Simple GPU wins; cooperative is worse than best CPU |
-| 12 | 256 | 1 | 0.41x | 2.00x | Cooperative GPU helps mid-size batches |
-| 12 | 4096 | 8 | 1.22x | 0.90x | Around parity; best CPU remains competitive |
-| 12 | 65536 | 32 | 0.52x | 0.68x | Best CPU wins |
-| 16 | 256 | 1 | 0.36x | 2.63x | Cooperative GPU helps mid-size batches |
-| 16 | 4096 | 8 | 1.15x | 1.04x | Around parity |
-| 16 | 65536 | 32 | 0.77x | 1.66x | Cooperative GPU wins |
+| DIM | Batch | Threads | Best coop threads | GPU-simple vs best CPU | GPU-coop vs best CPU | Interpretation |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 4 | 256 | 1 | 32 | 0.25x | 0.32x | Fixed-size Eigen is faster than scalar CPU here; GPU is still slower |
+| 4 | 4096 | 8 | 64 | 2.61x | 0.94x | Simple GPU wins; cooperative is near parity |
+| 4 | 65536 | 32 | 16 | 3.47x | 0.40x | Simple GPU wins; cooperative is worse than best CPU |
+| 8 | 256 | 1 | 16 | 0.62x | 1.92x | Cooperative GPU crosses over |
+| 8 | 4096 | 8 | 64 | 2.71x | 1.36x | Both win, simple is better |
+| 8 | 65536 | 32 | 32 | 1.69x | 0.43x | Simple GPU wins; cooperative is worse than best CPU |
+| 12 | 256 | 1 | 64 | 0.41x | 2.08x | Cooperative GPU helps mid-size batches |
+| 12 | 4096 | 8 | 64 | 1.46x | 1.08x | Both win, but best CPU remains competitive |
+| 12 | 65536 | 32 | 32 | 0.60x | 0.78x | Best CPU wins |
+| 16 | 256 | 1 | 16 | 0.36x | 2.59x | Cooperative GPU helps mid-size batches |
+| 16 | 4096 | 8 | 64 | 1.11x | 1.00x | Around parity |
+| 16 | 65536 | 32 | 32 | 0.70x | 1.51x | Cooperative GPU wins |
 
 This supports investigating GPU batched matrix kernels for workloads with many
 independent small systems, but the stronger CPU baselines make the conclusion
 more specific: fixed-size Eigen helps the smallest `DIM=4` case, the hand-written
 threaded CPU loop remains stronger for several larger dimensions, the simple
 one-thread-per-matrix CUDA kernel is strong for very small matrices at large
-batch, and the cooperative kernel helps some larger matrix cases but is not
-uniformly better. It does not support a single-problem GPU backend for normal
-NMPC horizons by itself.
+batch, and cooperative block-size tuning helps some larger matrix cases but is
+not uniformly better. It does not support a single-problem GPU backend for
+normal NMPC horizons by itself.
 
 ## Next Routes To Investigate
 
-- Tune cooperative one-block-per-matrix Cholesky for `DIM >= 12`, including
-  block size and occupancy.
+- If a real batched factorization workload appears, tune cooperative Cholesky
+  beyond this basic `8/16/32/64` thread sweep.
 - Shared-memory/register tiling and batched layout tuning to reduce memory and
   scheduling overhead.
 - cuSOLVER or CUB-backed batched factorization baselines where available.
