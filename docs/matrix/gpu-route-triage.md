@@ -145,6 +145,17 @@ The useful workload shape is:
 - many replay/corpus cases;
 - many implicit-differentiation linear solves with shared structure.
 
+The recommended MiniSolver layer contract is therefore:
+
+1. keep the ordinary forward solve on the normal SQP/IPM/Riccati path;
+2. mark trainable problem inputs explicitly, for example through future
+   `diff_parameter` metadata in MiniModel;
+3. compute gradients with an explicit implicit-differentiation pass over the
+   converged KKT/Riccati system;
+4. accelerate the forward/backward pair with batched device-resident generated
+   packets and batched structured Riccati/KKT kernels when the training batch is
+   large enough.
+
 For that use case, the current batched Riccati results are directly relevant:
 the GPU only becomes competitive once there is enough independent work to fill
 the device. This also matches the likely differentiable-solver contract: the
@@ -159,6 +170,12 @@ QP/KKT work into a generic LP or first-order fixed-point problem, losing much of
 the NMPC block structure that MiniSolver already exploits. They should be
 revisited only if a future differentiable workload is dominated by large sparse
 linear or conic subproblems rather than batched Riccati/KKT solves.
+
+Do not treat PDLP/HPR-LP as a matrix-factorization replacement for this branch.
+Their useful GPU property is avoiding factorization through large sparse
+matrix-vector iterations; MiniSolver's useful property is the opposite: small
+structured Newton systems whose factorization and implicit backward pass can
+reuse the OCP/Riccati structure.
 
 ## Backend Integration Gate
 
