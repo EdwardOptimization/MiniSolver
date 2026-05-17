@@ -341,6 +341,20 @@ if(MINISOLVER_BUILD_CUDA_BENCHMARKS)
         CUDA_STANDARD_REQUIRED ON
         CUDA_ARCHITECTURES "${MINISOLVER_CUDA_ARCHITECTURES}"
     )
+
+    add_executable(cuda_generated_packet_upload_bench EXCLUDE_FROM_ALL
+        tools/cuda_generated_packet_upload_bench.cu
+    )
+    target_link_libraries(cuda_generated_packet_upload_bench minisolver_lib)
+    target_compile_options(cuda_generated_packet_upload_bench PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=20012>
+        $<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=20015>
+    )
+    set_target_properties(cuda_generated_packet_upload_bench PROPERTIES
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+        CUDA_ARCHITECTURES "${MINISOLVER_CUDA_ARCHITECTURES}"
+    )
 endif()
 
 # --- Unit Tests ---
