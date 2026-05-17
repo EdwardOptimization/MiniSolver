@@ -18,6 +18,8 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | `docs/matrix/gpu-batched-scalar-riccati-microbench.md` | Batched short-horizon Riccati benchmark contract and RTX 5080 results | Records reproduction commands and why batched workloads are the strongest GPU signal |
 | `tools/cuda_block_lft_scan_bench.cu` | Block linear-fractional transform scan as a block-Riccati-adjacent MPX/PCR route | Correctness error around `1e-14` to `1e-13`; only marginal large-`N` PCR crossover |
 | `docs/matrix/gpu-block-lft-scan-microbench.md` | Block-LFT scan benchmark contract and RTX 5080 results | Records why block operator scans still do not justify a normal GPU backend |
+| `tools/cuda_batched_lqr_riccati_bench.cu` | Batched complete block LQR Riccati backward recursion | Correctness error around `1e-15`; large batches show GPU speedup, small batches do not |
+| `docs/matrix/gpu-batched-lqr-riccati-microbench.md` | Batched block Riccati benchmark contract and RTX 5080 results | Records the strongest Riccati-specific evidence for batched GPU workloads |
 
 The branch deliberately does not modify:
 
@@ -47,7 +49,7 @@ Original request:
 | Confirm speedup at different scales | Scan benchmark covers `NX={2,4,8,12}`, `N={64..65536}`; scalar Riccati scan covers `N={64..65536}` | Done for scan microbenchmarks |
 | First compare matrix decomposition speed | Batched Cholesky benchmark covers `DIM={4,8,12,16}`, `batch={1..65536}` | Done |
 | Avoid end-to-end comparison | No end-to-end solver benchmark was added | Done |
-| Explore other route | Batched small dense factorization, scalar Riccati scan, block-LFT scan, and batched short-horizon scalar Riccati routes added | Done |
+| Explore other route | Batched small dense factorization, scalar Riccati scan, block-LFT scan, batched scalar Riccati, and batched block LQR Riccati routes added | Done |
 | Working solver GPU backend | `Backend::GPU_MPX/GPU_PCR` still explicitly unsupported | Not done |
 
 ## Interpretation
@@ -69,6 +71,11 @@ composition. It still shows only marginal PCR crossover at very large `N`, and
 it excludes operator assembly, feedback recovery, RHS propagation, transfer
 cost, and solver residual checks. It therefore remains design evidence, not a
 backend implementation.
+
+The batched block LQR benchmark is the closest current artifact to a real
+Riccati workload. It executes complete backward recursions and shows GPU wins
+only when there are thousands of independent horizons. It reinforces that the
+credible near-term GPU target is batched work, not a single-horizon backend.
 
 ### Batched Factorization Route
 
@@ -97,6 +104,10 @@ points to batched MPC, sampled MPC, multiple shooting guesses, replay/corpus
 processing, and differentiable workloads as better GPU targets than replacing
 one CPU Riccati solve.
 
+The batched block LQR benchmark strengthens this conclusion with a multi-state
+multi-control recursion. For batch `1` and `256`, GPU is much slower than CPU;
+for batch `4096` and `65536`, GPU starts to beat the threaded CPU baseline.
+
 ## Backend Integration Gate
 
 Do not enable `Backend::GPU_MPX` or `Backend::GPU_PCR` until all of these are
@@ -121,8 +132,8 @@ area, not a solver backend claim.
 1. Add a CPU SIMD baseline for small dense factorization.
 2. Tune the cooperative Cholesky kernel for `DIM >= 12` if a batched workload
    needs that shape.
-3. Extend the block-LFT benchmark into a full block Riccati direction benchmark
-   before touching `RiccatiSolver`.
+3. If GPU work continues, turn the batched block LQR benchmark into a constrained
+   Riccati direction benchmark before touching `RiccatiSolver`.
 4. If a real workload appears, benchmark batched MPC or sampled-control
    workloads instead of single-horizon solve time.
 5. Keep `src/cuda/gpu_ops.cu` as unsupported until the integration gate passes.
