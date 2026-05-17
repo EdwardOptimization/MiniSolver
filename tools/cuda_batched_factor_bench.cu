@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <random>
+#include <thread>
 #include <vector>
 
 #define CUDA_CHECK(expr)                                                                           \
@@ -134,6 +135,92 @@ void cpu_factor_batch(const std::vector<double>& input, std::vector<double>& out
 }
 
 template <int DIM>
+void cpu_factor_batch_range(
+    const std::vector<double>& input, std::vector<double>& output, int begin, int end)
+{
+    for (int m = begin; m < end; ++m) {
+        const double* A = input.data() + static_cast<std::size_t>(m * DIM * DIM);
+        double* L = output.data() + static_cast<std::size_t>(m * DIM * DIM);
+        if (!cholesky_one<DIM>(A, L)) {
+            std::cerr << "CPU threaded Cholesky failed at matrix " << m << "\n";
+            std::exit(1);
+        }
+    }
+}
+
+template <int DIM>
+void cpu_factor_batch_threaded(
+    const std::vector<double>& input, std::vector<double>& output, int count, int num_threads)
+{
+    output.resize(static_cast<std::size_t>(count * DIM * DIM));
+    if (num_threads <= 1 || count <= 1) {
+        cpu_factor_batch_range<DIM>(input, output, 0, count);
+        return;
+    }
+
+    std::vector<std::thread> workers;
+    workers.reserve(static_cast<std::size_t>(num_threads));
+    const int chunk = (count + num_threads - 1) / num_threads;
+    for (int t = 0; t < num_threads; ++t) {
+        const int begin = t * chunk;
+        const int end = std::min(count, begin + chunk);
+        if (begin >= end) {
+            break;
+        }
+        workers.emplace_back([&input, &output, begin, end]() {
+            cpu_factor_batch_range<DIM>(input, output, begin, end);
+        });
+    }
+    for (auto& worker : workers) {
+        worker.join();
+    }
+}
+
+inline int benchmark_thread_count(int count)
+{
+    const unsigned int hardware_threads = std::thread::hardware_concurrency();
+    const int max_threads = hardware_threads == 0u ? 1 : static_cast<int>(hardware_threads);
+    constexpr int min_matrices_per_thread = 512;
+    return std::max(1, std::min(max_threads, count / min_matrices_per_thread));
+}
+
+template <int DIM>
+double time_cpu_factor_batch_threaded_us(const std::vector<double>& input,
+    std::vector<double>& output, int count, int num_threads, int repeats)
+{
+    output.resize(static_cast<std::size_t>(count * DIM * DIM));
+    const auto start = std::chrono::steady_clock::now();
+    if (num_threads <= 1 || count <= 1) {
+        for (int r = 0; r < repeats; ++r) {
+            cpu_factor_batch_range<DIM>(input, output, 0, count);
+        }
+    } else {
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<std::size_t>(num_threads));
+        const int chunk = (count + num_threads - 1) / num_threads;
+        for (int t = 0; t < num_threads; ++t) {
+            const int begin = t * chunk;
+            const int end = std::min(count, begin + chunk);
+            if (begin >= end) {
+                break;
+            }
+            workers.emplace_back([&input, &output, begin, end, repeats]() {
+                for (int r = 0; r < repeats; ++r) {
+                    cpu_factor_batch_range<DIM>(input, output, begin, end);
+                }
+            });
+        }
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    }
+    consume_for_benchmark(output.back());
+    const auto end = std::chrono::steady_clock::now();
+    return std::chrono::duration<double, std::micro>(end - start).count()
+        / static_cast<double>(repeats);
+}
+
+template <int DIM>
 double max_l_error(const std::vector<double>& expected, const std::vector<double>& actual)
 {
     double err = 0.0;
@@ -217,6 +304,7 @@ template <int DIM> void run_case(int count, int repeats)
     std::vector<double> input;
     generate_spd_batch<DIM>(input, count);
     std::vector<double> cpu_output;
+    std::vector<double> threaded_output;
     std::vector<double> gpu_output;
 
     cpu_factor_batch<DIM>(input, cpu_output, count);
@@ -229,16 +317,24 @@ template <int DIM> void run_case(int count, int repeats)
     const double cpu_us = std::chrono::duration<double, std::micro>(cpu_end - cpu_start).count()
         / static_cast<double>(repeats);
 
+    const int num_threads = benchmark_thread_count(count);
+    cpu_factor_batch_threaded<DIM>(input, threaded_output, count, num_threads);
+    const double threaded_us = time_cpu_factor_batch_threaded_us<DIM>(
+        input, threaded_output, count, num_threads, repeats);
+
     const float gpu_ms = gpu_factor_batch<DIM>(input, gpu_output, count, repeats);
     const double gpu_us = 1000.0 * static_cast<double>(gpu_ms);
     const double l_err = max_l_error<DIM>(cpu_output, gpu_output);
+    const double threaded_err = max_l_error<DIM>(cpu_output, threaded_output);
     const double recon_err = max_reconstruction_error<DIM>(input, gpu_output, count);
 
     std::cout << std::setw(3) << DIM << " " << std::setw(7) << count << " " << std::setw(4)
-              << repeats << " " << std::setw(12) << std::fixed << std::setprecision(2) << cpu_us
-              << " " << std::setw(12) << gpu_us << " " << std::setw(9) << std::setprecision(2)
-              << (cpu_us / gpu_us) << " " << std::scientific << std::setprecision(2)
-              << std::setw(11) << l_err << " " << std::setw(11) << recon_err << "\n";
+              << repeats << " " << std::setw(3) << num_threads << " " << std::setw(12) << std::fixed
+              << std::setprecision(2) << cpu_us << " " << std::setw(12) << threaded_us << " "
+              << std::setw(12) << gpu_us << " " << std::setw(9) << std::setprecision(2)
+              << (cpu_us / gpu_us) << " " << std::setw(10) << (threaded_us / gpu_us) << " "
+              << std::scientific << std::setprecision(2) << std::setw(11) << l_err << " "
+              << std::setw(11) << threaded_err << " " << std::setw(11) << recon_err << "\n";
 }
 
 template <int DIM> void run_dimension_suite()
@@ -262,7 +358,8 @@ int main()
     std::cout << "Device: " << props.name << "\n";
     std::cout << "Metric: device-resident factorization time; host<->device transfers excluded\n";
     std::cout << "Kernel: one CUDA thread factorizes one SPD matrix; baseline only\n";
-    std::cout << "DIM   batch    R       CPU_us       GPU_us   GPU_spd       L_err   recon_err\n";
+    std::cout << "DIM   batch    R   T       CPU_us    CPUthr_us       GPU_us   GPU_spd"
+                 "  GPU_spd_thr       L_err   Thr_L_err   recon_err\n";
 
     run_dimension_suite<4>();
     run_dimension_suite<8>();
