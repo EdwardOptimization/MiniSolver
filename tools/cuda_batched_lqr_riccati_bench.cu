@@ -54,14 +54,21 @@ template <typename F> float time_cuda_ms(F&& fn)
 }
 
 template <int NX, int NU> struct LqrProblem {
+    static constexpr int NC = NX + NU;
+
     double A[NX * NX];
     double B[NX * NU];
     double Q[NX * NX];
     double R[NU * NU];
+    double H[NU * NX];
     double Qf[NX * NX];
     double q[NX];
     double r[NU];
     double qf[NX];
+    double C[NC * NX];
+    double D[NC * NU];
+    double sigma[NC];
+    double grad[NC];
 };
 
 template <int NX> constexpr int riccati_output_size()
@@ -90,9 +97,68 @@ template <int NX, int NU> LqrProblem<NX, NU> make_problem()
         for (int c = 0; c < NU; ++c) {
             p.R[r * NU + c] = (r == c) ? (0.5 + 0.1 * static_cast<double>(r)) : 0.0;
         }
+        for (int c = 0; c < NX; ++c) {
+            p.H[r * NX + c] = ((2 * r + c) % 5 == 0) ? 0.01 : 0.0;
+        }
         p.r[r] = -0.005 * static_cast<double>(r + 1);
     }
+
+    for (int row = 0; row < LqrProblem<NX, NU>::NC; ++row) {
+        p.sigma[row] = 0.02 + 0.003 * static_cast<double>((row % 5) + 1);
+        p.grad[row] = 0.001 * static_cast<double>((row % 3) - 1);
+        for (int col = 0; col < NX; ++col) {
+            p.C[row * NX + col] = ((row + 2 * col) % 4 == 0) ? (0.10 / (1.0 + col)) : 0.0;
+        }
+        for (int col = 0; col < NU; ++col) {
+            p.D[row * NU + col] = ((2 * row + col) % 5 == 0) ? (0.04 / (1.0 + col)) : 0.0;
+        }
+    }
     return p;
+}
+
+template <int NX, int NU>
+__host__ __device__ void build_barrier_packet(const LqrProblem<NX, NU>& p, double* Qbar,
+    double* Rbar, double* Hbar, double* qbar, double* rbar)
+{
+    constexpr int NC = LqrProblem<NX, NU>::NC;
+
+    for (int r = 0; r < NX; ++r) {
+        for (int c = 0; c < NX; ++c) {
+            Qbar[r * NX + c] = p.Q[r * NX + c];
+        }
+        qbar[r] = p.q[r];
+    }
+    for (int r = 0; r < NU; ++r) {
+        for (int c = 0; c < NU; ++c) {
+            Rbar[r * NU + c] = p.R[r * NU + c];
+        }
+        for (int c = 0; c < NX; ++c) {
+            Hbar[r * NX + c] = p.H[r * NX + c];
+        }
+        rbar[r] = p.r[r];
+    }
+
+    for (int row = 0; row < NC; ++row) {
+        const double weight = p.sigma[row];
+        const double grad = p.grad[row];
+        for (int r = 0; r < NX; ++r) {
+            const double Cr = p.C[row * NX + r];
+            qbar[r] += Cr * grad;
+            for (int c = 0; c < NX; ++c) {
+                Qbar[r * NX + c] += Cr * weight * p.C[row * NX + c];
+            }
+        }
+        for (int r = 0; r < NU; ++r) {
+            const double Dr = p.D[row * NU + r];
+            rbar[r] += Dr * grad;
+            for (int c = 0; c < NU; ++c) {
+                Rbar[r * NU + c] += Dr * weight * p.D[row * NU + c];
+            }
+            for (int c = 0; c < NX; ++c) {
+                Hbar[r * NX + c] += Dr * weight * p.C[row * NX + c];
+            }
+        }
+    }
 }
 
 template <int N> __host__ __device__ bool cholesky_lower(const double* A, double* L)
@@ -183,6 +249,11 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
     double pvec[NX];
     double PB[NX * NU];
     double PA[NX * NX];
+    double Qbar[NX * NX];
+    double Rbar[NU * NU];
+    double Hbar[NU * NX];
+    double qbar[NX];
+    double rbar[NU];
     double S[NU * NU];
     double G[NU * NX];
     double g[NU];
@@ -201,6 +272,8 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
     }
 
     for (int step = 0; step < horizon; ++step) {
+        build_barrier_packet<NX, NU>(p, Qbar, Rbar, Hbar, qbar, rbar);
+
         for (int r = 0; r < NX; ++r) {
             for (int c = 0; c < NU; ++c) {
                 double acc = 0.0;
@@ -220,20 +293,20 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
 
         for (int r = 0; r < NU; ++r) {
             for (int c = 0; c < NU; ++c) {
-                double acc = p.R[r * NU + c];
+                double acc = Rbar[r * NU + c];
                 for (int k = 0; k < NX; ++k) {
                     acc += p.B[k * NU + r] * PB[k * NU + c];
                 }
                 S[r * NU + c] = acc;
             }
             for (int c = 0; c < NX; ++c) {
-                double acc = 0.0;
+                double acc = Hbar[r * NX + c];
                 for (int k = 0; k < NX; ++k) {
                     acc += p.B[k * NU + r] * PA[k * NX + c];
                 }
                 G[r * NX + c] = acc;
             }
-            double g_acc = p.r[r];
+            double g_acc = rbar[r];
             for (int k = 0; k < NX; ++k) {
                 g_acc += p.B[k * NU + r] * pvec[k];
             }
@@ -268,13 +341,13 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
                 for (int u = 0; u < NU; ++u) {
                     feedback += G[u * NX + r] * K[u * NX + c];
                 }
-                nextP[r * NX + c] = p.Q[r * NX + c] + AtPA[r * NX + c] - feedback;
+                nextP[r * NX + c] = Qbar[r * NX + c] + AtPA[r * NX + c] - feedback;
             }
             double affine_feedback = 0.0;
             for (int u = 0; u < NU; ++u) {
                 affine_feedback += G[u * NX + r] * kff[u];
             }
-            nextp[r] = p.q[r] + Atp[r] - affine_feedback;
+            nextp[r] = qbar[r] + Atp[r] - affine_feedback;
         }
 
         for (int r = 0; r < NX; ++r) {
@@ -477,10 +550,11 @@ int main()
     cudaDeviceProp props {};
     CUDA_CHECK(cudaGetDeviceProperties(&props, device));
 
-    std::cout << "MiniSolver CUDA batched affine block LQR Riccati microbenchmark\n";
+    std::cout << "MiniSolver CUDA batched barrier-affine block Riccati microbenchmark\n";
     std::cout << "Device: " << props.name << "\n";
     std::cout << "Metric: device-resident Riccati direction recursion time; host<->device "
                  "transfers excluded\n";
+    std::cout << "Packet: synthetic C/D/sigma/grad barrier contribution folded into Q/R/H/q/r\n";
     std::cout << "GPU kernel: one CUDA thread solves one independent LQR horizon\n";
     std::cout << " NX  NU    N   batch    R   T       CPU_us    CPUthr_us       GPU_us  GPU_spdT"
                  "     GPU_err     Thr_err\n";
