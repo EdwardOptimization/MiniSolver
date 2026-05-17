@@ -331,6 +331,16 @@ if(MINISOLVER_BUILD_CUDA_BENCHMARKS)
         CUDA_STANDARD_REQUIRED ON
         CUDA_ARCHITECTURES "${MINISOLVER_CUDA_ARCHITECTURES}"
     )
+
+    add_executable(cuda_batched_lqr_riccati_bench EXCLUDE_FROM_ALL
+        tools/cuda_batched_lqr_riccati_bench.cu
+    )
+    target_link_libraries(cuda_batched_lqr_riccati_bench minisolver_lib)
+    set_target_properties(cuda_batched_lqr_riccati_bench PROPERTIES
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+        CUDA_ARCHITECTURES "${MINISOLVER_CUDA_ARCHITECTURES}"
+    )
 endif()
 
 # --- Unit Tests ---
