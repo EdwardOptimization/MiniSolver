@@ -1,4 +1,4 @@
-// Standalone exploratory benchmark for batched block LQR Riccati recursions.
+// Standalone exploratory benchmark for batched affine block LQR Riccati recursions.
 //
 // This benchmark is closer to a real Riccati workload than prefix-scan
 // microbenchmarks, but it is still not wired into Backend::GPU_*.
@@ -59,7 +59,15 @@ template <int NX, int NU> struct LqrProblem {
     double Q[NX * NX];
     double R[NU * NU];
     double Qf[NX * NX];
+    double q[NX];
+    double r[NU];
+    double qf[NX];
 };
+
+template <int NX> constexpr int riccati_output_size()
+{
+    return NX * NX + NX;
+}
 
 template <int NX, int NU> LqrProblem<NX, NU> make_problem()
 {
@@ -75,11 +83,14 @@ template <int NX, int NU> LqrProblem<NX, NU> make_problem()
         for (int c = 0; c < NU; ++c) {
             p.B[r * NU + c] = ((r + c) % 3 == 0) ? (0.08 / static_cast<double>(1 + c)) : 0.015;
         }
+        p.q[r] = 0.01 * static_cast<double>(r + 1);
+        p.qf[r] = 0.02 * static_cast<double>(r + 1);
     }
     for (int r = 0; r < NU; ++r) {
         for (int c = 0; c < NU; ++c) {
             p.R[r * NU + c] = (r == c) ? (0.5 + 0.1 * static_cast<double>(r)) : 0.0;
         }
+        p.r[r] = -0.005 * static_cast<double>(r + 1);
     }
     return p;
 }
@@ -139,20 +150,54 @@ __host__ __device__ bool solve_spd_multi_rhs(const double* S, const double* G, d
     return true;
 }
 
+template <int NU>
+__host__ __device__ bool solve_spd_vector(const double* S, const double* rhs, double* x)
+{
+    double L[NU * NU];
+    if (!cholesky_lower<NU>(S, L)) {
+        return false;
+    }
+
+    double y[NU];
+    for (int i = 0; i < NU; ++i) {
+        double acc = rhs[i];
+        for (int j = 0; j < i; ++j) {
+            acc -= L[i * NU + j] * y[j];
+        }
+        y[i] = acc / L[i * NU + i];
+    }
+    for (int i = NU - 1; i >= 0; --i) {
+        double acc = y[i];
+        for (int j = i + 1; j < NU; ++j) {
+            acc -= L[j * NU + i] * x[j];
+        }
+        x[i] = acc / L[i * NU + i];
+    }
+    return true;
+}
+
 template <int NX, int NU>
 __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, double* output)
 {
     double P[NX * NX];
+    double pvec[NX];
     double PB[NX * NU];
     double PA[NX * NX];
     double S[NU * NU];
     double G[NU * NX];
+    double g[NU];
     double K[NU * NX];
+    double kff[NU];
     double AtPA[NX * NX];
+    double Atp[NX];
     double nextP[NX * NX];
+    double nextp[NX];
 
     for (int i = 0; i < NX * NX; ++i) {
         P[i] = p.Qf[i];
+    }
+    for (int i = 0; i < NX; ++i) {
+        pvec[i] = p.qf[i];
     }
 
     for (int step = 0; step < horizon; ++step) {
@@ -188,6 +233,11 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
                 }
                 G[r * NX + c] = acc;
             }
+            double g_acc = p.r[r];
+            for (int k = 0; k < NX; ++k) {
+                g_acc += p.B[k * NU + r] * pvec[k];
+            }
+            g[r] = g_acc;
         }
 
         for (int r = 0; r < NX; ++r) {
@@ -198,9 +248,17 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
                 }
                 AtPA[r * NX + c] = acc;
             }
+            double p_acc = 0.0;
+            for (int k = 0; k < NX; ++k) {
+                p_acc += p.A[k * NX + r] * pvec[k];
+            }
+            Atp[r] = p_acc;
         }
 
         if (!solve_spd_multi_rhs<NX, NU>(S, G, K)) {
+            return false;
+        }
+        if (!solve_spd_vector<NU>(S, g, kff)) {
             return false;
         }
 
@@ -212,6 +270,11 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
                 }
                 nextP[r * NX + c] = p.Q[r * NX + c] + AtPA[r * NX + c] - feedback;
             }
+            double affine_feedback = 0.0;
+            for (int u = 0; u < NU; ++u) {
+                affine_feedback += G[u * NX + r] * kff[u];
+            }
+            nextp[r] = p.q[r] + Atp[r] - affine_feedback;
         }
 
         for (int r = 0; r < NX; ++r) {
@@ -219,11 +282,15 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
                 const double sym = 0.5 * (nextP[r * NX + c] + nextP[c * NX + r]);
                 P[r * NX + c] = sym;
             }
+            pvec[r] = nextp[r];
         }
     }
 
     for (int i = 0; i < NX * NX; ++i) {
         output[i] = P[i];
+    }
+    for (int i = 0; i < NX; ++i) {
+        output[NX * NX + i] = pvec[i];
     }
     return true;
 }
@@ -236,7 +303,8 @@ __global__ void riccati_batch_kernel(
     if (idx >= count) {
         return;
     }
-    double* out = output + static_cast<std::size_t>(idx * NX * NX);
+    constexpr int output_size = NX * NX + NX;
+    double* out = output + static_cast<std::size_t>(idx * output_size);
     info[idx] = riccati_one<NX, NU>(problem, horizon, out) ? 0 : 1;
 }
 
@@ -245,7 +313,7 @@ void cpu_riccati_range(
     const LqrProblem<NX, NU>& problem, int horizon, std::vector<double>& output, int begin, int end)
 {
     for (int idx = begin; idx < end; ++idx) {
-        double* out = output.data() + static_cast<std::size_t>(idx * NX * NX);
+        double* out = output.data() + static_cast<std::size_t>(idx * riccati_output_size<NX>());
         if (!riccati_one<NX, NU>(problem, horizon, out)) {
             std::cerr << "CPU Riccati failed at problem " << idx << "\n";
             std::exit(1);
@@ -265,7 +333,7 @@ template <int NX, int NU>
 void cpu_riccati_batch(
     const LqrProblem<NX, NU>& problem, int horizon, std::vector<double>& output, int count)
 {
-    output.resize(static_cast<std::size_t>(count * NX * NX));
+    output.resize(static_cast<std::size_t>(count * riccati_output_size<NX>()));
     cpu_riccati_range<NX, NU>(problem, horizon, output, 0, count);
 }
 
@@ -273,7 +341,7 @@ template <int NX, int NU>
 double time_cpu_threaded_us(const LqrProblem<NX, NU>& problem, int horizon,
     std::vector<double>& output, int count, int num_threads, int repeats)
 {
-    output.resize(static_cast<std::size_t>(count * NX * NX));
+    output.resize(static_cast<std::size_t>(count * riccati_output_size<NX>()));
     const auto start = std::chrono::steady_clock::now();
     if (num_threads <= 1 || count <= 1) {
         for (int r = 0; r < repeats; ++r) {
@@ -311,7 +379,8 @@ float gpu_riccati_batch(const LqrProblem<NX, NU>& problem, int horizon, std::vec
 {
     double* d_output = nullptr;
     int* d_info = nullptr;
-    const std::size_t output_bytes = static_cast<std::size_t>(count * NX * NX) * sizeof(double);
+    const std::size_t output_bytes
+        = static_cast<std::size_t>(count * riccati_output_size<NX>()) * sizeof(double);
     CUDA_CHECK(cudaMalloc(&d_output, output_bytes));
     CUDA_CHECK(cudaMalloc(&d_info, static_cast<std::size_t>(count) * sizeof(int)));
 
@@ -329,7 +398,7 @@ float gpu_riccati_batch(const LqrProblem<NX, NU>& problem, int horizon, std::vec
         }
     });
 
-    output.resize(static_cast<std::size_t>(count * NX * NX));
+    output.resize(static_cast<std::size_t>(count * riccati_output_size<NX>()));
     std::vector<int> info(static_cast<std::size_t>(count));
     CUDA_CHECK(cudaMemcpy(output.data(), d_output, output_bytes, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(info.data(), d_info, static_cast<std::size_t>(count) * sizeof(int),
@@ -408,10 +477,10 @@ int main()
     cudaDeviceProp props {};
     CUDA_CHECK(cudaGetDeviceProperties(&props, device));
 
-    std::cout << "MiniSolver CUDA batched block LQR Riccati microbenchmark\n";
+    std::cout << "MiniSolver CUDA batched affine block LQR Riccati microbenchmark\n";
     std::cout << "Device: " << props.name << "\n";
-    std::cout
-        << "Metric: device-resident Riccati recursion time; host<->device transfers excluded\n";
+    std::cout << "Metric: device-resident Riccati direction recursion time; host<->device "
+                 "transfers excluded\n";
     std::cout << "GPU kernel: one CUDA thread solves one independent LQR horizon\n";
     std::cout << " NX  NU    N   batch    R   T       CPU_us    CPUthr_us       GPU_us  GPU_spdT"
                  "     GPU_err     Thr_err\n";
