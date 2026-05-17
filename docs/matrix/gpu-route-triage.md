@@ -16,6 +16,8 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | `docs/matrix/gpu-scalar-riccati-scan-microbench.md` | Riccati-specific scan benchmark contract and RTX 5080 results | Records reproduction commands and why this still is not a backend |
 | `tools/cuda_batched_scalar_riccati_bench.cu` | Many independent short scalar Riccati recursions | Correctness error around `1e-14`; strong speedup once batch reaches hundreds/thousands |
 | `docs/matrix/gpu-batched-scalar-riccati-microbench.md` | Batched short-horizon Riccati benchmark contract and RTX 5080 results | Records reproduction commands and why batched workloads are the strongest GPU signal |
+| `tools/cuda_block_lft_scan_bench.cu` | Block linear-fractional transform scan as a block-Riccati-adjacent MPX/PCR route | Correctness error around `1e-14` to `1e-13`; only marginal large-`N` PCR crossover |
+| `docs/matrix/gpu-block-lft-scan-microbench.md` | Block-LFT scan benchmark contract and RTX 5080 results | Records why block operator scans still do not justify a normal GPU backend |
 
 The branch deliberately does not modify:
 
@@ -45,7 +47,7 @@ Original request:
 | Confirm speedup at different scales | Scan benchmark covers `NX={2,4,8,12}`, `N={64..65536}`; scalar Riccati scan covers `N={64..65536}` | Done for scan microbenchmarks |
 | First compare matrix decomposition speed | Batched Cholesky benchmark covers `DIM={4,8,12,16}`, `batch={1..65536}` | Done |
 | Avoid end-to-end comparison | No end-to-end solver benchmark was added | Done |
-| Explore other route | Batched small dense factorization and batched short-horizon scalar Riccati routes added | Done |
+| Explore other route | Batched small dense factorization, scalar Riccati scan, block-LFT scan, and batched short-horizon scalar Riccati routes added | Done |
 | Working solver GPU backend | `Backend::GPU_MPX/GPU_PCR` still explicitly unsupported | Not done |
 
 ## Interpretation
@@ -61,6 +63,12 @@ multi-problem workloads.
 The scalar Riccati scan benchmark confirms the same conclusion in a more
 Riccati-specific setting: the fractional-linear transform scan is correct, but
 single-problem horizons below several thousand stages remain slower than CPU.
+
+The block-LFT scan benchmark moves one step closer to block Riccati operator
+composition. It still shows only marginal PCR crossover at very large `N`, and
+it excludes operator assembly, feedback recovery, RHS propagation, transfer
+cost, and solver residual checks. It therefore remains design evidence, not a
+backend implementation.
 
 ### Batched Factorization Route
 
@@ -108,8 +116,8 @@ area, not a solver backend claim.
 
 1. Add a batched CPU SIMD/threaded baseline for small dense factorization.
 2. Add a cooperative one-block-per-matrix Cholesky kernel for `DIM >= 12`.
-3. Extend the batched scalar Riccati benchmark to block Riccati operators before
-   touching `RiccatiSolver`.
+3. Extend the block-LFT benchmark into a full block Riccati direction benchmark
+   before touching `RiccatiSolver`.
 4. If a real workload appears, benchmark batched MPC or sampled-control
    workloads instead of single-horizon solve time.
 5. Keep `src/cuda/gpu_ops.cu` as unsupported until the integration gate passes.
