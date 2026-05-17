@@ -14,6 +14,8 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | `docs/matrix/gpu-batched-factor-microbench.md` | Batched factorization benchmark contract and RTX 5080 results | Records reproduction commands and batch-size crossover observations |
 | `tools/cuda_scalar_riccati_scan_bench.cu` | Scalar Riccati recurrence as MPX/PCR-style fractional-linear scan | Correctness error around `1e-14`; large `N` crossover only |
 | `docs/matrix/gpu-scalar-riccati-scan-microbench.md` | Riccati-specific scan benchmark contract and RTX 5080 results | Records reproduction commands and why this still is not a backend |
+| `tools/cuda_batched_scalar_riccati_bench.cu` | Many independent short scalar Riccati recursions | Correctness error around `1e-14`; strong speedup once batch reaches hundreds/thousands |
+| `docs/matrix/gpu-batched-scalar-riccati-microbench.md` | Batched short-horizon Riccati benchmark contract and RTX 5080 results | Records reproduction commands and why batched workloads are the strongest GPU signal |
 
 The branch deliberately does not modify:
 
@@ -43,7 +45,7 @@ Original request:
 | Confirm speedup at different scales | Scan benchmark covers `NX={2,4,8,12}`, `N={64..65536}`; scalar Riccati scan covers `N={64..65536}` | Done for scan microbenchmarks |
 | First compare matrix decomposition speed | Batched Cholesky benchmark covers `DIM={4,8,12,16}`, `batch={1..65536}` | Done |
 | Avoid end-to-end comparison | No end-to-end solver benchmark was added | Done |
-| Explore other route | Batched small dense factorization route added | Done |
+| Explore other route | Batched small dense factorization and batched short-horizon scalar Riccati routes added | Done |
 | Working solver GPU backend | `Backend::GPU_MPX/GPU_PCR` still explicitly unsupported | Not done |
 
 ## Interpretation
@@ -74,6 +76,15 @@ enough. This suggests GPU acceleration should first target batched workloads:
 
 It does not justify a single-problem GPU backend for ordinary NMPC horizons.
 
+### Batched Short-Horizon Route
+
+The batched scalar Riccati benchmark is the strongest signal on this branch.
+For horizons `N=32..256`, a single problem is much slower on GPU, but batches of
+hundreds already cross over and batches of thousands show large speedups. This
+points to batched MPC, sampled MPC, multiple shooting guesses, replay/corpus
+processing, and differentiable workloads as better GPU targets than replacing
+one CPU Riccati solve.
+
 ## Backend Integration Gate
 
 Do not enable `Backend::GPU_MPX` or `Backend::GPU_PCR` until all of these are
@@ -97,8 +108,8 @@ area, not a solver backend claim.
 
 1. Add a batched CPU SIMD/threaded baseline for small dense factorization.
 2. Add a cooperative one-block-per-matrix Cholesky kernel for `DIM >= 12`.
-3. Add a batched Riccati recurrence correctness microbenchmark before touching
-   `RiccatiSolver`.
+3. Extend the batched scalar Riccati benchmark to block Riccati operators before
+   touching `RiccatiSolver`.
 4. If a real workload appears, benchmark batched MPC or sampled-control
    workloads instead of single-horizon solve time.
 5. Keep `src/cuda/gpu_ops.cu` as unsupported until the integration gate passes.
