@@ -72,13 +72,16 @@ template <int NX, int NU> struct LqrProblem {
     double gval[NC];
     double slack[NC];
     double lambda[NC];
+    double soft_s[NC];
+    double weight[NC];
+    int constraint_mode[NC];
     double sigma[NC];
     double grad[NC];
 };
 
 template <int NX, int NU> constexpr int riccati_output_size()
 {
-    return NX * NX + NX + 2 * LqrProblem<NX, NU>::NC;
+    return NX * NX + NX + 3 * LqrProblem<NX, NU>::NC;
 }
 
 template <int NX, int NU> LqrProblem<NX, NU> make_problem()
@@ -114,6 +117,9 @@ template <int NX, int NU> LqrProblem<NX, NU> make_problem()
         p.gval[row] = -0.02 + 0.002 * static_cast<double>(row % 4);
         p.slack[row] = 0.10 + 0.01 * static_cast<double>((row % 5) + 1);
         p.lambda[row] = 0.04 + 0.003 * static_cast<double>((row % 7) + 1);
+        p.soft_s[row] = 0.08 + 0.01 * static_cast<double>((row % 3) + 1);
+        p.weight[row] = 0.25 + 0.05 * static_cast<double>((row % 4) + 1);
+        p.constraint_mode[row] = row % 3;
         p.sigma[row] = 0.02 + 0.003 * static_cast<double>((row % 5) + 1);
         p.grad[row] = 0.001 * static_cast<double>((row % 3) - 1);
         for (int col = 0; col < NX; ++col) {
@@ -127,7 +133,7 @@ template <int NX, int NU> LqrProblem<NX, NU> make_problem()
 }
 
 template <int NX, int NU>
-__host__ __device__ void build_barrier_packet(const LqrProblem<NX, NU>& p, double* Qbar,
+__host__ __device__ void build_barrier_packet(const LqrProblem<NX, NU>& p, int stage, double* Qbar,
     double* Rbar, double* Hbar, double* qbar, double* rbar)
 {
     constexpr int NC = LqrProblem<NX, NU>::NC;
@@ -149,8 +155,9 @@ __host__ __device__ void build_barrier_packet(const LqrProblem<NX, NU>& p, doubl
     }
 
     for (int row = 0; row < NC; ++row) {
-        const double weight = p.sigma[row];
-        const double grad = p.grad[row];
+        const double stage_scale = 1.0 + 0.01 * static_cast<double>((stage + row) % 7);
+        const double weight = p.sigma[row] * stage_scale;
+        const double grad = p.grad[row] * stage_scale;
         for (int r = 0; r < NX; ++r) {
             const double Cr = p.C[row * NX + r];
             qbar[r] += Cr * grad;
@@ -172,8 +179,8 @@ __host__ __device__ void build_barrier_packet(const LqrProblem<NX, NU>& p, doubl
 }
 
 template <int NX, int NU>
-__host__ __device__ void recover_hard_constraint_directions(
-    const LqrProblem<NX, NU>& p, const double* dx, const double* du, double* ds, double* dlam)
+__host__ __device__ void recover_constraint_directions(const LqrProblem<NX, NU>& p, int stage,
+    const double* dx, const double* du, double* ds, double* dlam, double* dsoft_s)
 {
     constexpr int NC = LqrProblem<NX, NU>::NC;
     constexpr double mu = 1.0e-3;
@@ -187,10 +194,34 @@ __host__ __device__ void recover_hard_constraint_directions(
             constraint_step += p.D[row * NU + col] * du[col];
         }
 
-        const double r_prim = p.gval[row] + p.slack[row];
-        const double r_y = p.slack[row] * p.lambda[row] - mu;
-        dlam[row] = (-r_y + p.lambda[row] * (r_prim + constraint_step)) / p.slack[row];
-        ds[row] = -r_prim - constraint_step;
+        const double g = p.gval[row] + 1.0e-4 * static_cast<double>((stage + row) % 5);
+        const double s = p.slack[row];
+        const double lam = p.lambda[row];
+        const double r_y = s * lam - mu;
+        dsoft_s[row] = 0.0;
+
+        if (p.constraint_mode[row] == 1) {
+            const double w = p.weight[row];
+            const double r_prim_l2 = g + s - lam / w;
+            const double factor = 1.0 / (s + lam / w);
+            dlam[row] = factor * (-r_y + lam * (r_prim_l2 + constraint_step));
+            ds[row] = -r_prim_l2 - constraint_step + dlam[row] / w;
+        } else if (p.constraint_mode[row] == 2) {
+            const double w = p.weight[row];
+            const double soft_s = p.soft_s[row];
+            const double soft_dual = w - lam;
+            const double sigma = 1.0 / (s / lam + soft_s / soft_dual);
+            const double r_eq = g + s - soft_s;
+            const double r_z = soft_s * soft_dual - mu;
+            const double eff_r = r_eq - r_y / lam + r_z / soft_dual;
+            dlam[row] = sigma * (constraint_step + eff_r);
+            ds[row] = (-r_y - s * dlam[row]) / lam;
+            dsoft_s[row] = -(r_z - soft_s * dlam[row]) / soft_dual;
+        } else {
+            const double r_prim = g + s;
+            dlam[row] = (-r_y + lam * (r_prim + constraint_step)) / s;
+            ds[row] = -r_prim - constraint_step;
+        }
     }
 }
 
@@ -296,6 +327,7 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
     double rhs_v[NX];
     double ds[LqrProblem<NX, NU>::NC];
     double dlam[LqrProblem<NX, NU>::NC];
+    double dsoft_s[LqrProblem<NX, NU>::NC];
     double AtPA[NX * NX];
     double Atp[NX];
     double nextP[NX * NX];
@@ -309,7 +341,7 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
     }
 
     for (int step = 0; step < horizon; ++step) {
-        build_barrier_packet<NX, NU>(p, Qbar, Rbar, Hbar, qbar, rbar);
+        build_barrier_packet<NX, NU>(p, step, Qbar, Rbar, Hbar, qbar, rbar);
 
         for (int r = 0; r < NX; ++r) {
             double acc = pvec[r];
@@ -382,7 +414,7 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
         for (int u = 0; u < NU; ++u) {
             direction_u[u] = -kff[u];
         }
-        recover_hard_constraint_directions<NX, NU>(p, p.dx_seed, direction_u, ds, dlam);
+        recover_constraint_directions<NX, NU>(p, step, p.dx_seed, direction_u, ds, dlam, dsoft_s);
 
         for (int r = 0; r < NX; ++r) {
             for (int c = 0; c < NX; ++c) {
@@ -418,6 +450,7 @@ __host__ __device__ bool riccati_one(const LqrProblem<NX, NU>& p, int horizon, d
     for (int i = 0; i < LqrProblem<NX, NU>::NC; ++i) {
         output[offset + i] = ds[i];
         output[offset + LqrProblem<NX, NU>::NC + i] = dlam[i];
+        output[offset + 2 * LqrProblem<NX, NU>::NC + i] = dsoft_s[i];
     }
     return true;
 }
@@ -430,7 +463,7 @@ __global__ void riccati_batch_kernel(
     if (idx >= count) {
         return;
     }
-    constexpr int output_size = NX * NX + NX + 2 * (NX + NU);
+    constexpr int output_size = NX * NX + NX + 3 * (NX + NU);
     double* out = output + static_cast<std::size_t>(idx * output_size);
     info[idx] = riccati_one<NX, NU>(problem, horizon, out) ? 0 : 1;
 }
@@ -608,7 +641,7 @@ int main()
     std::cout << "Device: " << props.name << "\n";
     std::cout << "Metric: device-resident Riccati direction recursion time; host<->device "
                  "transfers excluded\n";
-    std::cout << "Packet: synthetic barrier packet, defect RHS, and hard-constraint dual "
+    std::cout << "Packet: stage-varying barrier packet, defect RHS, and mixed hard/L1/L2 "
                  "recovery\n";
     std::cout << "GPU kernel: one CUDA thread solves one independent LQR horizon\n";
     std::cout << " NX  NU    N   batch    R   T       CPU_us    CPUthr_us       GPU_us  GPU_spdT"
