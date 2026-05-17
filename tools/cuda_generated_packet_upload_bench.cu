@@ -53,6 +53,17 @@ template <typename F> float time_cuda_ms(F&& fn)
     return ms;
 }
 
+__global__ void fill_packet_kernel(double* packets, std::size_t total_entries)
+{
+    const std::size_t idx = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (idx >= total_entries) {
+        return;
+    }
+    const double stage_term = static_cast<double>(idx % 97u) * 0.001;
+    const double packet_term = static_cast<double>((idx / 97u) % 31u) * 0.0001;
+    packets[idx] = stage_term + packet_term;
+}
+
 template <typename Model> constexpr int packet_entries()
 {
     constexpr int NX = Model::NX;
@@ -192,6 +203,23 @@ double bandwidth_gbps(std::size_t bytes, double us)
     return static_cast<double>(bytes) / us / 1000.0;
 }
 
+double benchmark_device_packet_fill(double* d_packets, std::size_t total_entries, int repeats)
+{
+    constexpr int threads = 256;
+    const int blocks = static_cast<int>((total_entries + threads - 1u) / threads);
+    fill_packet_kernel<<<blocks, threads>>>(d_packets, total_entries);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    const float fill_ms = time_cuda_ms([&]() {
+        for (int r = 0; r < repeats; ++r) {
+            fill_packet_kernel<<<blocks, threads>>>(d_packets, total_entries);
+            CUDA_CHECK(cudaGetLastError());
+        }
+    });
+    return 1000.0 * static_cast<double>(fill_ms) / static_cast<double>(repeats);
+}
+
 template <typename Model> void run_case(const char* name, int horizon, int batch, int repeats)
 {
     std::vector<double> packets;
@@ -200,6 +228,7 @@ template <typename Model> void run_case(const char* name, int horizon, int batch
 
     double* d_packets = nullptr;
     CUDA_CHECK(cudaMalloc(&d_packets, bytes));
+    const double device_fill_us = benchmark_device_packet_fill(d_packets, packets.size(), repeats);
 
     const float pageable_ms = time_cuda_ms([&]() {
         for (int r = 0; r < repeats; ++r) {
@@ -244,7 +273,8 @@ template <typename Model> void run_case(const char* name, int horizon, int batch
               << std::setw(9) << std::setprecision(2) << bandwidth_gbps(bytes, pageable_us) << " "
               << std::setw(12) << pinned_us << " " << std::setw(9)
               << bandwidth_gbps(bytes, pinned_us) << " " << std::setw(15)
-              << persistent_eval_upload_us << "\n";
+              << persistent_eval_upload_us << " " << std::setw(12) << device_fill_us << " "
+              << std::setw(12) << bandwidth_gbps(bytes, device_fill_us) << "\n";
 }
 
 template <typename Model> void run_model(const char* name)
@@ -271,7 +301,7 @@ int main()
     std::cout << "Packet fields: A/B/C/D/Q/R/H/q/r/g/s/lam/soft_s/f_resid\n";
     std::cout << "             model  NX  NU  NC    N  batch   entries       MiB eval_pack_us  "
                  "page_H2D_us "
-                 "page_GBps  pin_H2D_us  pin_GBps pin_eval_H2D_us\n";
+                 "page_GBps  pin_H2D_us  pin_GBps pin_eval_H2D_us  gpu_fill_us gpu_fill_GBps\n";
 
     run_model<minisolver::CarModel>("CarModel");
     run_model<minisolver::BicycleExtModel>("BicycleExtModel");
