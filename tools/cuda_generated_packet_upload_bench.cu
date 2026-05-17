@@ -63,8 +63,7 @@ template <typename Model> constexpr int packet_entries()
 }
 
 template <typename Mat>
-void append_matrix(
-    std::vector<double>& out, std::size_t& offset, const Mat& mat, int rows, int cols)
+void append_matrix(double* out, std::size_t& offset, const Mat& mat, int rows, int cols)
 {
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
@@ -73,8 +72,7 @@ void append_matrix(
     }
 }
 
-template <typename Vec>
-void append_vector(std::vector<double>& out, std::size_t& offset, const Vec& vec, int n)
+template <typename Vec> void append_vector(double* out, std::size_t& offset, const Vec& vec, int n)
 {
     for (int i = 0; i < n; ++i) {
         out[offset++] = vec(i);
@@ -137,7 +135,7 @@ void seed_knot(minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Mo
 
 template <typename Model>
 void pack_knot(const minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>& kp,
-    std::vector<double>& out, std::size_t packet_index)
+    double* out, std::size_t packet_index)
 {
     constexpr int NX = Model::NX;
     constexpr int NU = Model::NU;
@@ -160,14 +158,9 @@ void pack_knot(const minisolver::KnotPoint<double, Model::NX, Model::NU, Model::
     append_vector(out, offset, kp.f_resid, NX);
 }
 
-template <typename Model>
-double fill_generated_packets(std::vector<double>& packets, int horizon, int batch)
+template <typename Model> double fill_generated_packets_raw(double* packets, int horizon, int batch)
 {
     using Knot = minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>;
-    const std::size_t total_packets
-        = static_cast<std::size_t>(horizon) * static_cast<std::size_t>(batch);
-    packets.resize(total_packets * static_cast<std::size_t>(packet_entries<Model>()));
-
     return time_host_us([&]() {
         Knot kp;
         std::size_t packet = 0;
@@ -180,6 +173,15 @@ double fill_generated_packets(std::vector<double>& packets, int horizon, int bat
             }
         }
     });
+}
+
+template <typename Model>
+double fill_generated_packets(std::vector<double>& packets, int horizon, int batch)
+{
+    const std::size_t total_packets
+        = static_cast<std::size_t>(horizon) * static_cast<std::size_t>(batch);
+    packets.resize(total_packets * static_cast<std::size_t>(packet_entries<Model>()));
+    return fill_generated_packets_raw<Model>(packets.data(), horizon, batch);
 }
 
 double bandwidth_gbps(std::size_t bytes, double us)
@@ -214,6 +216,18 @@ template <typename Model> void run_case(const char* name, int horizon, int batch
         }
     });
 
+    cudaStream_t stream = nullptr;
+    CUDA_CHECK(cudaStreamCreate(&stream));
+    const double persistent_eval_upload_us = time_host_us([&]() {
+        for (int r = 0; r < repeats; ++r) {
+            (void)fill_generated_packets_raw<Model>(pinned_packets, horizon, batch);
+            CUDA_CHECK(
+                cudaMemcpyAsync(d_packets, pinned_packets, bytes, cudaMemcpyHostToDevice, stream));
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+        }
+    }) / static_cast<double>(repeats);
+    CUDA_CHECK(cudaStreamDestroy(stream));
+
     CUDA_CHECK(cudaFreeHost(pinned_packets));
     CUDA_CHECK(cudaFree(d_packets));
 
@@ -229,7 +243,8 @@ template <typename Model> void run_case(const char* name, int horizon, int batch
               << std::setw(12) << eval_pack_us << " " << std::setw(12) << pageable_us << " "
               << std::setw(9) << std::setprecision(2) << bandwidth_gbps(bytes, pageable_us) << " "
               << std::setw(12) << pinned_us << " " << std::setw(9)
-              << bandwidth_gbps(bytes, pinned_us) << "\n";
+              << bandwidth_gbps(bytes, pinned_us) << " " << std::setw(15)
+              << persistent_eval_upload_us << "\n";
 }
 
 template <typename Model> void run_model(const char* name)
@@ -256,7 +271,7 @@ int main()
     std::cout << "Packet fields: A/B/C/D/Q/R/H/q/r/g/s/lam/soft_s/f_resid\n";
     std::cout << "             model  NX  NU  NC    N  batch   entries       MiB eval_pack_us  "
                  "page_H2D_us "
-                 "page_GBps  pin_H2D_us  pin_GBps\n";
+                 "page_GBps  pin_H2D_us  pin_GBps pin_eval_H2D_us\n";
 
     run_model<minisolver::CarModel>("CarModel");
     run_model<minisolver::BicycleExtModel>("BicycleExtModel");
