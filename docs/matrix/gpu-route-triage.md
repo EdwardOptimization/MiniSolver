@@ -20,7 +20,7 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | `docs/matrix/gpu-block-lft-scan-microbench.md` | Block-LFT scan benchmark contract and RTX 5080 results | Records why block operator scans still do not justify a normal GPU backend |
 | `tools/cuda_batched_lqr_riccati_bench.cu` | Batched barrier-affine block Riccati direction recursion with synthetic defect RHS and mixed hard/L1/L2 recovery | Correctness error around `1e-15`; large batches show GPU speedup, small batches do not |
 | `docs/matrix/gpu-batched-lqr-riccati-microbench.md` | Batched barrier-affine block Riccati benchmark contract and RTX 5080 results | Records the strongest Riccati-specific evidence for batched GPU workloads |
-| `tools/cuda_generated_packet_upload_bench.cu` | Generated-model packet eval/pack, persistent pinned staging, synthetic device packet fill, and H2D upload benchmark | Pinned H2D approaches `50 GB/s` on the largest buffers; synthetic device fill reaches roughly `850 GB/s` but does not include generated-model math |
+| `tools/cuda_generated_packet_upload_bench.cu` | Generated-model packet eval/pack, persistent pinned staging, synthetic device packet fill, hand-transcribed `CarModel` CUDA packet assembly, and H2D upload benchmark | Pinned H2D approaches `50 GB/s`; synthetic device fill reaches roughly `850 GB/s`; CUDA `CarModel` packet assembly matches CPU packets to around `1e-14` and is faster at large batch |
 | `docs/matrix/gpu-generated-packet-upload-microbench.md` | Generated packet upload benchmark contract and RTX 5080 results | Records why a GPU backend must fuse or amortize packet assembly and transfer |
 
 The branch deliberately does not modify:
@@ -125,9 +125,12 @@ allocation and pageable-to-pinned copy from the timed path, but still pays
 host-side generated-model evaluation plus H2D transfer each frame. A synthetic
 device-side packet fill lower bound is much faster for large batches, but it
 only measures packet-shaped writes and does not include generated-model math.
-This means device-resident Riccati speedups should not be interpreted as
-end-to-end backend speedups until packet assembly and transfer are fused or
-amortized.
+A hand-transcribed CUDA `CarModel` exact packet assembly kernel matches the
+generated CPU packet to around `1e-14` max error and is much faster at large
+batch. This is a positive signal for future MiniModel CUDA packet emission, but
+it is still a single-model prototype. Device-resident Riccati speedups should
+not be interpreted as end-to-end backend speedups until packet assembly and
+transfer are fused or amortized.
 
 ### Neural-Network / Differentiable Workloads
 
@@ -178,7 +181,7 @@ area, not a solver backend claim.
 
 ## Recommended Next Steps
 
-1. If GPU work continues, prototype real device-side generated-model evaluation
+1. If GPU work continues, prototype generated CUDA packet emission in MiniModel
    for one small generated model before touching `RiccatiSolver`.
 2. If a real workload appears, benchmark batched MPC or sampled-control
    workloads instead of single-horizon solve time.

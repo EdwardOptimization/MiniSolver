@@ -8,6 +8,7 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -62,6 +63,192 @@ __global__ void fill_packet_kernel(double* packets, std::size_t total_entries)
     const double stage_term = static_cast<double>(idx % 97u) * 0.001;
     const double packet_term = static_cast<double>((idx / 97u) % 31u) * 0.0001;
     packets[idx] = stage_term + packet_term;
+}
+
+__global__ void fill_car_exact_packet_kernel(double* packets, int horizon, int batch)
+{
+    constexpr int NX = minisolver::CarModel::NX;
+    constexpr int NU = minisolver::CarModel::NU;
+    constexpr int NC = minisolver::CarModel::NC;
+    constexpr int entries = 112;
+
+    const int packet_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total_packets = horizon * batch;
+    if (packet_idx >= total_packets) {
+        return;
+    }
+
+    const int sample = packet_idx / horizon;
+    const int stage = packet_idx - sample * horizon;
+    double* out = packets + static_cast<std::size_t>(packet_idx) * entries;
+    for (int i = 0; i < entries; ++i) {
+        out[i] = 0.0;
+    }
+
+    const double x = 0.05 * static_cast<double>(stage) + 0.001 * static_cast<double>(sample);
+    const double y = 0.05 * static_cast<double>(stage) + 0.001 * static_cast<double>(sample + 1);
+    const double theta
+        = 0.05 * static_cast<double>(stage) + 0.001 * static_cast<double>(sample + 2);
+    const double v = 0.05 * static_cast<double>(stage) + 0.001 * static_cast<double>(sample + 3);
+    const double acc = 0.01 * static_cast<double>(stage % 5);
+    const double steer = 0.01 * static_cast<double>((stage + 2) % 5);
+    const double v_ref = 5.0;
+    const double x_ref = 0.25 * static_cast<double>(stage);
+    const double y_ref = 0.1 * sin(0.05 * static_cast<double>(stage));
+    const double obs_x = 8.0;
+    const double obs_y = 0.0;
+    const double obs_rad = 1.0;
+    const double L = 2.7;
+    const double car_rad = 0.8;
+    const double w_pos = 1.0;
+    const double w_vel = 1.0;
+    const double w_theta = 1.0;
+    const double w_acc = 1.0;
+    const double w_steer = 1.0;
+    const double lam4 = 0.05 + 0.002 * static_cast<double>((sample + 4) % 9);
+    constexpr double dt = 0.05;
+
+    const int off_A = 0;
+    const int off_B = off_A + NX * NX;
+    const int off_C = off_B + NX * NU;
+    const int off_D = off_C + NC * NX;
+    const int off_Q = off_D + NC * NU;
+    const int off_R = off_Q + NX * NX;
+    const int off_H = off_R + NU * NU;
+    const int off_q = off_H + NU * NX;
+    const int off_r = off_q + NX;
+    const int off_g = off_r + NU;
+    const int off_s = off_g + NC;
+    const int off_lam = off_s + NC;
+    const int off_soft_s = off_lam + NC;
+    const int off_f = off_soft_s + NC;
+
+    auto mat = [out](int offset, int cols, int row, int col) -> double& {
+        return out[offset + row * cols + col];
+    };
+
+    const double tmp_d0 = cos(theta);
+    const double tmp_d1 = acc * dt;
+    const double tmp_d2 = tmp_d1 + v;
+    const double tmp_d3 = 1.5 * tmp_d1 + v;
+    const double tmp_d4 = 1.0 / L;
+    const double tmp_d5 = tan(steer);
+    const double tmp_d6 = tmp_d4 * tmp_d5;
+    const double tmp_d7 = dt * tmp_d6;
+    const double tmp_d8 = theta + tmp_d3 * tmp_d7;
+    const double tmp_d9 = cos(tmp_d8);
+    const double tmp_d10 = tmp_d2 * tmp_d9;
+    const double tmp_d11 = 0.5 * tmp_d1 + v;
+    const double tmp_d12 = 0.5 * tmp_d7;
+    const double tmp_d13 = theta + tmp_d11 * tmp_d12;
+    const double tmp_d14 = cos(tmp_d13);
+    const double tmp_d15 = 2.0 * tmp_d14;
+    const double tmp_d16 = tmp_d1 + v;
+    const double tmp_d17 = theta + tmp_d12 * tmp_d16;
+    const double tmp_d18 = cos(tmp_d17);
+    const double tmp_d19 = 2.0 * tmp_d18;
+    const double tmp_d20 = dt / 6.0;
+    const double tmp_d21 = tmp_d20 * (tmp_d0 * v + tmp_d10 + tmp_d11 * tmp_d15 + tmp_d11 * tmp_d19);
+    const double tmp_d22 = sin(theta);
+    const double tmp_d23 = sin(tmp_d8);
+    const double tmp_d24 = tmp_d2 * tmp_d23;
+    const double tmp_d25 = sin(tmp_d13);
+    const double tmp_d26 = 2.0 * tmp_d25;
+    const double tmp_d27 = sin(tmp_d17);
+    const double tmp_d28 = 2.0 * tmp_d27;
+    const double tmp_d29 = tmp_d11 * tmp_d26 + tmp_d11 * tmp_d28 + tmp_d22 * v + tmp_d24;
+    const double tmp_d30 = 4.0 * tmp_d11;
+    const double tmp_d31 = dt;
+    const double tmp_d32 = tmp_d25 * tmp_d31;
+    const double tmp_d33 = tmp_d11 * tmp_d6;
+    const double tmp_d34 = tmp_d27 * tmp_d31;
+    const double tmp_d35 = tmp_d14 * tmp_d31;
+    const double tmp_d36 = tmp_d18 * tmp_d31;
+    const double tmp_d37 = dt * dt * tmp_d6;
+    const double tmp_d38 = 1.5 * tmp_d37;
+    const double tmp_d39 = 0.5 * tmp_d37;
+    const double tmp_d40 = tmp_d11 * tmp_d39;
+    const double tmp_d41 = tmp_d11 * tmp_d37;
+    const double tmp_d42 = tmp_d4 * (tmp_d5 * tmp_d5 + 1.0);
+    const double tmp_d43 = tmp_d11 * tmp_d11 * tmp_d42;
+    const double tmp_d44 = dt * tmp_d3 * tmp_d42;
+    const double tmp_d45 = tmp_d11 * tmp_d16 * tmp_d42;
+
+    out[off_f + 0] = tmp_d21 + x;
+    out[off_f + 1] = tmp_d20 * tmp_d29 + y;
+    out[off_f + 2] = theta + tmp_d20 * (tmp_d2 * tmp_d6 + tmp_d30 * tmp_d6 + tmp_d6 * v);
+    out[off_f + 3] = tmp_d16;
+
+    mat(off_A, NX, 0, 0) = 1.0;
+    mat(off_A, NX, 0, 2) = -tmp_d20 * tmp_d29;
+    mat(off_A, NX, 0, 3) = tmp_d20
+        * (tmp_d0 + tmp_d15 + tmp_d19 - tmp_d24 * tmp_d7 - tmp_d32 * tmp_d33 - tmp_d33 * tmp_d34
+            + tmp_d9);
+    mat(off_A, NX, 1, 1) = 1.0;
+    mat(off_A, NX, 1, 2) = tmp_d21;
+    mat(off_A, NX, 1, 3) = tmp_d20
+        * (tmp_d10 * tmp_d7 + tmp_d22 + tmp_d23 + tmp_d26 + tmp_d28 + tmp_d33 * tmp_d35
+            + tmp_d33 * tmp_d36);
+    mat(off_A, NX, 2, 2) = 1.0;
+    mat(off_A, NX, 2, 3) = tmp_d31 * tmp_d6;
+    mat(off_A, NX, 3, 3) = 1.0;
+
+    mat(off_B, NU, 0, 0) = tmp_d20
+        * (dt * tmp_d9 - tmp_d24 * tmp_d38 - tmp_d25 * tmp_d40 - tmp_d27 * tmp_d41 + tmp_d35
+            + tmp_d36);
+    mat(off_B, NU, 0, 1) = tmp_d20 * (-tmp_d24 * tmp_d44 - tmp_d32 * tmp_d43 - tmp_d34 * tmp_d45);
+    mat(off_B, NU, 1, 0) = tmp_d20
+        * (dt * tmp_d23 + tmp_d10 * tmp_d38 + tmp_d14 * tmp_d40 + tmp_d18 * tmp_d41 + tmp_d32
+            + tmp_d34);
+    mat(off_B, NU, 1, 1) = tmp_d20 * (tmp_d10 * tmp_d44 + tmp_d35 * tmp_d43 + tmp_d36 * tmp_d45);
+    mat(off_B, NU, 2, 0) = tmp_d39;
+    mat(off_B, NU, 2, 1) = tmp_d20 * (tmp_d2 * tmp_d42 + tmp_d30 * tmp_d42 + tmp_d42 * v);
+    mat(off_B, NU, 3, 0) = tmp_d31;
+
+    const double dx_obs = x - obs_x;
+    const double dy_obs = y - obs_y;
+    const double obs_dist = sqrt(dx_obs * dx_obs + dy_obs * dy_obs + 1.0e-6);
+    const double inv_obs_dist = 1.0 / obs_dist;
+
+    out[off_g + 0] = acc - 3.0;
+    out[off_g + 1] = -acc - 3.0;
+    out[off_g + 2] = steer - 0.5;
+    out[off_g + 3] = -steer - 0.5;
+    out[off_g + 4] = -obs_dist + sqrt((car_rad + obs_rad) * (car_rad + obs_rad));
+    mat(off_C, NX, 4, 0) = -dx_obs * inv_obs_dist;
+    mat(off_C, NX, 4, 1) = -dy_obs * inv_obs_dist;
+    mat(off_D, NU, 0, 0) = 1.0;
+    mat(off_D, NU, 1, 0) = -1.0;
+    mat(off_D, NU, 2, 1) = 1.0;
+    mat(off_D, NU, 3, 1) = -1.0;
+
+    out[off_q + 0] = w_pos * (2.0 * x - 2.0 * x_ref);
+    out[off_q + 1] = w_pos * (2.0 * y - 2.0 * y_ref);
+    out[off_q + 2] = theta * (2.0 * w_theta);
+    out[off_q + 3] = w_vel * (2.0 * v - 2.0 * v_ref);
+    out[off_r + 0] = acc * (2.0 * w_acc);
+    out[off_r + 1] = steer * (2.0 * w_steer);
+
+    const double obs_y_minus_y = obs_y - y;
+    const double obs_x_minus_x = obs_x - x;
+    const double tmp_j5 = obs_y_minus_y * obs_y_minus_y + 1.0e-6;
+    const double tmp_j7 = obs_x_minus_x * obs_x_minus_x;
+    const double tmp_j8 = lam4 / pow(tmp_j5 + tmp_j7, 1.5);
+    const double tmp_j9 = obs_y_minus_y * obs_x_minus_x * tmp_j8;
+    mat(off_Q, NX, 0, 0) = 2.0 * w_pos - tmp_j5 * tmp_j8;
+    mat(off_Q, NX, 0, 1) = tmp_j9;
+    mat(off_Q, NX, 1, 0) = tmp_j9;
+    mat(off_Q, NX, 1, 1) = 2.0 * w_pos - tmp_j8 * (tmp_j7 + 1.0e-6);
+    mat(off_Q, NX, 2, 2) = 2.0 * w_theta;
+    mat(off_Q, NX, 3, 3) = 2.0 * w_vel;
+    mat(off_R, NU, 0, 0) = 2.0 * w_acc;
+    mat(off_R, NU, 1, 1) = 2.0 * w_steer;
+
+    for (int i = 0; i < NC; ++i) {
+        out[off_s + i] = 0.2 + 0.01 * static_cast<double>((stage + i) % 7);
+        out[off_lam + i] = 0.05 + 0.002 * static_cast<double>((sample + i) % 9);
+        out[off_soft_s + i] = 0.1 + 0.01 * static_cast<double>(i % 5);
+    }
 }
 
 template <typename Model> constexpr int packet_entries()
@@ -220,6 +407,44 @@ double benchmark_device_packet_fill(double* d_packets, std::size_t total_entries
     return 1000.0 * static_cast<double>(fill_ms) / static_cast<double>(repeats);
 }
 
+double max_abs_error(const std::vector<double>& expected, const std::vector<double>& actual)
+{
+    double err = 0.0;
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        err = std::max(err, std::abs(expected[i] - actual[i]));
+    }
+    return err;
+}
+
+float benchmark_car_exact_device_packets(
+    std::vector<double>& output, int horizon, int batch, int repeats)
+{
+    static_assert(packet_entries<minisolver::CarModel>() == 112);
+    const std::size_t total_entries = static_cast<std::size_t>(horizon) * batch
+        * static_cast<std::size_t>(packet_entries<minisolver::CarModel>());
+    const std::size_t bytes = total_entries * sizeof(double);
+
+    double* d_packets = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_packets, bytes));
+    constexpr int threads = 128;
+    const int blocks = (horizon * batch + threads - 1) / threads;
+    fill_car_exact_packet_kernel<<<blocks, threads>>>(d_packets, horizon, batch);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    const float total_ms = time_cuda_ms([&]() {
+        for (int r = 0; r < repeats; ++r) {
+            fill_car_exact_packet_kernel<<<blocks, threads>>>(d_packets, horizon, batch);
+            CUDA_CHECK(cudaGetLastError());
+        }
+    });
+
+    output.resize(total_entries);
+    CUDA_CHECK(cudaMemcpy(output.data(), d_packets, bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_packets));
+    return total_ms / static_cast<float>(repeats);
+}
+
 template <typename Model> void run_case(const char* name, int horizon, int batch, int repeats)
 {
     std::vector<double> packets;
@@ -285,6 +510,38 @@ template <typename Model> void run_model(const char* name)
     run_case<Model>(name, 100, 1024, 10);
 }
 
+void run_car_exact_case(int horizon, int batch, int repeats)
+{
+    std::vector<double> cpu_packets;
+    const double cpu_eval_pack_us
+        = fill_generated_packets<minisolver::CarModel>(cpu_packets, horizon, batch);
+    std::vector<double> gpu_packets;
+    const float gpu_exact_ms
+        = benchmark_car_exact_device_packets(gpu_packets, horizon, batch, repeats);
+    const double gpu_exact_us = 1000.0 * static_cast<double>(gpu_exact_ms);
+    const std::size_t bytes = cpu_packets.size() * sizeof(double);
+    const double mib = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    const double err = max_abs_error(cpu_packets, gpu_packets);
+
+    std::cout << std::setw(4) << horizon << " " << std::setw(6) << batch << " " << std::setw(9)
+              << packet_entries<minisolver::CarModel>() << " " << std::setw(9) << std::fixed
+              << std::setprecision(2) << mib << " " << std::setw(12) << cpu_eval_pack_us << " "
+              << std::setw(12) << gpu_exact_us << " " << std::setw(12)
+              << bandwidth_gbps(bytes, gpu_exact_us) << " " << std::scientific
+              << std::setprecision(2) << std::setw(12) << err << "\n";
+}
+
+void run_car_exact_device_suite()
+{
+    std::cout << "\nCarModel CUDA exact packet assembly lower-bound\n";
+    std::cout << "   N  batch   entries       MiB eval_pack_us gpu_exact_us gpu_exact_GBps"
+                 "      max_err\n";
+    run_car_exact_case(50, 1, 50);
+    run_car_exact_case(50, 256, 20);
+    run_car_exact_case(50, 4096, 5);
+    run_car_exact_case(100, 1024, 10);
+}
+
 } // namespace
 
 int main()
@@ -305,6 +562,7 @@ int main()
 
     run_model<minisolver::CarModel>("CarModel");
     run_model<minisolver::BicycleExtModel>("BicycleExtModel");
+    run_car_exact_device_suite();
 
     return 0;
 }

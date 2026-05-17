@@ -26,12 +26,15 @@ For each stage and batch sample, the host code:
 6. measures a lower-bound device-side packet fill kernel with the same output
    buffer size. This synthetic kernel does not evaluate the generated model; it
    only estimates the cost of writing packet-shaped data on the GPU.
+7. measures a hand-transcribed CUDA exact packet assembly kernel for `CarModel`
+   and compares its packet output against the generated CPU `CarModel`.
 
 The benchmark reports host eval+pack time, H2D copy time, persistent
 pack-into-pinned plus async-H2D staging time, and a synthetic device packet-fill
-lower bound. It intentionally does not include a GPU Riccati solve,
-host/device round trip, solver residuals, line search, SOC, restoration, or
-postsolve.
+lower bound. The `CarModel` exact CUDA packet kernel is included as a
+single-model device-codegen prototype, not as a generic MiniModel CUDA backend.
+The benchmark intentionally does not include a GPU Riccati solve, host/device
+round trip, solver residuals, line search, SOC, restoration, or postsolve.
 
 ## Reproduction
 
@@ -62,14 +65,14 @@ Key timing observations:
 
 | Model | NX | NU | NC | Horizon N | Batch | Packet entries | MiB | Host eval+pack us | Pinned H2D us | Pinned H2D GB/s | Persistent pinned eval+H2D us | GPU synthetic fill us | GPU synthetic fill GB/s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| CarModel | 4 | 2 | 5 | 50 | 1 | 112 | 0.04 | 21.17 | 31.79 | 1.41 | 36.07 | 5.87 | 7.64 |
-| CarModel | 4 | 2 | 5 | 50 | 256 | 112 | 10.94 | 1461.01 | 400.09 | 28.67 | 1962.77 | 17.01 | 674.19 |
-| CarModel | 4 | 2 | 5 | 50 | 4096 | 112 | 175.00 | 24606.66 | 3642.01 | 50.38 | 28768.58 | 212.87 | 862.03 |
-| CarModel | 4 | 2 | 5 | 100 | 1024 | 112 | 87.50 | 12625.78 | 1836.50 | 49.96 | 14636.71 | 108.20 | 847.98 |
-| BicycleExtModel | 6 | 2 | 10 | 50 | 1 | 234 | 0.09 | 13.52 | 31.54 | 2.97 | 43.72 | 6.39 | 14.64 |
-| BicycleExtModel | 6 | 2 | 10 | 50 | 256 | 234 | 22.85 | 3197.37 | 586.83 | 40.83 | 3466.89 | 31.15 | 769.30 |
-| BicycleExtModel | 6 | 2 | 10 | 50 | 4096 | 234 | 365.62 | 62415.40 | 7575.93 | 50.61 | 70324.94 | 438.28 | 874.75 |
-| BicycleExtModel | 6 | 2 | 10 | 100 | 1024 | 234 | 182.81 | 31769.19 | 3808.49 | 50.33 | 35247.50 | 220.31 | 870.12 |
+| CarModel | 4 | 2 | 5 | 50 | 1 | 112 | 0.04 | 21.63 | 31.05 | 1.44 | 37.22 | 6.37 | 7.04 |
+| CarModel | 4 | 2 | 5 | 50 | 256 | 112 | 10.94 | 1467.59 | 374.65 | 30.61 | 1961.75 | 17.36 | 660.71 |
+| CarModel | 4 | 2 | 5 | 50 | 4096 | 112 | 175.00 | 24481.22 | 3622.91 | 50.65 | 28639.60 | 213.40 | 859.91 |
+| CarModel | 4 | 2 | 5 | 100 | 1024 | 112 | 87.50 | 12402.77 | 1836.98 | 49.95 | 14504.53 | 108.42 | 846.26 |
+| BicycleExtModel | 6 | 2 | 10 | 50 | 1 | 234 | 0.09 | 13.71 | 31.44 | 2.98 | 43.33 | 8.36 | 11.20 |
+| BicycleExtModel | 6 | 2 | 10 | 50 | 256 | 234 | 22.85 | 3416.01 | 607.08 | 39.47 | 3538.26 | 31.53 | 759.86 |
+| BicycleExtModel | 6 | 2 | 10 | 50 | 4096 | 234 | 365.62 | 59202.46 | 7545.96 | 50.81 | 66118.97 | 439.60 | 872.12 |
+| BicycleExtModel | 6 | 2 | 10 | 100 | 1024 | 234 | 182.81 | 29898.76 | 3829.97 | 50.05 | 32939.98 | 219.93 | 871.62 |
 
 For the largest contiguous buffers, pinned H2D bandwidth approaches
 `50 GB/s` on this machine. Small buffers are dominated by fixed overhead.
@@ -84,6 +87,22 @@ plus H2D path for large batches, reaching roughly `850 GB/s` effective packet
 write bandwidth. This does not prove generated-model evaluation is cheap on the
 GPU, but it shows that packet-shaped device writes are not the blocking cost if
 the generated model evaluation can be moved or fused onto the device.
+
+The hand-transcribed `CarModel` exact CUDA packet assembly benchmark produced
+packets matching the generated CPU `CarModel` to roughly `1e-14` max error:
+
+| Horizon N | Batch | MiB | CPU eval+pack us | CUDA exact packet us | CUDA exact GB/s | Max packet error |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 50 | 1 | 0.04 | 13.20 | 17.13 | 2.62 | 8.88e-16 |
+| 50 | 256 | 10.94 | 1475.97 | 50.28 | 228.11 | 3.55e-15 |
+| 50 | 4096 | 175.00 | 25239.77 | 1488.33 | 123.29 | 3.55e-15 |
+| 100 | 1024 | 87.50 | 12616.19 | 263.52 | 348.17 | 7.11e-15 |
+
+This is the first positive signal for device-side generated-model packet
+assembly: if generated model code can be emitted for CUDA and run over enough
+independent horizons, packet assembly can be substantially faster than the
+current CPU eval+pack path. It is still a single hand-transcribed model kernel,
+not a general MiniModel CUDA codegen path.
 
 ## Backend Implication
 
@@ -104,7 +123,7 @@ The better route is to fuse or batch more of the pipeline:
 
 - batched generated model evaluation;
 - persistent device-resident packet buffers;
-- generated packet assembly directly on device;
+- generated packet assembly directly on device, ideally emitted by MiniModel;
 - persistent pinned or asynchronous staging;
 - GPU Riccati only for workloads with enough independent horizons;
 - differentiable or sampled-control workloads where many solves share a batch.
