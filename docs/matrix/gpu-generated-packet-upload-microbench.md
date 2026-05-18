@@ -1,5 +1,12 @@
 # CUDA Generated Packet Upload Microbenchmark
 
+Last updated: 2026-05-18
+
+> Cross-route note: the aligned route re-run is recorded in
+> `docs/matrix/gpu-aligned-route-microbench.md`. Treat this file as a
+> route-specific probe note; do not use older heterogeneous rows here for
+> cross-route speed conclusions.
+
 This note records a standalone benchmark for the cost of taking packets from
 generated MiniSolver models on the CPU and uploading them to a CUDA device. It
 does not run a GPU solver backend. Its purpose is to quantify the integration

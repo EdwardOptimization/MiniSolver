@@ -1,5 +1,12 @@
 # CUDA Batched Scalar Riccati Microbenchmark
 
+Last updated: 2026-05-18
+
+> Cross-route note: the aligned route re-run is recorded in
+> `docs/matrix/gpu-aligned-route-microbench.md`. Treat this file as a
+> route-specific probe note; do not use older heterogeneous rows here for
+> cross-route speed conclusions.
+
 This note records an exploratory benchmark for many independent short scalar
 Riccati recursions. It tests a GPU route that is different from one long
 MPX/PCR scan: batching across many MPC samples, guesses, problems, or replay

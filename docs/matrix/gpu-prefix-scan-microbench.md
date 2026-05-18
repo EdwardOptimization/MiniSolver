@@ -1,5 +1,12 @@
 # CUDA Prefix-Scan Microbenchmark
 
+Last updated: 2026-05-18
+
+> Cross-route note: the aligned route re-run is recorded in
+> `docs/matrix/gpu-aligned-route-microbench.md`. Treat this file as a
+> route-specific probe note; do not use older heterogeneous rows here for
+> cross-route speed conclusions.
+
 This note records the first exploratory GPU benchmark for MPX/PCR-style
 parallel Riccati building blocks. It is a microbenchmark only: it does not make
 `Backend::GPU_*` supported, and it does not measure end-to-end NMPC solve time.

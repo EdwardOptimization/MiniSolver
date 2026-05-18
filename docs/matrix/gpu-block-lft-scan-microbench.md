@@ -1,5 +1,12 @@
 # CUDA Block-LFT Scan Microbenchmark
 
+Last updated: 2026-05-18
+
+> Cross-route note: the aligned route re-run is recorded in
+> `docs/matrix/gpu-aligned-route-microbench.md`. Treat this file as a
+> route-specific probe note; do not use older heterogeneous rows here for
+> cross-route speed conclusions.
+
 This note records an exploratory benchmark for MPX/PCR-style scans over block
 linear-fractional transform operators. It is closer to a block Riccati
 parallelization route than the scalar Riccati scan, but it is still not a solver

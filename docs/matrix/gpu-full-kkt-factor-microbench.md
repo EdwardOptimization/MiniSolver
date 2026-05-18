@@ -1,5 +1,16 @@
 # CUDA Full-KKT Factorization Microbenchmark
 
+Last updated: 2026-05-18
+
+> Strategy status: rejected anti-pattern. Strategy 1 means exploiting the OCP
+> block-tridiagonal/block-sparse structure. This dense full-KKT probe is kept
+> only to document why dense assembly/factorization is not the route.
+>
+> Cross-route note: the aligned route re-run is recorded in
+> `docs/matrix/gpu-aligned-route-microbench.md`. Treat this file as a
+> route-specific probe note; do not use older heterogeneous rows here for
+> cross-route speed conclusions.
+
 This note records an exploratory route-1 benchmark for treating the IPM/Newton
 step as an explicit full KKT matrix factorization rather than a Riccati
 recursion.
@@ -74,15 +85,15 @@ The reasons are structural:
 - the benchmark excludes host/device transfer, so end-to-end behavior would be
   even worse.
 
-This does not rule out a real GPU sparse/block KKT factorization. It does rule
-out a naive dense "assemble full KKT and factor it on GPU" path for MiniSolver's
-normal small-to-medium NMPC workloads.
+This does not rule out a real GPU sparse/block KKT factorization. It rules out
+using dense full-KKT assembly as Strategy 1.
 
 ## Backend Implication
 
-The full KKT route should only continue if a future prototype uses real block
-sparse storage and a GPU sparse/block factorization kernel. Until then, the
-stronger near-term GPU route remains:
+Do not continue this dense route as a candidate backend. If Strategy 1 continues,
+it should be the structured block-tridiagonal/block-sparse route documented in
+`gpu-block-tridiag-factor-microbench.md`. Until then, the stronger near-term GPU
+route remains:
 
 ```text
 device-side generated packet assembly

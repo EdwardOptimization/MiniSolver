@@ -1,8 +1,66 @@
 # GPU Route Triage
 
+Last updated: 2026-05-18
+
 This branch investigates whether MPX/PCR and related GPU routes are worth
 integrating into MiniSolver. It is intentionally scoped to standalone
 microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
+
+## Final Gate Conclusion
+
+Do not integrate a normal GPU backend for MiniSolver's ordinary fixed-size
+single-OCP NMPC solve path.
+
+The current evidence says:
+
+- for `batch=1`, every measured GPU route is slower by orders of magnitude;
+- the structured block-tridiagonal Strategy 1 route remains around `0.01x`
+  GPU-vs-CPU speedup even at `N=65536`;
+- MPX/PCR-style scan primitives are mathematically relevant, but the measured
+  scan routes do not cover a complete OCP direction solve and still do not
+  justify `Backend::GPU_MPX` or `Backend::GPU_PCR`;
+- positive GPU signal appears only when there are many independent horizons,
+  generated packets are device-resident or amortized, and the workload is
+  explicitly batched.
+
+Therefore the product decision is:
+
+```text
+Keep the normal MiniSolver OCP backend on CPU.
+Do not enable Backend::GPU_MPX or Backend::GPU_PCR.
+Keep GPU work limited to batched/differentiable/replay workloads until a new
+benchmark corpus proves an end-to-end backend benefit.
+```
+
+This does not mean GPU acceleration is useless for all OCP-related workloads.
+It means the current branch found no useful GPU backend path for the normal
+single-problem online NMPC tick that MiniSolver primarily targets.
+
+## Alignment Correction
+
+Earlier route-specific tables used different dimensions, horizons, and batch
+counts. They are valid smoke/probe results for their own tools, but they should
+not be used for cross-route speed conclusions.
+
+The current cross-route gate is based on the aligned re-run in
+`docs/matrix/gpu-aligned-route-microbench.md`:
+
+```text
+(NX, NU) in {(4, 2), (8, 4)}
+N in {32, 128}
+batch in {1, 256, 4096}
+```
+
+Strategy 1 is the structured block-tridiagonal route. Dense full-KKT
+assembly/factorization is excluded from the candidate set because it does not
+exploit the OCP block structure. Prefix/block-LFT scan probes only cover the
+`NX=4` batched scan subset. These coverage gaps are part of the route decision,
+not missing positive results.
+
+Route-specific large-horizon stress rows, including `N=65536`, are still useful
+for primitive crossover analysis. They now cover both the prefix-scan route and
+the structured block-tridiagonal route, but they remain excluded from the
+aligned cross-route gate because they answer single-route stress questions.
 
 ## Current Artifacts
 
@@ -10,8 +68,8 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | --- | --- | --- |
 | `tools/parallel_scan_gpu_bench.cu` | MPX/PCR-style affine prefix scan benchmark | Correctness error around `1e-15`; normal NMPC-scale horizons are slower on GPU |
 | `docs/matrix/gpu-prefix-scan-microbench.md` | Scan benchmark contract and RTX 5080 results | Records reproduction commands and scale crossover observations |
-| `tools/cuda_full_kkt_factor_bench.cu` | Explicit full-KKT dense LDL solve for synthetic quasi-definite OCP KKT systems | Correctness and residual around `1e-16`; naive dense full-matrix GPU route is much slower than CPU |
-| `docs/matrix/gpu-full-kkt-factor-microbench.md` | Full-KKT factorization route contract and RTX 5080 results | Records why full-KKT GPU work needs real block-sparse kernels before backend integration |
+| `tools/cuda_full_kkt_factor_bench.cu` | Historical rejected dense full-KKT probe | Correctness and residual around `1e-16`; dense full-matrix route is excluded because it does not exploit OCP block structure |
+| `docs/matrix/gpu-full-kkt-factor-microbench.md` | Dense full-KKT anti-pattern note | Records why dense full-KKT assembly is not Strategy 1 |
 | `tools/cuda_block_tridiag_factor_bench.cu` | Explicit block-tridiagonal Cholesky/solve for synthetic block-sparse Newton systems | Correctness around `1e-17`; simple one-thread-per-system GPU route approaches CPU only for small blocks and medium batch |
 | `docs/matrix/gpu-block-tridiag-factor-microbench.md` | Block-tridiagonal factorization route contract and RTX 5080 results | Records why sparse/block KKT work needs block-parallel kernels or cyclic reduction before backend integration |
 | `tools/cuda_batched_factor_bench.cu` | Batched small dense Cholesky benchmark with sequential/threaded/Eigen CPU, simple GPU, and tuned cooperative GPU baselines | Correctness error around `1e-15`; GPU wins are workload-shape dependent |
@@ -26,6 +84,7 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | `docs/matrix/gpu-batched-lqr-riccati-microbench.md` | Batched barrier-affine block Riccati benchmark contract and RTX 5080 results | Records the strongest Riccati-specific evidence for batched GPU workloads |
 | `tools/cuda_generated_packet_upload_bench.cu` | Generated-model packet eval/pack, persistent pinned staging, synthetic device packet fill, hand-transcribed `CarModel` CUDA packet assembly, and H2D upload benchmark | Pinned H2D approaches `50 GB/s`; synthetic device fill reaches roughly `850 GB/s`; CUDA `CarModel` packet assembly matches CPU packets to around `1e-14` and is faster at large batch |
 | `docs/matrix/gpu-generated-packet-upload-microbench.md` | Generated packet upload benchmark contract and RTX 5080 results | Records why a GPU backend must fuse or amortize packet assembly and transfer |
+| `docs/matrix/gpu-aligned-route-microbench.md` | Aligned cross-route re-run over the shared route grid | Supersedes earlier cross-route interpretations from heterogeneous case tables |
 
 The branch deliberately does not modify:
 
@@ -40,22 +99,21 @@ The branch deliberately does not modify:
 Original request:
 
 ```text
-新建一个分支，实现mpx和pcr，可以参考原来的gpu分支。
-确认在不同规模问题上的加速效果，
-建议第一步值对比矩阵分解的速度，而不是端到端对比，
-这样工作量太大，也不好对比。
-除了mpx和pcr，也可以探索其他路线。
+Create a branch to investigate MPX/PCR-style GPU routes, using the old GPU
+branch as reference if useful. Confirm speedup across problem scales. Start by
+comparing matrix decomposition or recurrence kernels instead of full end-to-end
+solver timing, and explore other candidate routes if relevant.
 ```
 
 | Requirement | Current evidence | Status |
 | --- | --- | --- |
-| New branch | `feat/gpu-mpx-pcr-microbench` pushed to remote | Done |
+| New branch | `feat/gpu-mpx-pcr-microbench` exists as the GPU research branch; local evidence commits should be pushed only after commit cleanup | Done |
 | Implement MPX/PCR | Standalone MPX-like Thrust scan and PCR-like Hillis-Steele scan exist in `parallel_scan_gpu_bench.cu`; scalar Riccati and block-LFT scan variants cover Riccati-adjacent recurrences | Done for exploratory benchmarks |
 | Reference old GPU branch | Old branch was inspected; direct cherry-pick was rejected because it is highly stale | Done as design input |
-| Confirm speedup at different scales | Scan benchmark covers `NX={2,4,8,12}`, `N={64..65536}`; scalar Riccati scan covers `N={64..65536}` | Done for scan microbenchmarks |
-| First compare matrix decomposition speed | Batched Cholesky benchmark covers `DIM={4,8,12,16}`, `batch={1..65536}` | Done |
+| Confirm speedup at different scales | Aligned route re-run covers `(NX,NU)={(4,2),(8,4)}`, `N={32,128}`, `batch={1,256,4096}` where each route can support it; route-specific larger sweeps are kept as smoke/probe data only | Done with coverage limits recorded |
+| First compare matrix decomposition speed | Aligned batched Cholesky benchmark covers `DIM={6,12}`, `batch={1,256,4096}` | Done |
 | Avoid end-to-end comparison | No end-to-end solver benchmark was added | Done |
-| Full KKT / sparse block factorization route | Explicit quasi-definite full-KKT dense LDL benchmark and explicit block-tridiagonal factorization benchmark exist; both include CPU baselines, GPU timing, and correctness error | Done as route probes |
+| Structured block-tridiagonal factorization route | Explicit block-tridiagonal factorization benchmark exists with CPU baselines, GPU timing, and correctness error; dense full-KKT is retained only as a rejected anti-pattern probe | Done as route probe |
 | Explore other route | Batched small dense factorization, scalar Riccati scan, block-LFT scan, batched scalar Riccati, and batched block LQR Riccati routes added | Done |
 
 Working `Backend::GPU_MPX` / `Backend::GPU_PCR` integration is intentionally
@@ -63,36 +121,36 @@ not part of this exploratory microbenchmark branch. It remains gated below.
 
 ## Interpretation
 
-### Full KKT / Sparse-Block Route
+### Structured Block-Tridiagonal Route
 
-The explicit full-KKT route is the closest interpretation of "IPM core equals
-matrix factorization." The current benchmark assembles a synthetic
-quasi-definite OCP KKT matrix and solves it with dense no-pivot LDL on CPU and
-GPU. It verifies correctness to around `1e-16`, but the naive dense GPU path is
-much slower than CPU across the measured `N/NX/NU/batch` cases.
+Strategy 1 means exploiting the OCP block structure instead of assembling the
+whole KKT into a dense matrix. Dense full-KKT is therefore not a candidate
+route. It remains only as a historical anti-pattern probe.
 
-This result should not be over-interpreted as "GPU sparse KKT is impossible."
-It says the naive route of assembling the whole KKT into a dense matrix and
-factorizing that on GPU is not a useful MiniSolver backend path.
+The block-tridiagonal benchmark keeps the explicit sparse/block structure and
+solves a regularized normal-equation/Schur-complement view of the Newton
+system. On the aligned grid it verifies correctness around `1e-17`. It only
+beats the best CPU baseline for very large batch and small block size, for
+example `block_dim=6, N=32, batch=4096` at `1.57x`; larger block/horizon rows
+remain slower.
 
-The block-tridiagonal benchmark then keeps the explicit sparse/block structure
-and solves a regularized normal-equation/Schur-complement view of the Newton
-system. It verifies correctness to around `1e-17`, but a simple
-one-thread-per-system GPU factorization still loses to threaded CPU baselines.
-The closest case reaches `0.97x` of best CPU at `block_dim=4, N=64, batch=256`.
+The separate single-horizon stress rows include `N=65536` for
+`block_dim={6,12}`. They remain at roughly `0.01x` GPU-vs-CPU speedup with this
+one-thread-per-system kernel, so large `N` alone does not rescue Strategy 1.
 
-A serious full KKT GPU route would need true block-sparse storage,
-symbolic/numeric factorization reuse, and block-parallel GPU factorization or
-cyclic reduction. That is a larger backend project than the current exploratory
-branch.
+A serious Strategy 1 GPU route would need true block-sparse storage,
+symbolic/numeric factorization reuse, and block-parallel tridiagonal
+factorization or cyclic reduction. A one-thread-per-system block solver is not
+enough.
 
 ### Prefix Scan / MPX-PCR Route
 
 The scan route is mathematically relevant for parallel Riccati and recurrence
-algorithms, but the current single-problem benchmark does not justify solver
-integration. For normal NMPC horizon lengths, launch overhead and generic scan
-cost dominate. Positive signals only appear for very large `N` or future batched
-multi-problem workloads.
+algorithms, but it still does not justify solver integration. In the aligned
+batched re-run, `NX=4` scans show positive large-batch microkernel speedups,
+but `batch=1` remains orders of magnitude slower. The `NX=8` batched
+`scan_by_key` probe exceeded CUB shared-memory limits and is therefore a
+coverage gap, not a positive result.
 
 The scalar Riccati scan benchmark confirms the same conclusion in a more
 Riccati-specific setting: the fractional-linear transform scan is correct, but
@@ -144,8 +202,9 @@ one CPU Riccati solve.
 The batched barrier-affine block Riccati benchmark strengthens this conclusion
 with a multi-state, multi-control, feedforward recursion plus synthetic
 constraint/barrier packet assembly, defect RHS propagation, and mixed
-hard/L1/L2 recovery. For batch `1` and `256`, GPU is much slower than CPU; for
-batch `4096` and `65536`, GPU starts to beat the threaded CPU baseline.
+hard/L1/L2 recovery. On the aligned grid, batch `1` is orders of magnitude
+slower on GPU, batch `256` is still slower than threaded CPU, and batch `4096`
+crosses over at roughly `1.4x` to `2.25x` depending on dimension and horizon.
 
 The generated packet upload benchmark adds the integration-cost side of the
 story: if generated model evaluation and packet assembly stay on the CPU, the
