@@ -357,6 +357,16 @@ if(MINISOLVER_BUILD_CUDA_BENCHMARKS)
         CUDA_ARCHITECTURES "${MINISOLVER_CUDA_ARCHITECTURES}"
     )
 
+    add_executable(cuda_block_tridiag_factor_bench EXCLUDE_FROM_ALL
+        tools/cuda_block_tridiag_factor_bench.cu
+    )
+    target_link_libraries(cuda_block_tridiag_factor_bench minisolver_lib)
+    set_target_properties(cuda_block_tridiag_factor_bench PROPERTIES
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+        CUDA_ARCHITECTURES "${MINISOLVER_CUDA_ARCHITECTURES}"
+    )
+
     add_executable(cuda_generated_packet_upload_bench EXCLUDE_FROM_ALL
         tools/cuda_generated_packet_upload_bench.cu
     )

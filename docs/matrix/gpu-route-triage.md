@@ -12,6 +12,8 @@ microbenchmarks. `Backend::GPU_MPX` and `Backend::GPU_PCR` remain unsupported.
 | `docs/matrix/gpu-prefix-scan-microbench.md` | Scan benchmark contract and RTX 5080 results | Records reproduction commands and scale crossover observations |
 | `tools/cuda_full_kkt_factor_bench.cu` | Explicit full-KKT dense LDL solve for synthetic quasi-definite OCP KKT systems | Correctness and residual around `1e-16`; naive dense full-matrix GPU route is much slower than CPU |
 | `docs/matrix/gpu-full-kkt-factor-microbench.md` | Full-KKT factorization route contract and RTX 5080 results | Records why full-KKT GPU work needs real block-sparse kernels before backend integration |
+| `tools/cuda_block_tridiag_factor_bench.cu` | Explicit block-tridiagonal Cholesky/solve for synthetic block-sparse Newton systems | Correctness around `1e-17`; simple one-thread-per-system GPU route approaches CPU only for small blocks and medium batch |
+| `docs/matrix/gpu-block-tridiag-factor-microbench.md` | Block-tridiagonal factorization route contract and RTX 5080 results | Records why sparse/block KKT work needs block-parallel kernels or cyclic reduction before backend integration |
 | `tools/cuda_batched_factor_bench.cu` | Batched small dense Cholesky benchmark with sequential/threaded/Eigen CPU, simple GPU, and tuned cooperative GPU baselines | Correctness error around `1e-15`; GPU wins are workload-shape dependent |
 | `docs/matrix/gpu-batched-factor-microbench.md` | Batched factorization benchmark contract and RTX 5080 results | Records reproduction commands and batch-size crossover observations |
 | `tools/cuda_scalar_riccati_scan_bench.cu` | Scalar Riccati recurrence as MPX/PCR-style fractional-linear scan | Correctness error around `1e-14`; large `N` crossover only |
@@ -53,7 +55,7 @@ Original request:
 | Confirm speedup at different scales | Scan benchmark covers `NX={2,4,8,12}`, `N={64..65536}`; scalar Riccati scan covers `N={64..65536}` | Done for scan microbenchmarks |
 | First compare matrix decomposition speed | Batched Cholesky benchmark covers `DIM={4,8,12,16}`, `batch={1..65536}` | Done |
 | Avoid end-to-end comparison | No end-to-end solver benchmark was added | Done |
-| Full KKT / sparse block factorization route | Explicit quasi-definite full-KKT dense LDL benchmark exists in `cuda_full_kkt_factor_bench.cu`; it is a first route-1 baseline, not a production sparse backend | Done as dense baseline |
+| Full KKT / sparse block factorization route | Explicit quasi-definite full-KKT dense LDL benchmark and explicit block-tridiagonal factorization benchmark exist; both include CPU baselines, GPU timing, and correctness error | Done as route probes |
 | Explore other route | Batched small dense factorization, scalar Riccati scan, block-LFT scan, batched scalar Riccati, and batched block LQR Riccati routes added | Done |
 
 Working `Backend::GPU_MPX` / `Backend::GPU_PCR` integration is intentionally
@@ -71,10 +73,18 @@ much slower than CPU across the measured `N/NX/NU/batch` cases.
 
 This result should not be over-interpreted as "GPU sparse KKT is impossible."
 It says the naive route of assembling the whole KKT into a dense matrix and
-factorizing that on GPU is not a useful MiniSolver backend path. A serious full
-KKT GPU route would need true block-sparse storage, symbolic/numeric
-factorization reuse, and a GPU sparse/block LDL implementation. That is a
-larger backend project than the current exploratory branch.
+factorizing that on GPU is not a useful MiniSolver backend path.
+
+The block-tridiagonal benchmark then keeps the explicit sparse/block structure
+and solves a regularized normal-equation/Schur-complement view of the Newton
+system. It verifies correctness to around `1e-17`, but a simple
+one-thread-per-system GPU factorization still loses to threaded CPU baselines.
+The closest case reaches `0.97x` of best CPU at `block_dim=4, N=64, batch=256`.
+
+A serious full KKT GPU route would need true block-sparse storage,
+symbolic/numeric factorization reuse, and block-parallel GPU factorization or
+cyclic reduction. That is a larger backend project than the current exploratory
+branch.
 
 ### Prefix Scan / MPX-PCR Route
 
