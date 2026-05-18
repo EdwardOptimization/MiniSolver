@@ -1,5 +1,7 @@
 # Legacy Debug Notes
 
+Last updated: 2026-05-04
+
 This file preserves historical debugging notes that used to live in the root
 `DEBUG_README.md`. It is not the authoritative project guide.
 

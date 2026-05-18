@@ -1,5 +1,7 @@
 # Multi-Agent Development Harness
 
+Last updated: 2026-05-06
+
 MiniSolver is developed with multiple coding and review agents. A single large
 instruction skill is not enough for long-running solver work: agents tend to
 obey only part of the rule set, self-review is often too lenient, and small

@@ -1,5 +1,7 @@
 # Snapshot And Replay Design
 
+Last updated: 2026-05-15
+
 MiniSolver snapshot I/O is a debug and replay facility, not a general-purpose
 serialization framework. It exists to capture enough state to reproduce a solver
 failure or compare solver behavior across commits.

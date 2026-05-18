@@ -1,5 +1,7 @@
 # Overdesign Ledger
 
+Last updated: 2026-05-06
+
 This ledger records proposals that looked safer or more complete at first pass,
 but needed a decision about whether they protect a real MiniSolver invariant or
 unnecessarily constrain modeling freedom.

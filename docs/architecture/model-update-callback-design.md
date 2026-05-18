@@ -1,5 +1,7 @@
 # Model Update Callback Design
 
+Last updated: 2026-05-15
+
 Status: first implementation landed as a function-pointer hook on `MiniSolver`.
 
 Owner: MiniSolver runtime API.

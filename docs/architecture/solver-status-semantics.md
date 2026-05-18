@@ -1,5 +1,7 @@
 # Solver Status Semantics
 
+Last updated: 2026-05-04
+
 MiniSolver status values report the solver's terminal condition, not just the last residual value.
 The postsolve residual refresh remains authoritative for solution quality, but it must not collapse
 iteration-budget or algorithmic failures into `INFEASIBLE` unless the solver has evidence that the

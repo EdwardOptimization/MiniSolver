@@ -1,5 +1,7 @@
 # Replay Corpus Plan
 
+Last updated: 2026-05-06
+
 MiniSolver needs a small internal replay/correctness corpus before adding more
 solver features. The corpus is not a cross-solver benchmark; that belongs in
 MiniSolver-Bench. This corpus exists to keep MiniSolver behavior reproducible

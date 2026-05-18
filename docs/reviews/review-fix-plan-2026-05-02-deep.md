@@ -1,5 +1,7 @@
 # Review Issue Ledger: 2026-05-02 Deep Review (14-Dimension)
 
+Last updated: 2026-05-03
+
 This ledger tracks the 41 new findings from [review_2026-05-02-deep.md](review_2026-05-02-deep.md) in the project's standard ledger format. It complements the static-review ledger ([review-fix-plan-2026-05-02.md](review-fix-plan-2026-05-02.md)) without overlap.
 
 Each item must follow the project rule:

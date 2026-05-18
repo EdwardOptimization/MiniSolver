@@ -1,5 +1,7 @@
 # MiniSolver Roadmap
 
+Last updated: 2026-05-06
+
 This file tracks **milestones** (not daily progress). The goal is to keep the project aligned, avoid overdesign, and make decisions reviewable.
 
 ## Completed Milestones

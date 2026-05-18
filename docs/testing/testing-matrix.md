@@ -1,5 +1,7 @@
 # MiniSolver Testing Matrix
 
+Last updated: 2026-05-03
+
 MiniSolver tests are organized around solver contracts, not around a full
 Cartesian product of every option. The goal is to keep per-commit CI fast while
 still locking the semantics that matter for NMPC correctness, zero-allocation

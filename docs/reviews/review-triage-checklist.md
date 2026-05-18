@@ -1,5 +1,7 @@
 # Review Triage Checklist
 
+Last updated: 2026-05-06
+
 Use this checklist before implementing findings from LLM reviews, static
 analysis, deep reviews, or external solver comparisons.
 

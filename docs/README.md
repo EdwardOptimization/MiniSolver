@@ -1,5 +1,7 @@
 # MiniSolver Documentation
 
+Last updated: 2026-05-06
+
 This directory is organized by document purpose. Keep long-running plans,
 evidence logs, and design decisions separate so each file has a clear role.
 

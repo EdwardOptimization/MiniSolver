@@ -1,5 +1,7 @@
 # Review Issue Ledger: 2026-05-02 Static Review Follow-Up
 
+Last updated: 2026-05-04
+
 This document tracks stale-or-current static review findings with their current
 status, evidence, and resolution. It intentionally preserves both the original
 problem discovery and the later fix record so the solver's evolution remains

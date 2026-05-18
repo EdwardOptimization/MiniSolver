@@ -1,5 +1,7 @@
 # Termination Design
 
+Last updated: 2026-05-13
+
 MiniSolver termination is a solver contract, not a small condition tweak. The
 first two implementation phases are complete: strict `OPTIMAL` now uses true
 complementarity instead of the internal barrier target, fixed-iteration RTI
