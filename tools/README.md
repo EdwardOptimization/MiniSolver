@@ -48,6 +48,8 @@ backend integration gate is met.
   MPX/PCR-style scan.
 * `cuda_block_lft_scan_bench.cu`: block linear-fractional-transform scan near a
   block-Riccati operator composition route.
+* `cuda_full_kkt_factor_bench.cu`: explicit quasi-definite full-KKT dense LDL
+  solve as a first sanity baseline for the full KKT / sparse-block route.
 * `cuda_batched_factor_bench.cu`: batched small dense Cholesky with sequential
   CPU, threaded CPU, simple GPU, and cooperative GPU baselines.
 * `cuda_batched_scalar_riccati_bench.cu`: many independent scalar Riccati
