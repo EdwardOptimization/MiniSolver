@@ -621,7 +621,7 @@ template <int NX, int NU> void run_case(int horizon, int count, int repeats)
 template <int NX, int NU> void run_suite()
 {
     for (const int horizon : { 32, 128 }) {
-        for (const int count : { 1, 256, 4096, 65536 }) {
+        for (const int count : { 1, 256, 4096 }) {
             const int repeats = (count <= 256) ? 20 : 5;
             run_case<NX, NU>(horizon, count, repeats);
         }

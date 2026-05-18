@@ -421,6 +421,8 @@ void run_dispatch(const CaseConfig& cfg)
 {
     if (cfg.block_dim == 4) {
         run_case<4>(cfg);
+    } else if (cfg.block_dim == 6) {
+        run_case<6>(cfg);
     } else if (cfg.block_dim == 8) {
         run_case<8>(cfg);
     } else if (cfg.block_dim == 12) {
@@ -446,12 +448,34 @@ int main()
                  "    speedup     sol_err\n";
 
     for (const CaseConfig cfg : {
-             CaseConfig { 4, 16, 1, 100 },
-             CaseConfig { 4, 64, 256, 20 },
-             CaseConfig { 4, 256, 1024, 5 },
-             CaseConfig { 8, 64, 256, 10 },
-             CaseConfig { 12, 64, 64, 10 },
-             CaseConfig { 12, 128, 64, 5 },
+             // Aligned route grid: block_dim maps to NX + NU for (4,2) and (8,4).
+             CaseConfig { 6, 32, 1, 50 },
+             CaseConfig { 6, 32, 256, 10 },
+             CaseConfig { 6, 32, 4096, 2 },
+             CaseConfig { 6, 128, 1, 20 },
+             CaseConfig { 6, 128, 256, 5 },
+             CaseConfig { 6, 128, 4096, 1 },
+             CaseConfig { 12, 32, 1, 20 },
+             CaseConfig { 12, 32, 256, 5 },
+             CaseConfig { 12, 32, 4096, 1 },
+             CaseConfig { 12, 128, 1, 10 },
+             CaseConfig { 12, 128, 256, 2 },
+             CaseConfig { 12, 128, 4096, 1 },
+         }) {
+        run_dispatch(cfg);
+    }
+
+    std::cout << "# extended single-horizon block-tridiagonal stress, "
+                 "not used for cross-route gate\n";
+    for (const CaseConfig cfg : {
+             CaseConfig { 6, 512, 1, 5 },
+             CaseConfig { 6, 4096, 1, 2 },
+             CaseConfig { 6, 16384, 1, 1 },
+             CaseConfig { 6, 65536, 1, 1 },
+             CaseConfig { 12, 512, 1, 3 },
+             CaseConfig { 12, 4096, 1, 1 },
+             CaseConfig { 12, 16384, 1, 1 },
+             CaseConfig { 12, 65536, 1, 1 },
          }) {
         run_dispatch(cfg);
     }

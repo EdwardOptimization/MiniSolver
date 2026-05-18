@@ -552,7 +552,7 @@ template <int DIM> void run_case(int count, int repeats)
 
 template <int DIM> void run_dimension_suite()
 {
-    for (const int count : { 1, 16, 256, 4096, 65536 }) {
+    for (const int count : { 1, 256, 4096 }) {
         const int repeats = (count <= 256) ? 100 : 20;
         run_case<DIM>(count, repeats);
     }
@@ -576,10 +576,9 @@ int main()
                  "   GPUcoop_us  CT  seq_spdB coop_spdB  Seq_L_err  Coop_L_err   Thr_L_err"
                  " Eigen_L_err   recon_err\n";
 
-    run_dimension_suite<4>();
-    run_dimension_suite<8>();
+    // Aligned route grid: DIM maps to NX + NU for (4,2) and (8,4).
+    run_dimension_suite<6>();
     run_dimension_suite<12>();
-    run_dimension_suite<16>();
 
     return 0;
 }

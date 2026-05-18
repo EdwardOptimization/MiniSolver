@@ -72,6 +72,32 @@ int kkt_dim(int nx, int nu, int horizon)
     return primal_dim + constraint_dim;
 }
 
+double dense_matrix_mib(const CaseConfig& cfg)
+{
+    const int dim = kkt_dim(cfg.nx, cfg.nu, cfg.horizon);
+    const double entries
+        = static_cast<double>(cfg.batch) * static_cast<double>(dim) * static_cast<double>(dim);
+    return entries * static_cast<double>(sizeof(double)) / (1024.0 * 1024.0);
+}
+
+bool should_skip_dense_probe(const CaseConfig& cfg)
+{
+    const int dim = kkt_dim(cfg.nx, cfg.nu, cfg.horizon);
+    const double estimated_work = static_cast<double>(cfg.batch) * static_cast<double>(dim)
+        * static_cast<double>(dim) * static_cast<double>(dim);
+    return dim > 400 || dense_matrix_mib(cfg) > 512.0 || estimated_work > 5.0e8;
+}
+
+void print_skip_case(const CaseConfig& cfg)
+{
+    const int dim = kkt_dim(cfg.nx, cfg.nu, cfg.horizon);
+    std::cout << std::setw(3) << cfg.nx << " " << std::setw(3) << cfg.nu << " " << std::setw(4)
+              << cfg.horizon << " " << std::setw(5) << dim << " " << std::setw(6) << cfg.batch
+              << " " << std::setw(4) << cfg.repeats << " " << std::setw(9) << std::fixed
+              << std::setprecision(2) << dense_matrix_mib(cfg)
+              << "  SKIP dense-route complexity/memory sanity limit\n";
+}
+
 int primal_index(int stage, int local, int nx, int nu)
 {
     return stage * (nx + nu) + local;
@@ -391,14 +417,26 @@ int main()
                  "    speedup     sol_err    residual\n";
 
     for (const CaseConfig cfg : {
-             CaseConfig { 2, 1, 8, 1, 100 },
-             CaseConfig { 2, 1, 16, 64, 20 },
-             CaseConfig { 4, 2, 8, 64, 20 },
-             CaseConfig { 4, 2, 16, 16, 10 },
-             CaseConfig { 8, 4, 8, 16, 10 },
-             CaseConfig { 4, 2, 24, 8, 5 },
+             // Aligned grid. Dense full-KKT is kept as a sanity probe; large rows are
+             // printed as SKIP instead of being used in cross-route speed conclusions.
+             CaseConfig { 4, 2, 32, 1, 3 },
+             CaseConfig { 4, 2, 32, 256, 1 },
+             CaseConfig { 4, 2, 32, 4096, 1 },
+             CaseConfig { 4, 2, 128, 1, 1 },
+             CaseConfig { 4, 2, 128, 256, 1 },
+             CaseConfig { 4, 2, 128, 4096, 1 },
+             CaseConfig { 8, 4, 32, 1, 1 },
+             CaseConfig { 8, 4, 32, 256, 1 },
+             CaseConfig { 8, 4, 32, 4096, 1 },
+             CaseConfig { 8, 4, 128, 1, 1 },
+             CaseConfig { 8, 4, 128, 256, 1 },
+             CaseConfig { 8, 4, 128, 4096, 1 },
          }) {
-        run_case(cfg);
+        if (should_skip_dense_probe(cfg)) {
+            print_skip_case(cfg);
+        } else {
+            run_case(cfg);
+        }
     }
 
     return 0;

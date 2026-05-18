@@ -504,10 +504,12 @@ template <typename Model> void run_case(const char* name, int horizon, int batch
 
 template <typename Model> void run_model(const char* name)
 {
-    run_case<Model>(name, 50, 1, 50);
-    run_case<Model>(name, 50, 256, 20);
-    run_case<Model>(name, 50, 4096, 5);
-    run_case<Model>(name, 100, 1024, 10);
+    run_case<Model>(name, 32, 1, 50);
+    run_case<Model>(name, 32, 256, 20);
+    run_case<Model>(name, 32, 4096, 5);
+    run_case<Model>(name, 128, 1, 20);
+    run_case<Model>(name, 128, 256, 5);
+    run_case<Model>(name, 128, 4096, 2);
 }
 
 void run_car_exact_case(int horizon, int batch, int repeats)
@@ -536,10 +538,12 @@ void run_car_exact_device_suite()
     std::cout << "\nCarModel CUDA exact packet assembly lower-bound\n";
     std::cout << "   N  batch   entries       MiB eval_pack_us gpu_exact_us gpu_exact_GBps"
                  "      max_err\n";
-    run_car_exact_case(50, 1, 50);
-    run_car_exact_case(50, 256, 20);
-    run_car_exact_case(50, 4096, 5);
-    run_car_exact_case(100, 1024, 10);
+    run_car_exact_case(32, 1, 50);
+    run_car_exact_case(32, 256, 20);
+    run_car_exact_case(32, 4096, 5);
+    run_car_exact_case(128, 1, 20);
+    run_car_exact_case(128, 256, 5);
+    run_car_exact_case(128, 4096, 2);
 }
 
 } // namespace

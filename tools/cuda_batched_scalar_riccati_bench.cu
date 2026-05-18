@@ -198,8 +198,8 @@ int main()
     std::cout << "Kernel: one CUDA thread solves one independent scalar Riccati horizon\n";
     std::cout << "   N   batch    R       CPU_us       GPU_us   GPU_spd         err\n";
 
-    for (const int horizon : { 32, 64, 128, 256 }) {
-        for (const int batch : { 1, 16, 256, 4096, 65536 }) {
+    for (const int horizon : { 32, 128 }) {
+        for (const int batch : { 1, 256, 4096 }) {
             const int repeats = (batch <= 256) ? 100 : 20;
             run_case(horizon, batch, repeats);
         }

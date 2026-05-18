@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -74,23 +75,24 @@ template <int NX> struct LftCompose {
 
 template <int NX>
 __global__ void pcr_scan_step_kernel(
-    const BlockLftOp<NX>* in, BlockLftOp<NX>* out, int n, int stride)
+    const BlockLftOp<NX>* in, BlockLftOp<NX>* out, int n, int total, int stride)
 {
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) {
+    if (idx >= total) {
         return;
     }
-    if (idx >= stride) {
+    const int local = idx % n;
+    if (local >= stride) {
         out[idx] = compose_after<NX>(in[idx], in[idx - stride]);
     } else {
         out[idx] = in[idx];
     }
 }
 
-template <int NX> std::vector<BlockLftOp<NX>> make_ops(int n)
+template <int NX> std::vector<BlockLftOp<NX>> make_ops(int n, int batch)
 {
-    std::vector<BlockLftOp<NX>> ops(static_cast<std::size_t>(n));
-    std::mt19937 rng(9017 + NX * 31 + n);
+    std::vector<BlockLftOp<NX>> ops(static_cast<std::size_t>(n) * static_cast<std::size_t>(batch));
+    std::mt19937 rng(9017 + NX * 31 + n * 5 + batch * 13);
     std::uniform_real_distribution<double> noise(-1.0e-5, 1.0e-5);
     constexpr int DIM = BlockLftOp<NX>::DIM;
 
@@ -105,11 +107,16 @@ template <int NX> std::vector<BlockLftOp<NX>> make_ops(int n)
 }
 
 template <int NX>
-void cpu_scan(const std::vector<BlockLftOp<NX>>& input, std::vector<BlockLftOp<NX>>& output)
+void cpu_scan(const std::vector<BlockLftOp<NX>>& input, std::vector<BlockLftOp<NX>>& output, int n)
 {
-    output[0] = input[0];
-    for (std::size_t i = 1; i < input.size(); ++i) {
-        output[i] = compose_after<NX>(input[i], output[i - 1]);
+    const std::size_t horizon = static_cast<std::size_t>(n);
+    const std::size_t batch = input.size() / horizon;
+    for (std::size_t b = 0; b < batch; ++b) {
+        const std::size_t base = b * horizon;
+        output[base] = input[base];
+        for (std::size_t i = 1; i < horizon; ++i) {
+            output[base + i] = compose_after<NX>(input[base + i], output[base + i - 1]);
+        }
     }
 }
 
@@ -145,9 +152,12 @@ template <typename F> float time_cuda_ms(F&& fn)
 }
 
 template <int NX>
-float run_mpx_like_scan(
-    const std::vector<BlockLftOp<NX>>& input, std::vector<BlockLftOp<NX>>& gpu_output, int repeats)
+float run_mpx_like_scan(const std::vector<BlockLftOp<NX>>& input,
+    std::vector<BlockLftOp<NX>>& gpu_output, int n, int repeats)
 {
+    if (static_cast<int>(input.size()) != n) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
     thrust::device_vector<BlockLftOp<NX>> d_input(input.begin(), input.end());
     thrust::device_vector<BlockLftOp<NX>> d_output(input.size());
 
@@ -167,15 +177,15 @@ float run_mpx_like_scan(
 }
 
 template <int NX>
-float run_pcr_like_scan(
-    const std::vector<BlockLftOp<NX>>& input, std::vector<BlockLftOp<NX>>& gpu_output, int repeats)
+float run_pcr_like_scan(const std::vector<BlockLftOp<NX>>& input,
+    std::vector<BlockLftOp<NX>>& gpu_output, int n, int repeats)
 {
     thrust::device_vector<BlockLftOp<NX>> d_input(input.begin(), input.end());
     thrust::device_vector<BlockLftOp<NX>> d_work(input.size());
     thrust::device_vector<BlockLftOp<NX>> d_tmp(input.size());
-    const int n = static_cast<int>(input.size());
+    const int total = static_cast<int>(input.size());
     const int threads = 128;
-    const int blocks = (n + threads - 1) / threads;
+    const int blocks = (total + threads - 1) / threads;
 
     auto run_once = [&]() {
         const BlockLftOp<NX>* const input_ptr = thrust::raw_pointer_cast(d_input.data());
@@ -185,7 +195,7 @@ float run_pcr_like_scan(
 
         for (int stride = 1; stride < n; stride <<= 1) {
             BlockLftOp<NX>* const dst = (src == work_ptr) ? tmp_ptr : work_ptr;
-            pcr_scan_step_kernel<NX><<<blocks, threads>>>(src, dst, n, stride);
+            pcr_scan_step_kernel<NX><<<blocks, threads>>>(src, dst, n, total, stride);
             CUDA_CHECK(cudaGetLastError());
             src = dst;
         }
@@ -207,41 +217,46 @@ float run_pcr_like_scan(
     return total_ms / static_cast<float>(repeats);
 }
 
-template <int NX> void run_case(int n, int repeats)
+template <int NX> void run_case(int n, int batch, int repeats)
 {
-    const auto input = make_ops<NX>(n);
+    const auto input = make_ops<NX>(n, batch);
     std::vector<BlockLftOp<NX>> cpu_output(input.size());
     std::vector<BlockLftOp<NX>> mpx_output(input.size());
     std::vector<BlockLftOp<NX>> pcr_output(input.size());
 
-    cpu_scan<NX>(input, cpu_output);
+    cpu_scan<NX>(input, cpu_output, n);
     const auto cpu_start = std::chrono::steady_clock::now();
     for (int r = 0; r < repeats; ++r) {
-        cpu_scan<NX>(input, cpu_output);
+        cpu_scan<NX>(input, cpu_output, n);
         consume_for_benchmark(cpu_output.back().M[0]);
     }
     const auto cpu_end = std::chrono::steady_clock::now();
     const double cpu_us = std::chrono::duration<double, std::micro>(cpu_end - cpu_start).count()
         / static_cast<double>(repeats);
 
-    const double mpx_us = 1000.0 * run_mpx_like_scan<NX>(input, mpx_output, repeats);
-    const double pcr_us = 1000.0 * run_pcr_like_scan<NX>(input, pcr_output, repeats);
-    const double mpx_err = max_abs_error<NX>(cpu_output, mpx_output);
+    const double mpx_us = 1000.0 * run_mpx_like_scan<NX>(input, mpx_output, n, repeats);
+    const double pcr_us = 1000.0 * run_pcr_like_scan<NX>(input, pcr_output, n, repeats);
+    const bool has_mpx = std::isfinite(mpx_us);
+    const double mpx_err = has_mpx ? max_abs_error<NX>(cpu_output, mpx_output)
+                                   : std::numeric_limits<double>::quiet_NaN();
     const double pcr_err = max_abs_error<NX>(cpu_output, pcr_output);
 
-    std::cout << std::setw(3) << NX << " " << std::setw(6) << n << " " << std::setw(4) << repeats
-              << " " << std::setw(12) << std::fixed << std::setprecision(2) << cpu_us << " "
-              << std::setw(12) << mpx_us << " " << std::setw(12) << pcr_us << " " << std::setw(8)
-              << std::setprecision(2) << (cpu_us / mpx_us) << " " << std::setw(8)
-              << (cpu_us / pcr_us) << " " << std::scientific << std::setprecision(2)
+    std::cout << std::setw(3) << NX << " " << std::setw(6) << n << " " << std::setw(6) << batch
+              << " " << std::setw(4) << repeats << " " << std::setw(12) << std::fixed
+              << std::setprecision(2) << cpu_us << " " << std::setw(12) << mpx_us << " "
+              << std::setw(12) << pcr_us << " " << std::setw(8) << std::setprecision(2)
+              << (has_mpx ? (cpu_us / mpx_us) : std::numeric_limits<double>::quiet_NaN()) << " "
+              << std::setw(8) << (cpu_us / pcr_us) << " " << std::scientific << std::setprecision(2)
               << std::setw(11) << mpx_err << " " << std::setw(11) << pcr_err << "\n";
 }
 
 template <int NX> void run_dimension_suite()
 {
-    for (const int n : { 64, 256, 1024, 4096, 16384 }) {
-        const int repeats = (n <= 4096) ? 30 : 10;
-        run_case<NX>(n, repeats);
+    for (const int n : { 32, 128 }) {
+        for (const int batch : { 1, 256, 4096 }) {
+            const int repeats = (batch <= 256) ? 10 : 3;
+            run_case<NX>(n, batch, repeats);
+        }
     }
 }
 
@@ -257,13 +272,12 @@ int main()
     std::cout << "MiniSolver CUDA block-LFT scan microbenchmark\n";
     std::cout << "Device: " << props.name << "\n";
     std::cout << "Metric: device-resident scan time; host<->device transfers excluded\n";
-    std::cout << "MPX-like = thrust inclusive_scan, PCR-like = custom Hillis-Steele scan\n";
-    std::cout << " NX      N    R      CPU_us      MPX_us      PCR_us  MPX_spd  PCR_spd     MPX_err"
-                 "     PCR_err\n";
+    std::cout << "MPX-like = thrust inclusive_scan for batch=1 only; PCR-like = custom segmented "
+                 "Hillis-Steele scan\n";
+    std::cout << " NX      N  batch    R       CPU_us       MPX_us       PCR_us  MPX_spd  PCR_spd"
+                 "     MPX_err     PCR_err\n";
 
-    run_dimension_suite<2>();
     run_dimension_suite<4>();
-    run_dimension_suite<6>();
 
     return 0;
 }
