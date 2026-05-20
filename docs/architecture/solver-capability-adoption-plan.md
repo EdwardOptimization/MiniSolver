@@ -203,6 +203,54 @@ Candidate modes:
 Every fallback must be visible in diagnostics. Silent subproblem changes should
 not be reported as normal solves.
 
+### P2: Barrier And Globalization Strategy Scope
+
+Source systems:
+
+- Ipopt: monotone/adaptive barrier updates, quality-function centering, filter
+  line search, watchdog, and restoration.
+- acados/HPIPM: real-time SQP/RTI globalization choices and aggressive
+  warm-started steps.
+- Clarabel/ECOS/SCS: homogeneous self-dual embedding for conic certificate
+  workflows, which is not MiniSolver's current NMPC/Riccati route.
+
+MiniSolver should not become a catalog of every NLP globalization variant. The
+current strategy families cover the important fixed-size NMPC/IPM skeleton:
+
+- Barrier update: `MONOTONE`, `ADAPTIVE`, and `MEHROTRA`.
+- Step acceptance: `NONE`, `MERIT`, and `FILTER`.
+
+Near-term work should strengthen these existing strategies before adding new
+ones:
+
+- Improve the robustness of the existing Mehrotra path, including clearer
+  diagnostics, better fallback behavior, and benchmark evidence for any change
+  to centering or affine-step handling.
+- Keep filter diagnostics and SOC/restoration triggers explainable before
+  extending the filter theory surface.
+- Keep `MONOTONE + MERIT` as the simple reference-style path and avoid
+  weakening it with advanced heuristics.
+
+Future additions require a concrete failure case or benchmark:
+
+- Watchdog / nonmonotone filter support is the most plausible next
+  globalization feature for warm-started NMPC, because it can reduce overly
+  conservative backtracking while preserving a rollback path.
+- Trust-region globalization is useful for bad initial guesses and strongly
+  nonlinear problems, but it changes the step/globalization contract and should
+  be designed as a separate phase, not patched into line search.
+- Quality-function or oracle-style barrier updates may be useful if
+  `ADAPTIVE` and `MEHROTRA` repeatedly fail on benchmarked cases, but they
+  should not be added as another default knob without evidence.
+
+Deferred or out-of-scope for the current route:
+
+- Homogeneous self-dual embedding as a primary solve route.
+- A broad menu of named barrier schedules that duplicate the existing three
+  barrier families.
+- Pareto-frontier filter history, funnel methods, or penalty-filter hybrids
+  without a real NMPC failure that current `MERIT`/`FILTER` cannot explain.
+
 ### P0: Constraint Scaling / Per-Row Normalization
 
 This is listed separately from general scaling because it is the most likely
@@ -245,6 +293,30 @@ Current direction:
   `rhs >= 0` and `Q` is PSD over the operating domain.
 - Circle/ellipse/obstacle-specific projected-boundary logic belongs in
   MiniModel/codegen-generated packets, not in the solver core.
+
+### P2: External Solver Lessons To Track
+
+These projects are useful sources of mechanisms, not roadmaps to copy. Absorb
+only the parts that fit MiniSolver's fixed-size C++ NMPC route.
+
+| Project family | What MiniSolver can learn | Boundary |
+| --- | --- | --- |
+| `iit-DLSLab/mpx` | GPU Riccati / KKT parallel-scan formulation, especially how a time recursion can be represented as associative operators before mapping to CUDA or another accelerator. | Treat `GPU_MPX` / `GPU_PCR` as future parallel-scan Riccati research until a CPU reference scan, correctness tests, and batched or long-horizon benchmarks justify implementation. |
+| `cuOSQP` | Backend honesty: GPU support should be explicit, separately tested, and never silently fall back to CPU when a GPU backend is requested. | Do not replace MiniSolver's primal-dual NMPC/IPM route with ADMM/QP-first logic. |
+| `cuRobo` | Batched seeds, collision/geometric oracles, and GPU-friendly robotics kernels can be more valuable than a single-problem GPU linear solve for robotics workloads. | MiniSolver should not become a motion-planning stack; keep geometry in MiniModel/callback/oracle layers. |
+| `ALTRO` / `ALTRO-C` | Trajectory initialization, augmented-Lagrangian/iLQR-style profiles, and conic/norm constraint handling are useful references for future profiles and MiniModel constraint semantics. | Do not mix an ALTRO-like AL/iLQR route into the current primal-dual IPM core without a separate profile and benchmark evidence. |
+| `Trajax` | JAX-style batching and differentiable optimal-control experiments are useful for Python-side references, replay generation, and research prototypes. | Do not make the C++ hot path depend on JAX. |
+| `JAXopt` | Solver-state APIs, implicit differentiation, and batchable optimizer interfaces are useful design references for future Python tooling. | Treat it as design input, not a runtime dependency or maintenance foundation. |
+
+Potential adoption sequence:
+
+1. Document `GPU_MPX` and `GPU_PCR` as future parallel-scan Riccati backends,
+   not supported GPU features.
+2. Define a CPU reference parallel-scan Riccati contract before CUDA work.
+3. Extend callback/oracle examples and replay cases for batched robotics and
+   collision-heavy workloads before deciding whether GPU acceleration matters.
+4. Build conic/norm-constraint corpus coverage around MiniModel semantics before
+   adding any ALTRO-like profile.
 
 ## Explicit Non-Goals
 

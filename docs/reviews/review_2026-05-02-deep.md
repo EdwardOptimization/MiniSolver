@@ -667,8 +667,8 @@ This is the same mechanism ADR 0002 lists as needing-implementation for the f-ty
 
 | Backlog item | Status per backlog | This review's view |
 | --- | --- | --- |
-| `#11 Fused Riccati dispatch — is_fused_riccati_integrator_compatible 未被 riccati.h 调用` | pending | Confirmed: `riccati.h:393` does call it, but this might be the recent fix — needs verify against backlog date |
-| `#12 Mehrotra alpha_aff L1 soft fraction-to-boundary 覆盖检查` | pending | Related to N-THEORY-3 above — split α_aff would naturally cover this |
+| `#11 Fused Riccati dispatch — is_fused_riccati_integrator_compatible not called by riccati.h` | pending | Confirmed: `riccati.h:393` does call it, but this might be the recent fix — needs verify against backlog date |
+| `#12 Mehrotra alpha_aff L1 soft fraction-to-boundary coverage check` | pending | Related to N-THEORY-3 above — split α_aff would naturally cover this |
 | External benchmark convergence root cause | out of scope here | Track concrete case outcomes and root-cause hypotheses in MiniSolver-Bench; this review only records generic MiniSolver gaps |
 | External benchmark precision gap | out of scope here | Track concrete case outcomes and root-cause hypotheses in MiniSolver-Bench; this review only records generic MiniSolver gaps |
 | chain_mass priminf overshoot | deferred (ADR 0002) | Not advanced |
