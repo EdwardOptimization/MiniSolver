@@ -1865,7 +1865,7 @@ public:
             traj[k].ds.setZero();
             traj[k].dlam.setZero();
             traj[k].dsoft_s.setZero();
-            traj[k].r_bar.setConstant(1.0);
+            traj[k].r_bar.fill(1.0);
         }
         return true;
     }
