@@ -109,6 +109,16 @@ the same commit unless a test proves they are inseparable.
 - Reduce compile-time/binary-size overhead where possible (especially when Eigen is disabled).
 - Harden determinism and real-time constraints (no hidden allocations, stable iteration behavior under neighboring problems).
 
+- Differentiable-solver tooling:
+- Treat "solver as a differentiable function" as a future Python/tooling-layer
+  capability, not as a dependency of the C++ hot path.
+- Design an implicit-differentiation interface for solved NMPC problems after
+  the primal-dual residual, active constraints, scaling semantics, and snapshot
+  replay contracts are stable enough to define a differentiable solve map.
+- Start with offline sensitivity/reference tooling and outer-loop tuning
+  experiments; do not promise real-time differentiable MPC until benchmarked
+  use cases exist.
+
 ## Design Guardrails
 
 - Occam's razor: no new public APIs without a concrete use-case, tests, and a performance/correctness justification.

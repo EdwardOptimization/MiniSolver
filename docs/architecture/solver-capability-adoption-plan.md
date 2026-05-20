@@ -308,6 +308,88 @@ only the parts that fit MiniSolver's fixed-size C++ NMPC route.
 | `Trajax` | JAX-style batching and differentiable optimal-control experiments are useful for Python-side references, replay generation, and research prototypes. | Do not make the C++ hot path depend on JAX. |
 | `JAXopt` | Solver-state APIs, implicit differentiation, and batchable optimizer interfaces are useful design references for future Python tooling. | Treat it as design input, not a runtime dependency or maintenance foundation. |
 
+#### Solver As A Differentiable Function
+
+Differentiating through MiniSolver is important for outer-loop tuning,
+learning-based control, parameter identification, and bilevel design. The right
+first target is a Python/tooling-layer capability that treats a converged solve
+as an implicit function:
+
+```text
+solution z*(p) satisfies F(z*, p) = 0
+dz*/dp = -F_z^{-1} F_p
+```
+
+This should be based on the KKT / primal-dual residual map actually used by
+MiniSolver, not on unrolling every solver iteration by default. Unrolled
+differentiation can remain a research/debug option, but implicit
+differentiation is the scalable route for solver-as-layer workflows.
+
+Required prerequisites before implementation:
+
+- stable definitions for primal residuals, dual residuals, complementarity, and
+  active constraint semantics;
+- clear scaled vs unscaled residual and objective conventions;
+- replay snapshots that can reproduce the solved state used for sensitivity
+  checks;
+- finite-difference or high-precision reference tests for sensitivities on
+  small generated models;
+- a policy for nonsmooth points, active-set changes, infeasible solves, and
+  `FEASIBLE` results that are not strict KKT optima.
+
+Initial scope:
+
+- offline sensitivity analysis and outer-loop tuning experiments;
+- generated-model tests where the active set is stable;
+- Python/JAX-compatible reference wrappers if useful, without making the C++
+  solver depend on JAX.
+
+MiniModel should provide the first explicit seam through differentiable
+parameter metadata:
+
+```python
+mass = model.parameter("mass")              # runtime parameter only
+goal_x = model.diff_parameter("goal_x")     # included in dz*/dp
+goal_y = model.diff_parameter("goal_y")
+```
+
+`diff_parameter()` should keep the existing parameter-vector layout. A
+differentiable parameter is still part of `model.parameters` / generated `p`;
+the extra contract is metadata that marks which entries participate in future
+sensitivity generation. A generated model can expose this without changing the
+solver hot path:
+
+```cpp
+static constexpr int NDP = ...;
+static constexpr std::array<int, NDP> diff_param_indices = {...};
+static constexpr std::array<const char*, NDP> diff_param_names = {...};
+```
+
+This keeps ordinary runtime parameters cheap and avoids differentiating with
+respect to every reference, weight, or environment value by default. The first
+implementation should be metadata-only plus generated-model tests. Later
+sensitivity tooling can use `diff_param_indices` to build `F_p` for the chosen
+residual map.
+
+`diff_parameter()` must not change ordinary solve cost. During `solve()`, a
+differentiable parameter is identical to a regular parameter:
+
+- it uses the same `p` vector and model-evaluation code path;
+- it does not compute `F_p`, sensitivities, or extra residual blocks;
+- it does not allocate additional solve workspace;
+- it does not add line-search, barrier, Riccati, or termination branches.
+
+All additional work belongs to an explicit sensitivity / implicit
+differentiation call after a solve, where the tooling deliberately builds or
+applies `F_z`, `F_p`, and `dz*/dp = -F_z^{-1} F_p`.
+
+Out of scope until benchmarked:
+
+- differentiable real-time MPC guarantees;
+- differentiating through restoration, SOC fallback, or failed solves as if
+  they were smooth maps;
+- replacing MiniSolver's C++ runtime with a JAX solver stack.
+
 Potential adoption sequence:
 
 1. Document `GPU_MPX` and `GPU_PCR` as future parallel-scan Riccati backends,
@@ -317,6 +399,8 @@ Potential adoption sequence:
    collision-heavy workloads before deciding whether GPU acceleration matters.
 4. Build conic/norm-constraint corpus coverage around MiniModel semantics before
    adding any ALTRO-like profile.
+5. Design solver-as-differentiable-function tooling only after the solved-state
+   residual contract and replay corpus can support sensitivity validation.
 
 ## Explicit Non-Goals
 
