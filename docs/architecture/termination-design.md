@@ -149,6 +149,9 @@ iteration. Current precedence is:
 Postsolve still refreshes residuals before returning the final status. A loop
 exit reason describes why the iteration loop stopped; final `SolverStatus`
 describes the quality that postsolve could prove for the returned iterate.
+Residual stagnation is always a loop-level `INSUFFICIENT_PROGRESS` exit with
+`RESIDUAL_STAGNATION`; if the stalled iterate is primal-acceptable, postsolve
+may still upgrade the final status to `FEASIBLE`.
 
 ## Residual Definitions
 
@@ -239,7 +242,10 @@ Implemented:
     `FEASIBLE` when the freshly evaluated primal residual already satisfies
     `primal_inf <= tol_con`. This shortcut is intentionally not used for cold
     starts, so a primal-feasible but unoptimized initial rollout still gets at
-    least one direction-solve attempt.
+    least one direction-solve attempt. It is also disabled when a model-update
+    callback is installed, because callback-updated objectives, references, or
+    local models may require at least one direction solve even if primal
+    feasibility is already satisfied.
   - After an accepted globalization step, MiniSolver refreshes primal feasibility
     on the accepted trajectory and returns `FEASIBLE` when `primal_inf <= tol_con`.
   These exits do not use `feasible_tol_scale`, stale dual residuals, or stale
@@ -248,6 +254,10 @@ Implemented:
   is installed, because callbacks may change references, parameters, constraints,
   or local approximations between iterations, making cross-iteration residual/cost
   comparisons unreliable.
+- Residual stagnation is evaluated on the current accepted iterate after fresh
+  same-iterate primal/dual residuals are available and before applying another
+  trial step. It is a current-iterate progress monitor, not a post-step progress
+  test.
 - Loop-exit decisions are centralized into one `LoopExitDecision` after each
   iteration. `run_solve_loop_()` now remains orchestration code: execute one
   iteration, ask for the loop-exit decision, commit the decision, then let

@@ -1850,6 +1850,28 @@ public:
 };
 
 template <typename TrajArray>
+class StalledDualRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
+public:
+    int calls = 0;
+
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        ++calls;
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx.setZero();
+            traj[k].du.setZero();
+            traj[k].ds.setZero();
+            traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
+            traj[k].r_bar.setConstant(1.0);
+        }
+        return true;
+    }
+};
+
+template <typename TrajArray>
 class TinyStepThenFailRecoverySolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
     int calls = 0;
@@ -1874,6 +1896,14 @@ public:
         return true;
     }
 };
+
+ApiStatus no_op_bug_model_callback(MiniSolver<BugTestModel, 10>& /*solver*/, void* user)
+{
+    if (user != nullptr) {
+        ++(*static_cast<int*>(user));
+    }
+    return ApiStatus::OK;
+}
 }
 
 TEST(BugfixTest, MehrotraRestorationBuildsFeasibilityPenalty)
@@ -2052,6 +2082,43 @@ TEST(BugfixTest, AcceptableNmpcPrimalFeasibleSkipsDirectionFailure)
            "fresh primal feasibility.";
 }
 
+TEST(BugfixTest, AcceptableNmpcCallbackDoesNotSkipDirectionSolve)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = AlwaysFailRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.termination_profile = TerminationProfile::ACCEPTABLE_NMPC;
+    config.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    config.max_iters = 10;
+    config.tol_con = 1e-9;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(0.1), ApiStatus::OK);
+    ASSERT_EQ(solver.set_initial_state("x", 0.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_control_guess(0, 0, 0.0), ApiStatus::OK);
+    solver.rollout_dynamics();
+
+    int callback_calls = 0;
+    ASSERT_EQ(
+        solver.set_model_update_callback(no_op_bug_model_callback, &callback_calls), ApiStatus::OK);
+
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::LINEAR_SOLVE_FAILED)
+        << "With a model-update callback installed, ACCEPTABLE_NMPC should not zero-step "
+           "accept a warm start before trying to respond to callback-updated problem data.";
+    EXPECT_GT(fake_solver_ptr->calls, 0);
+    EXPECT_GT(callback_calls, 0);
+}
+
 TEST(BugfixTest, AcceptableNmpcInvalidReuseGuessDoesNotSkipDirectionSolve)
 {
     constexpr int N = 1;
@@ -2085,6 +2152,50 @@ TEST(BugfixTest, AcceptableNmpcInvalidReuseGuessDoesNotSkipDirectionSolve)
     EXPECT_EQ(status, SolverStatus::LINEAR_SOLVE_FAILED)
         << "An effectively cold REUSE_PRIMAL_DUAL solve should still attempt a direction "
            "solve even if the primal trajectory is already feasible.";
+    EXPECT_GT(fake_solver_ptr->calls, 0);
+}
+
+TEST(BugfixTest, ResidualStagnationLoopStatusWaitsForPostsolveFeasibleQuality)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = StalledDualRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.barrier_strategy = BarrierStrategy::MONOTONE;
+    config.line_search_type = LineSearchType::NONE;
+    config.max_iters = 50;
+    config.tol_con = 1e-9;
+    config.tol_dual = 1e-9;
+    config.tol_mu = 1e-9;
+    config.tol_cost = 0.0;
+    config.feasible_tol_scale = 10.0;
+    config.residual_stagnation_min_iters = 2;
+    config.residual_stagnation_window = 2;
+    config.residual_stagnation_rel_tol = 1e-3;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(0.1), ApiStatus::OK);
+    ASSERT_EQ(solver.set_initial_state("x", 0.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_control_guess(0, 0, 0.0), ApiStatus::OK);
+    solver.rollout_dynamics();
+
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    const SolverStatus status = solver.solve();
+    const SolverInfo& info = solver.get_info();
+
+    EXPECT_EQ(status, SolverStatus::FEASIBLE)
+        << "Postsolve may still classify a residual-stagnated iterate as primal-feasible.";
+    EXPECT_EQ(info.loop_status, SolverStatus::INSUFFICIENT_PROGRESS)
+        << "Residual stagnation is a loop-stop reason, not a loop-level solution-quality "
+           "certificate.";
+    EXPECT_EQ(info.termination_reason, TerminationReason::RESIDUAL_STAGNATION);
+    EXPECT_LT(info.iterations, config.max_iters);
     EXPECT_GT(fake_solver_ptr->calls, 0);
 }
 

@@ -83,6 +83,13 @@ cost-stagnation loop exits. The callback may change references, parameters,
 constraints, or local model approximations before each iteration, so residuals
 and objective costs are not assumed comparable across iterations.
 
+It also disables the pre-direction `ACCEPTABLE_NMPC` warm-start shortcut. A
+callback may update only the objective or reference while leaving the previous
+trajectory primal-feasible; MiniSolver therefore still attempts a direction solve
+instead of zero-step accepting the old trajectory. The accepted-step
+`ACCEPTABLE_NMPC` primal-feasible exit remains available after a direction and
+globalization step have been attempted.
+
 This is conservative. Callback-driven problems may run until another exit
 condition, such as strict convergence, `ACCEPTABLE_NMPC` primal feasibility,
 fixed-iteration RTI, line-search failure, or the iteration budget. Users who need

@@ -904,6 +904,9 @@ private:
         if (!detail::TerminationKernel::uses_acceptable_nmpc_profile(config)) {
             return SolverStatus::UNSOLVED;
         }
+        if (model_update_callback_ != nullptr) {
+            return SolverStatus::UNSOLVED;
+        }
         if (!context_.solve.primal_dual_reused_this_solve) {
             return SolverStatus::UNSOLVED;
         }
@@ -2041,8 +2044,7 @@ private:
             return result;
         }
 
-        result.status
-            = feasible_mode ? SolverStatus::FEASIBLE : SolverStatus::INSUFFICIENT_PROGRESS;
+        result.status = SolverStatus::INSUFFICIENT_PROGRESS;
         result.reason = TerminationReason::RESIDUAL_STAGNATION;
         return result;
     }
