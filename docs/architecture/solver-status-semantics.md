@@ -85,3 +85,13 @@ set specific reasons such as `COST_STAGNATION` or `RESIDUAL_STAGNATION`; the gen
 `INSUFFICIENT_PROGRESS` reason is only a fallback for an insufficient-progress loop status that did
 not come from one of those monitors. Likewise, fixed-iteration NMPC can return whatever final
 quality postsolve proves while keeping `termination_reason == FIXED_ITERATION`.
+
+Quick reference for insufficient-progress exits:
+
+| `SolverStatus` | `TerminationReason` | Meaning | User action |
+| --- | --- | --- | --- |
+| `INSUFFICIENT_PROGRESS` | `RESIDUAL_STAGNATION` | Normalized residual progress stalled before postsolve could prove an acceptable iterate. This is not an infeasibility certificate. | Inspect `primal_inf`, `dual_inf`, `complementarity_inf`, scaling, initialization, and line-search diagnostics. |
+| `FEASIBLE` | `RESIDUAL_STAGNATION` | Residual cleanup stalled, but postsolve proved primal feasibility. | Treat as a control-usable iterate, not strict KKT optimality. |
+| `INSUFFICIENT_PROGRESS` | `COST_STAGNATION` | Objective cost stopped improving while the loop had no stronger success verdict. | Inspect objective scaling, barrier progress, and whether the problem is already good enough for NMPC. |
+| `FEASIBLE` | `COST_STAGNATION` | Cost stagnation stopped the loop and postsolve proved primal feasibility. | Treat as primal acceptable; tighten tolerances or change profile if strict optimality is required. |
+| `INSUFFICIENT_PROGRESS` | `INSUFFICIENT_PROGRESS` | Generic insufficient-progress fallback not produced by a named monitor. | Inspect logs and `SolverInfo` counters to identify the failing phase. |

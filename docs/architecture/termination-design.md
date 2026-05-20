@@ -1,11 +1,12 @@
 # Termination Design
 
 MiniSolver termination is a solver contract, not a small condition tweak. The
-first two implementation phases are complete: strict `OPTIMAL` now uses true
-complementarity instead of the internal barrier target, fixed-iteration RTI
-behavior can be selected through `SolverConfig`, and `SolverInfo` records the
-final solution quality, loop exit status, termination reason, and residual
-snapshot.
+current preview implementation has a stable core contract: strict `OPTIMAL` uses
+true complementarity instead of the internal barrier target, fixed-iteration RTI
+behavior is selected through `SolverConfig`, `ACCEPTABLE_NMPC` has explicit
+primal-feasible early exits, residual/cost stagnation exits are separated from
+infeasibility claims, and `SolverInfo` records the final solution quality, loop
+exit status, termination reason, and residual snapshot.
 
 ## Design Question
 
@@ -247,6 +248,10 @@ Implemented:
   is installed, because callbacks may change references, parameters, constraints,
   or local approximations between iterations, making cross-iteration residual/cost
   comparisons unreliable.
+- Loop-exit decisions are centralized into one `LoopExitDecision` after each
+  iteration. `run_solve_loop_()` now remains orchestration code: execute one
+  iteration, ask for the loop-exit decision, commit the decision, then let
+  postsolve verify the final solution quality.
 - `SolverInfo` and `TerminationReason` expose the final residual snapshot and
   loop stop reason through `get_info()`.
 
@@ -275,10 +280,35 @@ profiles into premature strategy plumbing. It also preserves the important
 semantic distinction that RTI fixed iteration is a budget/loop-exit policy, not
 a residual convergence predicate.
 
+## Current Refactor Boundary
+
+The current state is intentionally a small explicit state machine, not a public
+termination framework. Further refactoring is deferred unless a new behavior
+creates a real maintenance problem. In particular:
+
+- Keep `execute_solve_iteration_()` responsible for producing one
+  `IterationResult` from the current iterate.
+- Keep `run_solve_loop_()` responsible for orchestration only: run an iteration,
+  consume one `LoopExitDecision`, and record the loop exit.
+- Keep `postsolve()` responsible for fresh residual verification and final
+  quality classification.
+- Do not split `STRICT_KKT`, `ACCEPTABLE_NMPC`, or `RTI_FIXED_ITERATION` into
+  public strategy objects. Users should continue to choose behavior through
+  `SolverConfig`.
+- Do not add presolve infeasibility detection or local infeasibility heuristics
+  as part of termination cleanup. MiniSolver should not return infeasibility
+  claims without evidence it can actually justify.
+
+This boundary is acceptable for the preview solver. The next useful validation
+step is a replay/benchmark corpus that exercises the profiles under continuous
+NMPC-style solves, not more termination abstraction.
+
 Future upgrade path:
 
 - Introduce an internal `TerminationPlan` or `TerminationDecision` phase only
   when termination rules grow beyond the current lightweight predicates.
+- Introduce `PostsolveVerdict` only if postsolve grows additional independent
+  final-verdict paths; do not add it just for naming symmetry.
 - Resolve that plan from `SolverConfig` at construction, `set_config()`, or the
   existing solve build boundary, not through virtual dispatch in the per-stage
   hot path.

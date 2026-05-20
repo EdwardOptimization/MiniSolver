@@ -76,6 +76,20 @@ boundaries, not mid-iteration.
 If the callback returns any status other than `ApiStatus::OK`, the solve exits
 with `SolverStatus::INVALID_INPUT`.
 
+## Solver Progress Monitors
+
+Installing a model-update callback disables residual-stagnation and
+cost-stagnation loop exits. The callback may change references, parameters,
+constraints, or local model approximations before each iteration, so residuals
+and objective costs are not assumed comparable across iterations.
+
+This is conservative. Callback-driven problems may run until another exit
+condition, such as strict convergence, `ACCEPTABLE_NMPC` primal feasibility,
+fixed-iteration RTI, line-search failure, or the iteration budget. Users who need
+progress-based stopping with callback-updated models should implement that logic
+inside their callback or surrounding control loop using problem-specific
+comparability assumptions.
+
 ## Boundaries
 
 This hook deliberately does not expose a public strategy/plugin object. Users
