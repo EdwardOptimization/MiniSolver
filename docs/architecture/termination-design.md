@@ -131,6 +131,24 @@ See `include/minisolver/core/types.h` for the authoritative field list.
 
 This is intentionally an info object, not a public OOP strategy layer.
 
+## Loop Exit Precedence
+
+The solve loop treats termination as a single explicit decision after each
+iteration. Current precedence is:
+
+| Priority | Loop condition | Loop status | Reason |
+| --- | --- | --- | --- |
+| 1 | Explicit step result, e.g. numerical error, linear solve failure, tiny step, restoration failure, invalid input, or residual stagnation | step result status | concrete step reason |
+| 2 | `RTI_FIXED_ITERATION` after any non-fatal step | `UNSOLVED` until postsolve verifies quality | `FIXED_ITERATION` |
+| 3 | Strict KKT candidate from fresh same-iterate residuals | `OPTIMAL` | `CONVERGED` |
+| 4 | Accepted `ACCEPTABLE_NMPC` primal-feasible shortcut | `FEASIBLE` | `PRIMAL_FEASIBLE` |
+| 5 | Cost stagnation, only when no model-update callback is installed | `INSUFFICIENT_PROGRESS` | `COST_STAGNATION` |
+| 6 | Iteration budget exhausted | `MAX_ITER` | `MAX_ITERATIONS` |
+
+Postsolve still refreshes residuals before returning the final status. A loop
+exit reason describes why the iteration loop stopped; final `SolverStatus`
+describes the quality that postsolve could prove for the returned iterate.
+
 ## Residual Definitions
 
 MiniSolver should distinguish these metrics:

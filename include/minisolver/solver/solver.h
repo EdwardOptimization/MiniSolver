@@ -787,7 +787,7 @@ private:
         case SolverStatus::STEP_TOO_SMALL:
             return TerminationReason::LINE_SEARCH_FAILED;
         case SolverStatus::INSUFFICIENT_PROGRESS:
-            return TerminationReason::COST_STAGNATION;
+            return TerminationReason::INSUFFICIENT_PROGRESS;
         case SolverStatus::LINEAR_SOLVE_FAILED:
             return TerminationReason::LINEAR_SOLVE_FAILED;
         case SolverStatus::RESTORATION_FAILED:
@@ -2132,6 +2132,25 @@ private:
         return decision;
     }
 
+    LoopExitDecision decide_loop_exit_after_iteration_(
+        const IterationResult& step_result, int iter, double& last_cost, double& last_mu)
+    {
+        LoopExitDecision decision = should_exit_after_step_result_(step_result, iter);
+        if (decision.should_exit) {
+            return decision;
+        }
+        return should_exit_for_cost_stagnation_(last_cost, last_mu);
+    }
+
+    void commit_loop_exit_decision_(
+        const LoopExitDecision& decision, SolverStatus& status, TerminationReason& reason)
+    {
+        status = decision.status;
+        reason = decision.reason;
+        context_.termination.loop_exit_status = decision.status;
+        context_.termination.cost_stagnated = decision.cost_stagnated;
+    }
+
     SolverStatus run_solve_loop_()
     {
         SolverStatus loop_exit_status = SolverStatus::MAX_ITER;
@@ -2145,20 +2164,10 @@ private:
             IterationResult step_result = execute_solve_iteration_();
             timer.stop();
 
-            LoopExitDecision step_exit = should_exit_after_step_result_(step_result, iter);
-            if (step_exit.should_exit) {
-                loop_exit_status = step_exit.status;
-                loop_exit_reason = step_exit.reason;
-                context_.termination.loop_exit_status = step_exit.status;
-                break;
-            }
-
-            LoopExitDecision stagnation_exit = should_exit_for_cost_stagnation_(last_cost, last_mu);
-            if (stagnation_exit.should_exit) {
-                loop_exit_status = stagnation_exit.status;
-                loop_exit_reason = stagnation_exit.reason;
-                context_.termination.loop_exit_status = stagnation_exit.status;
-                context_.termination.cost_stagnated = stagnation_exit.cost_stagnated;
+            LoopExitDecision exit_decision
+                = decide_loop_exit_after_iteration_(step_result, iter, last_cost, last_mu);
+            if (exit_decision.should_exit) {
+                commit_loop_exit_decision_(exit_decision, loop_exit_status, loop_exit_reason);
                 break;
             }
         }

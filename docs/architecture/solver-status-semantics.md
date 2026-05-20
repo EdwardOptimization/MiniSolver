@@ -80,6 +80,8 @@ mathematical infeasibility claim.
 
 `TerminationReason` is more specific than `SolverStatus`: for example a solve can return
 `FEASIBLE` while `termination_reason == COST_STAGNATION`, meaning the loop stopped because progress
-stalled and postsolve then found the final iterate primal-acceptable. Likewise, fixed-iteration
-NMPC can return whatever final quality postsolve proves while keeping
-`termination_reason == FIXED_ITERATION`.
+stalled and postsolve then found the final iterate primal-acceptable. Concrete progress monitors
+set specific reasons such as `COST_STAGNATION` or `RESIDUAL_STAGNATION`; the generic
+`INSUFFICIENT_PROGRESS` reason is only a fallback for an insufficient-progress loop status that did
+not come from one of those monitors. Likewise, fixed-iteration NMPC can return whatever final
+quality postsolve proves while keeping `termination_reason == FIXED_ITERATION`.

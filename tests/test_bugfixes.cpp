@@ -2120,6 +2120,27 @@ TEST(BugfixTest, AcceptableNmpcColdStartDoesNotSkipDirectionSolve)
     EXPECT_GT(fake_solver_ptr->calls, 0);
 }
 
+TEST(BugfixTest, GenericInsufficientProgressReasonDoesNotPretendCostStagnation)
+{
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    Solver solver(1, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(0.1), ApiStatus::OK);
+    ASSERT_EQ(solver.set_control_guess(0, 0, 10.0), ApiStatus::OK);
+
+    const SolverStatus status = Access::postsolve(solver, SolverStatus::INSUFFICIENT_PROGRESS);
+    const SolverInfo& info = solver.get_info();
+
+    EXPECT_EQ(status, SolverStatus::INSUFFICIENT_PROGRESS);
+    EXPECT_EQ(info.loop_status, SolverStatus::INSUFFICIENT_PROGRESS);
+    EXPECT_EQ(info.termination_reason, TerminationReason::INSUFFICIENT_PROGRESS)
+        << "Generic insufficient-progress fallbacks must not be mislabeled as cost "
+           "stagnation; concrete stagnation paths should set their own reason.";
+}
+
 TEST(BugfixTest, TinyStepRecoveryFailureReturnsRestorationFailed)
 {
     constexpr int N = 1;

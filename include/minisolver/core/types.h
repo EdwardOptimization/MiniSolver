@@ -36,7 +36,8 @@ enum class TerminationReason {
     INVALID_INPUT = 9,
     NUMERICAL_ERROR = 10,
     POSTSOLVE_INFEASIBLE = 11,
-    RESIDUAL_STAGNATION = 12
+    RESIDUAL_STAGNATION = 12,
+    INSUFFICIENT_PROGRESS = 13
 };
 
 enum class ApiStatus {
@@ -161,6 +162,8 @@ inline const char* termination_reason_to_string(TerminationReason reason)
         return "POSTSOLVE_INFEASIBLE";
     case TerminationReason::RESIDUAL_STAGNATION:
         return "RESIDUAL_STAGNATION";
+    case TerminationReason::INSUFFICIENT_PROGRESS:
+        return "INSUFFICIENT_PROGRESS";
     default:
         return "UNKNOWN";
     }
