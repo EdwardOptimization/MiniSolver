@@ -52,9 +52,12 @@ Status groups:
   recovery.
 - `INVALID_INPUT`: reserved for config/model input validation failures.
 - `NUMERICAL_ERROR`: invalid arithmetic or invalid search directions after a solve.
-- `INFEASIBLE`: reserved for cases where MiniSolver has explicit infeasibility evidence. Because
-  MiniSolver currently has no formal infeasibility certificate, this status should not be used for
-  plain max-iteration exhaustion or restoration failure.
+- `INFEASIBLE`: postsolve refreshed a success-like loop verdict (`OPTIMAL` or
+  `FEASIBLE`) and found that the returned iterate is not primal-acceptable. This
+  is a returned-iterate quality verdict, not a global problem-infeasibility
+  certificate. MiniSolver currently has no formal infeasibility certificate, so
+  plain max-iteration exhaustion, restoration failure, or residual stagnation
+  should keep their own status instead of being collapsed to `INFEASIBLE`.
 
 `UNBOUNDED` is intentionally not exposed yet. MiniSolver currently has no unboundedness detector, so
 adding that status would create an API promise without evidence.
