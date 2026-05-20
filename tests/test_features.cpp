@@ -69,6 +69,17 @@ struct FlatCostModel {
     }
 };
 
+struct FlatCostCallbackState {
+    int calls = 0;
+};
+
+ApiStatus no_op_flat_cost_callback(MiniSolver<FlatCostModel, 10>& /*solver*/, void* user)
+{
+    auto* state = static_cast<FlatCostCallbackState*>(user);
+    ++state->calls;
+    return ApiStatus::OK;
+}
+
 // =============================================================================
 // Feature: Cost Stagnation Termination
 // =============================================================================
@@ -98,6 +109,35 @@ TEST(FeaturesTest, CostStagnationTermination)
     EXPECT_LT(info.iterations, config.max_iters);
     EXPECT_TRUE(std::isfinite(info.primal_inf));
     EXPECT_TRUE(std::isfinite(info.complementarity_inf));
+}
+
+TEST(FeaturesTest, CostStagnationSkipsModelUpdateCallbacks)
+{
+    int N = 1;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.tol_con = 1e-12;
+    config.tol_mu = 1e-12;
+    config.mu_final = 1e-9;
+    config.tol_cost = 1e-5;
+    config.max_iters = 12;
+
+    MiniSolver<FlatCostModel, 10> solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_initial_state("x", 1.0), ApiStatus::OK);
+    FlatCostCallbackState state;
+    ASSERT_EQ(solver.set_model_update_callback(no_op_flat_cost_callback, &state), ApiStatus::OK);
+
+    const SolverStatus status = solver.solve();
+    const SolverInfo& info = solver.get_info();
+
+    EXPECT_EQ(status, info.status);
+    EXPECT_GT(state.calls, 0);
+    EXPECT_EQ(state.calls, info.iterations + 1)
+        << "The no-op callback should run once before presolve and once per solve "
+           "iteration; this confirms the test is exercising callback-mode termination.";
+    EXPECT_NE(info.termination_reason, TerminationReason::COST_STAGNATION)
+        << "Model-update callbacks may change references/parameters/local models each "
+           "iteration, so objective cost is not assumed comparable across iterations.";
 }
 
 // =============================================================================

@@ -898,6 +898,24 @@ private:
         return SolverStatus::UNSOLVED;
     }
 
+    SolverStatus check_acceptable_nmpc_primal_from_residuals_(
+        const StepResidualSummary& residuals) const
+    {
+        if (!detail::TerminationKernel::uses_acceptable_nmpc_profile(config)) {
+            return SolverStatus::UNSOLVED;
+        }
+        if (!context_.solve.primal_dual_reused_this_solve) {
+            return SolverStatus::UNSOLVED;
+        }
+
+        detail::TerminationSnapshot snapshot;
+        snapshot.primal_inf = residuals.max_primal_inf;
+        if (detail::TerminationKernel::check_acceptable_nmpc_primal(config, snapshot)) {
+            return SolverStatus::FEASIBLE;
+        }
+        return SolverStatus::UNSOLVED;
+    }
+
     double compute_objective_cost_(const TrajArray& traj) const
     {
         double total_cost = 0.0;
@@ -2086,6 +2104,9 @@ private:
     LoopExitDecision should_exit_for_cost_stagnation_(double& last_cost, double& last_mu)
     {
         LoopExitDecision decision;
+        if (model_update_callback_ != nullptr) {
+            return decision;
+        }
 
         // Objective cost is comparable across μ updates (barrier terms are not part of
         // KnotPoint::cost). However, if μ is actively decreasing we should not stop purely
@@ -2162,6 +2183,14 @@ private:
         auto& traj = trajectory.active();
 
         StepResidualSummary residuals = evaluate_derivatives_phase_(traj);
+        const SolverStatus primal_feasible_status
+            = check_acceptable_nmpc_primal_from_residuals_(residuals);
+        if (primal_feasible_status != SolverStatus::UNSOLVED) {
+            result.status = primal_feasible_status;
+            result.reason = TerminationReason::PRIMAL_FEASIBLE;
+            return result;
+        }
+
         update_barrier_for_step_(residuals);
 
         DirectionResult direction = compute_search_direction_(traj);
@@ -2172,7 +2201,8 @@ private:
         }
         double max_dual_inf = direction.max_dual_inf;
 
-        // Convergence check (Primal + Dual + Mu) using the freshly computed dual residual.
+        // Convergence check (primal + dual + true complementarity) using the freshly computed
+        // dual residual.
         // The final convergence verdict is always made in postsolve() with fresh data.
         if (context_.solve.current_iter > 1 && check_convergence(residuals, max_dual_inf)) {
             result.status = SolverStatus::OPTIMAL;
@@ -2224,6 +2254,7 @@ private:
         const double next_reg
             = detail::WarmStartKernel::select_regularization(config, previous_reg);
         context_.reset_algorithmic(next_mu, next_reg);
+        context_.solve.primal_dual_reused_this_solve = can_reuse_primal_dual;
     }
 
     bool should_initialize_primal_dual_() const

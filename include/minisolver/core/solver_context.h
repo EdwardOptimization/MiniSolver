@@ -43,6 +43,7 @@ struct SolveState {
     double reg = 0.0;
     int current_iter = 0;
     int slack_reset_consecutive_count = 0;
+    bool primal_dual_reused_this_solve = false;
 
     void reset_algorithmic(double mu_init, double reg_init)
     {
@@ -50,6 +51,7 @@ struct SolveState {
         reg = reg_init;
         current_iter = 0;
         slack_reset_consecutive_count = 0;
+        primal_dual_reused_this_solve = false;
     }
 };
 

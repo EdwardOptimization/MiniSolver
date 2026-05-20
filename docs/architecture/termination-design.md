@@ -101,7 +101,7 @@ produce two concepts:
 
 `SolverInfo` is a fixed-size diagnostic object, not a plugin or strategy layer.
 It intentionally has no dynamic containers so reading it does not compromise the
-zero-malloc solve contract. It currently contains:
+zero-malloc solve contract. Selected fields include:
 
 ```cpp
 struct SolverInfo {
@@ -120,9 +120,14 @@ struct SolverInfo {
     bool linear_ok;
     bool line_search_failed;
     bool restoration_used;
-    bool degraded_direction;
+    bool degraded_step;
+    int regularization_escalation_count;
+    int soc_attempt_count;
+    int restoration_attempt_count;
 };
 ```
+
+See `include/minisolver/core/types.h` for the authoritative field list.
 
 This is intentionally an info object, not a public OOP strategy layer.
 
@@ -209,11 +214,21 @@ Implemented:
 - `SolverConfig::termination_profile` selects the internal termination mode.
 - `TerminationProfile::RTI_FIXED_ITERATION` is the single RTI-style fixed
   iteration configuration entry point.
-- `TerminationProfile::ACCEPTABLE_NMPC` has an active loop exit: after an
-  accepted globalization step, MiniSolver refreshes primal feasibility on the
-  accepted trajectory and returns `FEASIBLE` when `primal_inf <= tol_con`.
-  This does not use `feasible_tol_scale`, stale dual residuals, or stale
+- `TerminationProfile::ACCEPTABLE_NMPC` has active primal-only loop exits for
+  real-time NMPC:
+  - Before the direction solve, a `REUSE_PRIMAL_DUAL` warm start may return
+    `FEASIBLE` when the freshly evaluated primal residual already satisfies
+    `primal_inf <= tol_con`. This shortcut is intentionally not used for cold
+    starts, so a primal-feasible but unoptimized initial rollout still gets at
+    least one direction-solve attempt.
+  - After an accepted globalization step, MiniSolver refreshes primal feasibility
+    on the accepted trajectory and returns `FEASIBLE` when `primal_inf <= tol_con`.
+  These exits do not use `feasible_tol_scale`, stale dual residuals, or stale
   complementarity; postsolve still refreshes the final residual snapshot.
+- Residual and cost stagnation monitors are disabled when a model-update callback
+  is installed, because callbacks may change references, parameters, constraints,
+  or local approximations between iterations, making cross-iteration residual/cost
+  comparisons unreliable.
 - `SolverInfo` and `TerminationReason` expose the final residual snapshot and
   loop stop reason through `get_info()`.
 

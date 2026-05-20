@@ -140,9 +140,12 @@ enum class TerminationProfile {
     // FEASIBLE remains a postsolve fallback for primal-acceptable NMPC iterates.
     STRICT_KKT,
 
-    // Same strict OPTIMAL check, plus an accepted-step early stop when fresh primal
-    // feasibility reaches tol_con. This returns FEASIBLE and still lets postsolve refresh
-    // the final residual snapshot. It does not use stale dual residuals or feasible_tol_scale.
+    // Same strict OPTIMAL check, plus primal-only FEASIBLE exits for real-time NMPC:
+    // (1) a REUSE_PRIMAL_DUAL warm start that is already fresh-primal feasible before the
+    //     direction solve, and
+    // (2) an accepted globalization step whose fresh primal feasibility reaches tol_con.
+    // Postsolve still refreshes the final residual snapshot. These exits do not use stale
+    // dual residuals or feasible_tol_scale.
     ACCEPTABLE_NMPC,
 
     // Exit after one SQP/IPM iteration and let postsolve classify the resulting iterate.

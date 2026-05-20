@@ -75,9 +75,11 @@ struct InfeasibleModel {
     }
 };
 
-ApiStatus no_op_infeasible_model_callback(
-    MiniSolver<InfeasibleModel, 10>& /*solver*/, void* /*user*/)
+ApiStatus no_op_infeasible_model_callback(MiniSolver<InfeasibleModel, 10>& /*solver*/, void* user)
 {
+    if (user != nullptr) {
+        ++(*static_cast<int*>(user));
+    }
     return ApiStatus::OK;
 }
 
@@ -237,10 +239,7 @@ TEST(StatusTest, ConflictingConstraintsShouldEarlyExitBeforeMaxIter)
 
     MiniSolver<InfeasibleModel, 10> solver(N, Backend::CPU_SERIAL, config);
 
-    // Initial State: x=1.5 (Violates both slightly? No, 1.5 >= 1 (ok for g1?), 1.5 <= 2 (ok for g0?
-    // wait) g0 = 2 - 1.5 = 0.5 > 0 (Violated) g1 = 1.5 - 1 = 0.5 > 0 (Violated) Wait, x=1.5
-    // violates x>=2 (needs x>=2) and x<=1 (needs x<=1). Yes, 1.5 is in (1, 2), so it violates both
-    // constraints.
+    // x=1.5 violates both x >= 2 and x <= 1.
     solver.set_initial_state("x", 1.5);
 
     SolverStatus status = solver.solve();
@@ -268,7 +267,9 @@ TEST(StatusTest, ResidualStagnationMonitorSkipsModelUpdateCallbacks)
     config.enable_feasibility_restoration = false;
 
     MiniSolver<InfeasibleModel, 10> solver(N, Backend::CPU_SERIAL, config);
-    ASSERT_EQ(solver.set_model_update_callback(no_op_infeasible_model_callback), ApiStatus::OK);
+    int callback_calls = 0;
+    ASSERT_EQ(solver.set_model_update_callback(no_op_infeasible_model_callback, &callback_calls),
+        ApiStatus::OK);
     solver.set_initial_state("x", 1.5);
 
     const SolverStatus status = solver.solve();
@@ -277,6 +278,10 @@ TEST(StatusTest, ResidualStagnationMonitorSkipsModelUpdateCallbacks)
     EXPECT_NE(info.termination_reason, TerminationReason::RESIDUAL_STAGNATION)
         << "Residual progress is not comparable when a model-update callback may change "
            "problem data between iterations.";
+    EXPECT_GT(callback_calls, 0);
+    EXPECT_EQ(callback_calls, info.iterations + 1)
+        << "The callback should run once before presolve and once per solve iteration; "
+           "this ensures callback-mode residual-stagnation suppression is exercised.";
     EXPECT_EQ(status, info.status);
 }
 

@@ -1838,10 +1838,13 @@ public:
 template <typename TrajArray>
 class AlwaysFailRiccatiSolver : public RiccatiSolver<TrajArray, BugTestModel> {
 public:
+    int calls = 0;
+
     LinearSolveResult solve(TrajArray& /*traj*/, int /*N*/, double /*mu*/, double /*reg*/,
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
+        ++calls;
         return false;
     }
 };
@@ -2010,6 +2013,111 @@ TEST(BugfixTest, RtiFixedIterationDoesNotMaskLinearSolveFailure)
         << "RTI fixed-iteration mode must not hide fatal direction-solve failures";
     EXPECT_EQ(solver.get_info().loop_status, SolverStatus::LINEAR_SOLVE_FAILED);
     EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::LINEAR_SOLVE_FAILED);
+}
+
+TEST(BugfixTest, AcceptableNmpcPrimalFeasibleSkipsDirectionFailure)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = AlwaysFailRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.termination_profile = TerminationProfile::ACCEPTABLE_NMPC;
+    config.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    config.max_iters = 10;
+    config.tol_con = 1e-9;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(0.1), ApiStatus::OK);
+    ASSERT_EQ(solver.set_initial_state("x", 0.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_control_guess(0, 0, 0.0), ApiStatus::OK);
+    solver.rollout_dynamics();
+
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::FEASIBLE)
+        << "ACCEPTABLE_NMPC should accept an already primal-feasible warm start "
+           "before attempting a direction solve.";
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::FEASIBLE);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::PRIMAL_FEASIBLE);
+    EXPECT_LE(solver.get_info().primal_inf, config.tol_con);
+    EXPECT_EQ(fake_solver_ptr->calls, 0)
+        << "The linear solver should not be called when ACCEPTABLE_NMPC already has "
+           "fresh primal feasibility.";
+}
+
+TEST(BugfixTest, AcceptableNmpcInvalidReuseGuessDoesNotSkipDirectionSolve)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = AlwaysFailRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.termination_profile = TerminationProfile::ACCEPTABLE_NMPC;
+    config.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    config.max_iters = 10;
+    config.tol_con = 1e-9;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(0.1), ApiStatus::OK);
+    ASSERT_EQ(solver.set_initial_state("x", 0.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_control_guess(0, 0, 0.0), ApiStatus::OK);
+    solver.rollout_dynamics();
+
+    // The primal trajectory is feasible, but the stored primal-dual guess is not
+    // reusable. ACCEPTABLE_NMPC must not treat this as a valid warm start.
+    ASSERT_EQ(solver.set_dual_guess(0, 0, 0.0), ApiStatus::OK);
+
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::LINEAR_SOLVE_FAILED)
+        << "An effectively cold REUSE_PRIMAL_DUAL solve should still attempt a direction "
+           "solve even if the primal trajectory is already feasible.";
+    EXPECT_GT(fake_solver_ptr->calls, 0);
+}
+
+TEST(BugfixTest, AcceptableNmpcColdStartDoesNotSkipDirectionSolve)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = AlwaysFailRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.termination_profile = TerminationProfile::ACCEPTABLE_NMPC;
+    config.initialization = InitializationMode::COLD_START;
+    config.max_iters = 10;
+    config.tol_con = 1e-9;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(0.1), ApiStatus::OK);
+    ASSERT_EQ(solver.set_initial_state("x", 0.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_control_guess(0, 0, 0.0), ApiStatus::OK);
+    solver.rollout_dynamics();
+
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::LINEAR_SOLVE_FAILED)
+        << "Cold-start ACCEPTABLE_NMPC should still attempt at least one direction solve; "
+           "pre-direction primal feasibility is only a warm-start shortcut.";
+    EXPECT_GT(fake_solver_ptr->calls, 0);
 }
 
 TEST(BugfixTest, TinyStepRecoveryFailureReturnsRestorationFailed)

@@ -45,7 +45,8 @@ Status groups:
 - `FEASIBLE`: fresh postsolve residuals are primal-acceptable but not fully optimal.
 - `MAX_ITER`: iteration budget exhausted and the final iterate is not acceptable.
 - `STEP_TOO_SMALL`: globalization collapsed to a tiny step and no restoration path was available.
-- `INSUFFICIENT_PROGRESS`: progress/cost stagnation stopped the loop before convergence.
+- `INSUFFICIENT_PROGRESS`: a progress monitor or generic insufficient-progress exit stopped the
+  loop before convergence.
 - `LINEAR_SOLVE_FAILED`: Riccati/KKT direction solve failed after configured retries.
 - `RESTORATION_FAILED`: feasibility restoration was attempted and failed to produce an acceptable
   recovery.
