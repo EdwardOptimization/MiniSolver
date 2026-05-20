@@ -221,12 +221,12 @@ TEST(StatusTest, IterationBudgetExhaustionIsNotInfeasibility)
     EXPECT_TRUE(std::isfinite(info.dual_inf));
 }
 
-TEST(StatusTest, ConflictingConstraintsWithoutCertificateReturnMaxIter)
+TEST(StatusTest, ConflictingConstraintsShouldEarlyExitBeforeMaxIter)
 {
-    int N = 5;
+    constexpr int N = 5;
     SolverConfig config;
-    config.print_level = PrintLevel::DEBUG;
-    config.max_iters = 50;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 200;
     config.enable_feasibility_restoration = true; // Give it a chance to try restoration
 
     MiniSolver<InfeasibleModel, 10> solver(N, Backend::CPU_SERIAL, config);
@@ -238,11 +238,18 @@ TEST(StatusTest, ConflictingConstraintsWithoutCertificateReturnMaxIter)
     solver.set_initial_state("x", 1.5);
 
     SolverStatus status = solver.solve();
+    const SolverInfo& info = solver.get_info();
 
-    // MiniSolver does not yet have a formal infeasibility certificate. If the
-    // loop simply exhausts the budget on conflicting constraints, preserve the
-    // actionable termination reason instead of claiming mathematical infeasibility.
-    EXPECT_EQ(status, SolverStatus::MAX_ITER);
+    EXPECT_NE(status, SolverStatus::MAX_ITER)
+        << "Conflicting hard constraints should trigger an early failure path instead "
+           "of spending the full iteration budget.";
+    EXPECT_LT(info.iterations, config.max_iters);
+    EXPECT_NE(info.loop_status, SolverStatus::MAX_ITER);
+    EXPECT_NE(info.termination_reason, TerminationReason::MAX_ITERATIONS);
+    EXPECT_TRUE(status == SolverStatus::RESTORATION_FAILED || status == SolverStatus::STEP_TOO_SMALL
+        || status == SolverStatus::INSUFFICIENT_PROGRESS
+        || status == SolverStatus::LINEAR_SOLVE_FAILED || status == SolverStatus::NUMERICAL_ERROR)
+        << "Unexpected early-exit status: " << status_to_string(status);
 }
 
 TEST(StatusTest, RtiFixedIterationProfileStopsAfterOneIteration)
