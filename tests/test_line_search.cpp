@@ -585,8 +585,13 @@ TEST(LineSearchTest, MeritFunctionBacktracking)
         EXPECT_NEAR(solver.get_state(0, 0), 1.0, 0.2);
     } else {
         EXPECT_TRUE(status == SolverStatus::MAX_ITER || status == SolverStatus::RESTORATION_FAILED
-            || status == SolverStatus::STEP_TOO_SMALL || status == SolverStatus::NUMERICAL_ERROR)
+            || status == SolverStatus::STEP_TOO_SMALL
+            || status == SolverStatus::INSUFFICIENT_PROGRESS
+            || status == SolverStatus::NUMERICAL_ERROR)
             << "Unexpected merit line-search solve status: " << status_to_string(status);
+        if (status == SolverStatus::INSUFFICIENT_PROGRESS) {
+            EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::RESIDUAL_STAGNATION);
+        }
     }
 }
 

@@ -120,6 +120,11 @@ struct SnapshotLoadOptions {
     X_DOUBLE(tol_mu)                                                                               \
     X_DOUBLE(tol_cost)                                                                             \
     X_DOUBLE(feasible_tol_scale)                                                                   \
+    X_BOOL(enable_residual_stagnation_detection)                                                   \
+    X_INT(residual_stagnation_min_iters)                                                           \
+    X_INT(residual_stagnation_window)                                                              \
+    X_DOUBLE(residual_stagnation_rel_tol)                                                          \
+    X_DOUBLE(residual_stagnation_abs_tol)                                                          \
     X_ENUM(line_search_type)                                                                       \
     X_INT(line_search_max_iters)                                                                   \
     X_DOUBLE(line_search_tau)                                                                      \
@@ -157,7 +162,7 @@ template <typename Model, int MAX_N> class SolverSnapshotIO {
 public:
     using SolverType = MiniSolver<Model, MAX_N>;
     static constexpr std::array<char, 8> kMagic = { 'M', 'S', 'N', 'A', 'P', '0', '1', '\0' };
-    static constexpr std::uint32_t kFormatVersion = 2;
+    static constexpr std::uint32_t kFormatVersion = 3;
 
     struct Snapshot {
         SolverConfig config;

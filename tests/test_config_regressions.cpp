@@ -485,6 +485,41 @@ TEST(ConfigRegressionTest, SetConfigRejectsInvalidLineSearchBoundaryParameters)
     EXPECT_EQ(solver.get_config().line_search_max_iters, 0);
 }
 
+TEST(ConfigRegressionTest, SetConfigRejectsInvalidResidualStagnationParameters)
+{
+    SolverConfig conf;
+    conf.print_level = PrintLevel::NONE;
+    MiniSolver<BugTestModel, 10> solver(3, Backend::CPU_SERIAL, conf);
+
+    SolverConfig invalid = solver.get_config();
+    invalid.residual_stagnation_min_iters = -1;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GE(solver.get_config().residual_stagnation_min_iters, 0);
+
+    invalid = solver.get_config();
+    invalid.residual_stagnation_window = 0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GT(solver.get_config().residual_stagnation_window, 0);
+
+    invalid = solver.get_config();
+    invalid.residual_stagnation_rel_tol = -1.0e-3;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GE(solver.get_config().residual_stagnation_rel_tol, 0.0);
+
+    invalid = solver.get_config();
+    invalid.residual_stagnation_abs_tol = -1.0e-9;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_GE(solver.get_config().residual_stagnation_abs_tol, 0.0);
+
+    SolverConfig valid = solver.get_config();
+    valid.enable_residual_stagnation_detection = false;
+    valid.residual_stagnation_min_iters = 0;
+    valid.residual_stagnation_window = 1;
+    valid.residual_stagnation_rel_tol = 0.0;
+    valid.residual_stagnation_abs_tol = 0.0;
+    EXPECT_EQ(solver.set_config(valid), ApiStatus::OK);
+}
+
 TEST(ConfigRegressionTest, ConstructorRejectsInvalidConfig)
 {
     SolverConfig config;

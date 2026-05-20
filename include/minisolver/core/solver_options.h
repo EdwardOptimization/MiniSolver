@@ -218,6 +218,17 @@ struct SolverConfig {
     // FEASIBLE fallback bound is tol_con * feasible_tol_scale in the same
     // internal units as tol_con; raw model feasibility is reported separately.
     double feasible_tol_scale = 10.0;
+    // Residual progress monitor. When enabled, the solver can exit with
+    // RESIDUAL_STAGNATION instead of spending the full iteration budget on
+    // residuals that no longer improve. Before loose primal feasibility, the
+    // monitor tracks primal progress only; after that it tracks normalized KKT
+    // residual cleanup. Model-update callbacks disable this monitor because
+    // residuals from different callback-updated problems may not be comparable.
+    bool enable_residual_stagnation_detection = true;
+    int residual_stagnation_min_iters = 8;
+    int residual_stagnation_window = 5;
+    double residual_stagnation_rel_tol = 1e-3;
+    double residual_stagnation_abs_tol = 1e-9;
 
     // --- Line Search & Robustness ---
     // Filter is generally more robust than Merit without parameter tuning

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "minisolver/core/types.h"
+#include <limits>
 
 namespace minisolver {
 
@@ -96,6 +97,11 @@ struct DirectionResult {
     double max_dual_inf = 0.0;
 };
 
+struct IterationResult {
+    SolverStatus status = SolverStatus::UNSOLVED;
+    TerminationReason reason = TerminationReason::NONE;
+};
+
 struct GlobalizationState {
     double accepted_alpha = 1.0;
     bool recovered = false;
@@ -116,11 +122,19 @@ struct GlobalizationResult {
 struct TerminationState {
     SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
     bool cost_stagnated = false;
+    double residual_progress_best_norm = std::numeric_limits<double>::infinity();
+    double residual_progress_mu = std::numeric_limits<double>::infinity();
+    int residual_stagnation_count = 0;
+    bool residual_progress_feasible_mode = false;
 
     void reset_solve()
     {
         loop_exit_status = SolverStatus::UNSOLVED;
         cost_stagnated = false;
+        residual_progress_best_norm = std::numeric_limits<double>::infinity();
+        residual_progress_mu = std::numeric_limits<double>::infinity();
+        residual_stagnation_count = 0;
+        residual_progress_feasible_mode = false;
     }
 };
 

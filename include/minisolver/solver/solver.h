@@ -1259,6 +1259,7 @@ private:
             // SlackReset to be used again in the future
             if (recovered) {
                 context_.solve.slack_reset_consecutive_count = 0;
+                reset_residual_progress_monitor_();
             }
         }
 
@@ -1946,9 +1947,93 @@ private:
         return true;
     }
 
-    LoopExitDecision should_exit_after_step_status_(SolverStatus step_stat, int iter) const
+    void reset_residual_progress_monitor_()
+    {
+        context_.termination.residual_progress_best_norm = std::numeric_limits<double>::infinity();
+        context_.termination.residual_progress_mu = std::numeric_limits<double>::infinity();
+        context_.termination.residual_stagnation_count = 0;
+        context_.termination.residual_progress_feasible_mode = false;
+    }
+
+    IterationResult check_residual_stagnation_(
+        const StepResidualSummary& residuals, double max_dual_inf)
+    {
+        IterationResult result;
+        if (!config.enable_residual_stagnation_detection
+            || detail::TerminationKernel::uses_fixed_iteration_profile(config)
+            || model_update_callback_ != nullptr) {
+            return result;
+        }
+
+        auto& termination = context_.termination;
+        const double current_mu = context_.solve.mu;
+
+        const double feasible_bound = config.tol_con * config.feasible_tol_scale;
+        const bool feasible_mode = residuals.max_primal_inf <= feasible_bound;
+        const double primal_norm = residuals.max_primal_inf / std::max(config.tol_con, 1.0e-300);
+        const double dual_norm = max_dual_inf / std::max(config.tol_dual, 1.0e-300);
+        const double complementarity_norm
+            = residuals.max_complementarity_gap / std::max(config.tol_mu, 1.0e-300);
+        if (!MatOps::is_finite_scalar(primal_norm) || !MatOps::is_finite_scalar(dual_norm)
+            || !MatOps::is_finite_scalar(complementarity_norm)) {
+            result.status = SolverStatus::NUMERICAL_ERROR;
+            result.reason = TerminationReason::NUMERICAL_ERROR;
+            return result;
+        }
+        const double kkt_norm = std::max(primal_norm, std::max(dual_norm, complementarity_norm));
+
+        if (feasible_mode && MatOps::is_finite_scalar(termination.residual_progress_mu)
+            && current_mu < termination.residual_progress_mu) {
+            reset_residual_progress_monitor_();
+        }
+        termination.residual_progress_mu = current_mu;
+
+        if (MatOps::is_finite_scalar(termination.residual_progress_best_norm)
+            && feasible_mode != termination.residual_progress_feasible_mode) {
+            reset_residual_progress_monitor_();
+            termination.residual_progress_mu = current_mu;
+        }
+        termination.residual_progress_feasible_mode = feasible_mode;
+
+        // Before the iterate is loosely primal-feasible, only primal progress is
+        // relevant. Dual and complementarity residuals may oscillate while the
+        // solver is still repairing feasibility. Once primal feasibility is
+        // acceptable, monitor the normalized KKT residual to avoid wasting the
+        // remaining budget on a stalled optimality cleanup.
+        const double progress_norm = feasible_mode ? kkt_norm : primal_norm;
+
+        const bool first_sample
+            = !MatOps::is_finite_scalar(termination.residual_progress_best_norm);
+        const double required_progress = std::max(config.residual_stagnation_abs_tol,
+            config.residual_stagnation_rel_tol
+                * std::max(1.0, termination.residual_progress_best_norm));
+        const bool improved = first_sample
+            || progress_norm + required_progress < termination.residual_progress_best_norm;
+        if (improved) {
+            termination.residual_progress_best_norm = progress_norm;
+            termination.residual_stagnation_count = 0;
+            return result;
+        }
+
+        if (context_.solve.current_iter >= config.residual_stagnation_min_iters) {
+            ++termination.residual_stagnation_count;
+        }
+
+        if (termination.residual_stagnation_count < config.residual_stagnation_window) {
+            return result;
+        }
+
+        result.status
+            = feasible_mode ? SolverStatus::FEASIBLE : SolverStatus::INSUFFICIENT_PROGRESS;
+        result.reason = TerminationReason::RESIDUAL_STAGNATION;
+        return result;
+    }
+
+    LoopExitDecision should_exit_after_step_result_(
+        const IterationResult& step_result, int iter) const
     {
         LoopExitDecision decision;
+        const SolverStatus step_stat = step_result.status;
 
         // Terminal failures stop immediately.
         if (step_stat == SolverStatus::NUMERICAL_ERROR
@@ -1959,7 +2044,9 @@ private:
             || step_stat == SolverStatus::INVALID_INPUT) {
             decision.should_exit = true;
             decision.status = step_stat;
-            decision.reason = reason_for_loop_status_(step_stat);
+            decision.reason = (step_result.reason == TerminationReason::NONE)
+                ? reason_for_loop_status_(step_stat)
+                : step_result.reason;
             return decision;
         }
 
@@ -1975,7 +2062,9 @@ private:
         if (step_stat == SolverStatus::OPTIMAL) {
             decision.should_exit = true;
             decision.status = SolverStatus::OPTIMAL;
-            decision.reason = TerminationReason::CONVERGED;
+            decision.reason = (step_result.reason == TerminationReason::NONE)
+                ? TerminationReason::CONVERGED
+                : step_result.reason;
             if (config.print_level >= PrintLevel::INFO) {
                 MLOG_INFO("Converged in " << iter + 1 << " iterations.");
             }
@@ -1985,7 +2074,9 @@ private:
         if (step_stat == SolverStatus::FEASIBLE || step_stat == SolverStatus::INFEASIBLE) {
             decision.should_exit = true;
             decision.status = step_stat;
-            decision.reason = reason_for_loop_status_(step_stat);
+            decision.reason = (step_result.reason == TerminationReason::NONE)
+                ? reason_for_loop_status_(step_stat)
+                : step_result.reason;
             return decision;
         }
 
@@ -2030,10 +2121,10 @@ private:
         // 2. Solve loop: numerical iterations.
         for (int iter = 0; iter < config.max_iters; ++iter) {
             timer.start("Total Step");
-            SolverStatus step_stat = execute_solve_iteration_();
+            IterationResult step_result = execute_solve_iteration_();
             timer.stop();
 
-            LoopExitDecision step_exit = should_exit_after_step_status_(step_stat, iter);
+            LoopExitDecision step_exit = should_exit_after_step_result_(step_result, iter);
             if (step_exit.should_exit) {
                 loop_exit_status = step_exit.status;
                 loop_exit_reason = step_exit.reason;
@@ -2058,12 +2149,14 @@ private:
         return loop_exit_status;
     }
 
-    SolverStatus execute_solve_iteration_()
+    IterationResult execute_solve_iteration_()
     {
+        IterationResult result;
         context_.solve.current_iter++;
         const ApiStatus callback_status = invoke_model_update_callback_();
         if (callback_status != ApiStatus::OK) {
-            return SolverStatus::INVALID_INPUT;
+            result.status = SolverStatus::INVALID_INPUT;
+            return result;
         }
 
         auto& traj = trajectory.active();
@@ -2074,20 +2167,28 @@ private:
         DirectionResult direction = compute_search_direction_(traj);
         record_iteration_info_(residuals, direction.max_dual_inf);
         if (direction.status != SolverStatus::UNSOLVED) {
-            return direction.status;
+            result.status = direction.status;
+            return result;
         }
         double max_dual_inf = direction.max_dual_inf;
 
         // Convergence check (Primal + Dual + Mu) using the freshly computed dual residual.
         // The final convergence verdict is always made in postsolve() with fresh data.
         if (context_.solve.current_iter > 1 && check_convergence(residuals, max_dual_inf)) {
-            return SolverStatus::OPTIMAL;
+            result.status = SolverStatus::OPTIMAL;
+            return result;
+        }
+
+        result = check_residual_stagnation_(residuals, max_dual_inf);
+        if (result.status != SolverStatus::UNSOLVED) {
+            return result;
         }
 
         GlobalizationResult globalization
             = globalize_step_(residuals.barrier_mu, residuals.max_primal_inf, max_dual_inf);
         if (globalization.status != SolverStatus::UNSOLVED) {
-            return globalization.status;
+            result.status = globalization.status;
+            return result;
         }
 
         // Do not certify convergence immediately after line search: the accepted
@@ -2096,11 +2197,12 @@ private:
         // strict optimality waits for the next iteration or postsolve().
         const SolverStatus acceptable_status = check_acceptable_nmpc_primal_after_accepted_step_();
         if (acceptable_status != SolverStatus::UNSOLVED) {
-            return acceptable_status;
+            result.status = acceptable_status;
+            return result;
         }
 
         update_metrics_after_globalization_(max_dual_inf);
-        return SolverStatus::UNSOLVED;
+        return result;
     }
 
     // ============================================================

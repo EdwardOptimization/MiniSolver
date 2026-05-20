@@ -75,6 +75,12 @@ struct InfeasibleModel {
     }
 };
 
+ApiStatus no_op_infeasible_model_callback(
+    MiniSolver<InfeasibleModel, 10>& /*solver*/, void* /*user*/)
+{
+    return ApiStatus::OK;
+}
+
 // Feasible problem, but an intentionally inconsistent initial trajectory.
 // With max_iters = 0, MiniSolver has only exhausted the iteration budget; it
 // has not proven that the OCP is mathematically infeasible.
@@ -246,10 +252,32 @@ TEST(StatusTest, ConflictingConstraintsShouldEarlyExitBeforeMaxIter)
     EXPECT_LT(info.iterations, config.max_iters);
     EXPECT_NE(info.loop_status, SolverStatus::MAX_ITER);
     EXPECT_NE(info.termination_reason, TerminationReason::MAX_ITERATIONS);
-    EXPECT_TRUE(status == SolverStatus::RESTORATION_FAILED || status == SolverStatus::STEP_TOO_SMALL
-        || status == SolverStatus::INSUFFICIENT_PROGRESS
-        || status == SolverStatus::LINEAR_SOLVE_FAILED || status == SolverStatus::NUMERICAL_ERROR)
-        << "Unexpected early-exit status: " << status_to_string(status);
+    EXPECT_EQ(status, SolverStatus::INSUFFICIENT_PROGRESS)
+        << "Conflicting hard constraints should exit as residual stagnation, not as a "
+           "certified infeasibility proof.";
+    EXPECT_EQ(info.loop_status, SolverStatus::INSUFFICIENT_PROGRESS);
+    EXPECT_EQ(info.termination_reason, TerminationReason::RESIDUAL_STAGNATION);
+}
+
+TEST(StatusTest, ResidualStagnationMonitorSkipsModelUpdateCallbacks)
+{
+    constexpr int N = 5;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 20;
+    config.enable_feasibility_restoration = false;
+
+    MiniSolver<InfeasibleModel, 10> solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_model_update_callback(no_op_infeasible_model_callback), ApiStatus::OK);
+    solver.set_initial_state("x", 1.5);
+
+    const SolverStatus status = solver.solve();
+    const SolverInfo& info = solver.get_info();
+
+    EXPECT_NE(info.termination_reason, TerminationReason::RESIDUAL_STAGNATION)
+        << "Residual progress is not comparable when a model-update callback may change "
+           "problem data between iterations.";
+    EXPECT_EQ(status, info.status);
 }
 
 TEST(StatusTest, RtiFixedIterationProfileStopsAfterOneIteration)

@@ -48,7 +48,7 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
     {
         return s.refresh_postsolve_residuals_(traj);
     }
-    static SolverStatus step(Solver& s) { return s.execute_solve_iteration_(); }
+    static SolverStatus step(Solver& s) { return s.execute_solve_iteration_().status; }
     static void set_linear_solver(
         Solver& s, std::unique_ptr<RiccatiSolver<typename Solver::TrajArray, Model>> solver)
     {

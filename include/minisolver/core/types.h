@@ -35,7 +35,8 @@ enum class TerminationReason {
     RESTORATION_FAILED = 8,
     INVALID_INPUT = 9,
     NUMERICAL_ERROR = 10,
-    POSTSOLVE_INFEASIBLE = 11
+    POSTSOLVE_INFEASIBLE = 11,
+    RESIDUAL_STAGNATION = 12
 };
 
 enum class ApiStatus {
@@ -158,6 +159,8 @@ inline const char* termination_reason_to_string(TerminationReason reason)
         return "NUMERICAL_ERROR";
     case TerminationReason::POSTSOLVE_INFEASIBLE:
         return "POSTSOLVE_INFEASIBLE";
+    case TerminationReason::RESIDUAL_STAGNATION:
+        return "RESIDUAL_STAGNATION";
     default:
         return "UNKNOWN";
     }

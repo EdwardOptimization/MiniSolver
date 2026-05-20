@@ -190,7 +190,8 @@ namespace detail {
             return status;
         }
         if (conf.max_iters < 0 || conf.line_search_max_iters < 0 || conf.max_restoration_iters < 0
-            || conf.linear_solve_max_attempts < 1 || conf.newton_config.max_iters < 0) {
+            || conf.linear_solve_max_attempts < 1 || conf.newton_config.max_iters < 0
+            || conf.residual_stagnation_min_iters < 0 || conf.residual_stagnation_window < 1) {
             return ApiStatus::InvalidArgument;
         }
         if (conf.line_search_type != LineSearchType::NONE && conf.line_search_max_iters <= 0) {
@@ -202,6 +203,7 @@ namespace detail {
             conf.reg_init, conf.reg_min, conf.reg_max, conf.reg_scale_up, conf.reg_scale_down,
             conf.regularization_step, conf.singular_threshold, conf.huge_penalty, conf.tol_con,
             conf.tol_dual, conf.tol_mu, conf.tol_cost, conf.feasible_tol_scale,
+            conf.residual_stagnation_rel_tol, conf.residual_stagnation_abs_tol,
             conf.line_search_tau, conf.line_search_backtrack_factor, conf.filter_gamma_theta,
             conf.filter_gamma_phi, conf.filter_theta_max_factor, conf.armijo_c1,
             conf.min_barrier_slack, conf.barrier_inf_cost, conf.slack_reset_trigger,
@@ -291,6 +293,14 @@ namespace detail {
         }
         if (conf.feasible_tol_scale < 1.0) {
             return ApiStatus::InvalidArgument;
+        }
+        status = validate_nonnegative_finite_config_value(conf.residual_stagnation_rel_tol);
+        if (status != ApiStatus::OK) {
+            return status;
+        }
+        status = validate_nonnegative_finite_config_value(conf.residual_stagnation_abs_tol);
+        if (status != ApiStatus::OK) {
+            return status;
         }
         status = validate_positive_finite_config_value(conf.min_barrier_slack);
         if (status != ApiStatus::OK) {

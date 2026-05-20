@@ -68,22 +68,22 @@ constexpr std::streamoff SnapshotHeaderBytes()
 
 constexpr std::streamoff SnapshotFirstConfigBoolOffset()
 {
-    return SnapshotHeaderBytes() + 408;
+    return SnapshotHeaderBytes() + 252;
 }
 
 constexpr std::streamoff SnapshotLineSearchTypeOffset()
 {
-    return SnapshotHeaderBytes() + 252;
+    return SnapshotHeaderBytes() + 277;
 }
 
 constexpr std::streamoff SnapshotLineSearchMaxItersOffset()
 {
-    return SnapshotHeaderBytes() + 256;
+    return SnapshotHeaderBytes() + 281;
 }
 
 constexpr std::streamoff SnapshotStatusOffset()
 {
-    return SnapshotHeaderBytes() + 424;
+    return SnapshotHeaderBytes() + 449;
 }
 
 SolverConfig MakeNonDefaultConfig()
@@ -132,6 +132,11 @@ SolverConfig MakeNonDefaultConfig()
     config.tol_mu = 4e-6;
     config.tol_cost = 5e-7;
     config.feasible_tol_scale = 12.0;
+    config.enable_residual_stagnation_detection = false;
+    config.residual_stagnation_min_iters = 11;
+    config.residual_stagnation_window = 6;
+    config.residual_stagnation_rel_tol = 7e-4;
+    config.residual_stagnation_abs_tol = 8e-10;
 
     config.line_search_type = LineSearchType::MERIT;
     config.line_search_max_iters = 7;
