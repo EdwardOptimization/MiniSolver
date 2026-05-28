@@ -212,6 +212,57 @@ TEST(RiccatiTest, SqrtCholeskyMatchesOrdinarySchur)
     }
 }
 
+TEST(RiccatiTest, SqrtQRMatchesOrdinarySchur)
+{
+    using Knot = KnotPoint<double, 4, 2, 5, 13>;
+    using TrajArray = std::array<Knot, 3>; // N=2
+
+    auto setup_traj = [](TrajArray& traj) {
+        for (int k = 0; k <= 2; ++k) {
+            traj[k].set_zero();
+            traj[k].Q.setIdentity();
+            traj[k].R.setIdentity();
+            traj[k].A.setIdentity();
+            traj[k].B.setZero();
+            traj[k].B(0, 0) = 1.0;
+            traj[k].B(1, 1) = 1.0;
+            traj[k].x.setZero();
+            traj[k].u.setZero();
+        }
+        traj[2].q(0) = 1.0;
+    };
+
+    TrajArray traj_ordinary, traj_qr;
+    setup_traj(traj_ordinary);
+    setup_traj(traj_qr);
+
+    SolverConfig config;
+    config.reg_min = 1e-9;
+
+    config.riccati_factorization = RiccatiFactorizationMode::ORDINARY_SCHUR;
+    RiccatiSolver<TrajArray, CarModel> solver_ordinary;
+    auto result_ordinary = solver_ordinary.solve(
+        traj_ordinary, 2, 0.01, 1e-9, InertiaStrategy::REGULARIZATION, config);
+    EXPECT_TRUE(result_ordinary.ok);
+
+    config.riccati_factorization = RiccatiFactorizationMode::SQRT_QR;
+    RiccatiSolver<TrajArray, CarModel> solver_qr;
+    auto result_qr
+        = solver_qr.solve(traj_qr, 2, 0.01, 1e-9, InertiaStrategy::REGULARIZATION, config);
+    EXPECT_TRUE(result_qr.ok) << "SQRT_QR solve failed";
+
+    for (int k = 0; k < 2; ++k) {
+        for (int i = 0; i < 2; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                EXPECT_NEAR(traj_qr[k].K(i, j), traj_ordinary[k].K(i, j), 1e-8)
+                    << "K mismatch at k=" << k << " (" << i << "," << j << ")";
+            }
+            EXPECT_NEAR(traj_qr[k].d(i), traj_ordinary[k].d(i), 1e-8)
+                << "d mismatch at k=" << k << " i=" << i;
+        }
+    }
+}
+
 TEST(RiccatiTest, SqrtCholeskyFallbackToOrdinary)
 {
     // Test that SQRT_CHOLESKY fallback to ORDINARY_SCHUR is recorded in diagnostics

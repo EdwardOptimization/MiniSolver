@@ -19,6 +19,46 @@ struct BenchResult {
     SolverStatus status = SolverStatus::UNSOLVED;
 };
 
+void debug_sqrt_qr()
+{
+    // Small problem to debug SQRT_QR
+    MiniSolver<CarModel, 50> solver(3, Backend::CPU_SERIAL);
+    SolverConfig config;
+    config.riccati_factorization = RiccatiFactorizationMode::SQRT_QR;
+    config.print_level = PrintLevel::DEBUG;
+    config.mu_init = 0.1;
+    config.mu_final = 1e-4;
+    config.max_iters = 5;
+    solver.set_config(config);
+    solver.set_dt(0.1);
+    solver.set_initial_state({ 0.0, 0.0, 0.0, 0.0 });
+    for (int k = 0; k <= 3; ++k) {
+        solver.set_state_guess(k, 0, k * 0.1);
+        solver.set_state_guess(k, 1, 0.0);
+        solver.set_state_guess(k, 2, 0.0);
+        solver.set_state_guess(k, 3, 0.0);
+        solver.set_parameter(k, 0, 5.0);
+        solver.set_parameter(k, 1, k * 0.1);
+        solver.set_parameter(k, 2, 0.0);
+        solver.set_parameter(k, 3, 100.0);
+        solver.set_parameter(k, 4, 100.0);
+        solver.set_parameter(k, 5, 0.1);
+        solver.set_parameter(k, 6, 2.5);
+        solver.set_parameter(k, 7, 1.0);
+        solver.set_parameter(k, 8, 1.0);
+        solver.set_parameter(k, 9, 1.0);
+        solver.set_parameter(k, 10, 0.1);
+        solver.set_parameter(k, 11, 0.1);
+        solver.set_parameter(k, 12, 1.0);
+    }
+    for (int k = 0; k < 3; ++k) {
+        solver.set_control_guess(k, 0, 0.0);
+        solver.set_control_guess(k, 1, 0.0);
+    }
+    auto status = solver.solve();
+    printf("SQRT_QR debug: status=%d\n", (int)status);
+}
+
 BenchResult run_bench(RiccatiFactorizationMode mode, int horizon)
 {
     BenchResult result;
@@ -97,10 +137,23 @@ int main()
 
     for (const int N : horizons) {
         for (const auto mode :
-            { RiccatiFactorizationMode::ORDINARY_SCHUR, RiccatiFactorizationMode::SQRT_CHOLESKY }) {
-            const char* mode_str = (mode == RiccatiFactorizationMode::ORDINARY_SCHUR)
-                ? "ORDINARY_SCHUR"
-                : "SQRT_CHOLESKY";
+            { RiccatiFactorizationMode::ORDINARY_SCHUR, RiccatiFactorizationMode::SQRT_CHOLESKY,
+                RiccatiFactorizationMode::SQRT_QR, RiccatiFactorizationMode::BANDED_KKT_LDLT }) {
+            const char* mode_str = "UNKNOWN";
+            switch (mode) {
+            case RiccatiFactorizationMode::ORDINARY_SCHUR:
+                mode_str = "ORDINARY_SCHUR";
+                break;
+            case RiccatiFactorizationMode::SQRT_CHOLESKY:
+                mode_str = "SQRT_CHOLESKY";
+                break;
+            case RiccatiFactorizationMode::SQRT_QR:
+                mode_str = "SQRT_QR";
+                break;
+            case RiccatiFactorizationMode::BANDED_KKT_LDLT:
+                mode_str = "BANDED_KKT_LDLT";
+                break;
+            }
 
             const auto r = run_bench(mode, N);
             printf("%-6d  %-14s  %8.3f  %8.3f  %8.3f  %5d  %s\n", N, mode_str, r.avg_ms, r.min_ms,

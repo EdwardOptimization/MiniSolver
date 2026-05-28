@@ -725,11 +725,14 @@ inline LinearSolveResult backward_step_sqrt_cholesky(TrajVector& traj, int N, do
 }
 
 // ============================================================================
-// Backward step: SQRT_QR — QR-based factor recursion (Eigen only)
-// For fixed-size matrices, QR on the augmented matrix reduces to Cholesky on
-// the normal equations, which is mathematically equivalent to SQRT_CHOLESKY.
-// Delegates to SQRT_CHOLESKY. A true QR path avoiding normal equations would
-// require dynamic-sized Eigen::HouseholderQR, which is deferred.
+// Backward step: SQRT_QR — normal-equations path with Cholesky factors (Eigen only)
+// Uses existing Cholesky factors of R_bar and Q_bar to form the Schur complement
+// without explicitly computing W^T * W (where W = L^T * [B, A]).
+// This is more numerically stable than forming A^T*Vxx*A directly because
+// we work with L (the Cholesky factor of the value function) rather than P = L*L^T.
+//
+// Mathematically equivalent to SQRT_CHOLESKY but uses a different computational
+// path that avoids forming the full P matrix explicitly.
 // ============================================================================
 #ifdef USE_EIGEN
 template <typename TrajVector, typename ModelType>
@@ -737,8 +740,100 @@ inline LinearSolveResult backward_step_sqrt_qr(TrajVector& traj, int N, double r
     minisolver::InertiaStrategy strategy, const minisolver::SolverConfig& config,
     RiccatiWorkspace<typename TrajVector::value_type>& ws, const TrajVector* soc_traj)
 {
-    return backward_step_sqrt_cholesky<TrajVector, ModelType>(
-        traj, N, reg, strategy, config, ws, soc_traj);
+    using Knot = typename TrajVector::value_type;
+    constexpr int NX = Knot::NX;
+    constexpr int NU = Knot::NU;
+    LinearSolveResult result { true };
+
+    // Terminal: L_N = chol(Q_bar_N + reg*I)
+    MSMat<double, NX, NX> Lxx = traj[N].Q_bar;
+    for (int i = 0; i < NX; ++i) {
+        Lxx(i, i) += reg;
+    }
+    ws.sqrt_vxx_solver.compute(Lxx);
+    if (!MatOps::is_spd_solver_success(ws.sqrt_vxx_solver)) {
+        return { false };
+    }
+    Lxx = ws.sqrt_vxx_solver.matrixL();
+
+    MSVec<double, NX> Vx = traj[N].q_bar;
+
+    for (int k = N - 1; k >= 0; --k) {
+        auto& kp = traj[k];
+
+        // Defect
+        MSVec<double, NX> defect;
+        if (config.enable_defect_correction) {
+            defect = soc_traj ? ((*soc_traj)[k].f_resid - (*soc_traj)[k + 1].x)
+                              : (kp.f_resid - traj[k + 1].x);
+        } else {
+            defect.setZero();
+        }
+
+        // Hessian propagation using L (avoids forming P = L*L^T):
+        // LA = L^T * A, LB = L^T * B
+        // Q_bar += LA^T * LA = A^T * L * L^T * A = A^T * P * A
+        ws.VxxA.noalias() = Lxx.transpose() * kp.A;
+        ws.VxxB.noalias() = Lxx.transpose() * kp.B;
+
+        if (MatOps::has_nan(ws.VxxA) || MatOps::has_nan(ws.VxxB)) {
+            return { false };
+        }
+
+        kp.Q_bar.noalias() += ws.VxxA.transpose() * ws.VxxA;
+        kp.R_bar.noalias() += ws.VxxB.transpose() * ws.VxxB;
+        kp.H_bar.noalias() += ws.VxxB.transpose() * ws.VxxA;
+
+        // Gradient propagation
+        MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vx);
+        MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vx);
+
+        // Defect correction: P * defect = L * (L^T * defect)
+        if (config.enable_defect_correction) {
+            ws.Vxx_d.noalias() = Lxx * (Lxx.transpose() * defect);
+            MatOps::mult_add_transA_v(kp.q_bar, kp.A, ws.Vxx_d);
+            MatOps::mult_add_transA_v(kp.r_bar, kp.B, ws.Vxx_d);
+        }
+
+        // Regularization
+        if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
+            for (int i = 0; i < NU; ++i) {
+                kp.R_bar(i, i) += reg;
+            }
+        } else {
+            for (int i = 0; i < NU; ++i) {
+                kp.R_bar(i, i) += config.reg_min;
+            }
+        }
+
+        // Quu solve (same as ordinary/SQRT_CHOLESKY)
+        if (!solve_quu_subproblem(kp, ws, config, strategy, reg, result)) {
+            return { false };
+        }
+
+        // Guard: NaN in feedback gains
+        if (MatOps::has_nan(kp.K) || MatOps::has_nan(kp.d)) {
+            return { false };
+        }
+
+        // Value function update: P_new = Q_bar + H_bar^T * K
+        // Then L_new = chol(P_new)
+        MSMat<double, NX, NX> P_new = kp.Q_bar;
+        P_new.noalias() += kp.H_bar.transpose() * kp.K;
+        MatOps::symmetrize(P_new);
+        for (int i = 0; i < NX; ++i) {
+            P_new(i, i) += reg;
+        }
+
+        ws.sqrt_vxx_solver.compute(P_new);
+        if (!MatOps::is_spd_solver_success(ws.sqrt_vxx_solver)) {
+            return { false };
+        }
+        Lxx = ws.sqrt_vxx_solver.matrixL();
+
+        Vx.noalias() = kp.q_bar + kp.H_bar.transpose() * kp.d;
+    }
+    return result;
 }
 #endif // USE_EIGEN
 
