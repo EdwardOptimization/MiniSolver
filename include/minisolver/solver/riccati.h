@@ -726,9 +726,10 @@ inline LinearSolveResult backward_step_sqrt_cholesky(TrajVector& traj, int N, do
 
 // ============================================================================
 // Backward step: SQRT_QR — QR-based factor recursion (Eigen only)
-// Uses QR factorization of augmented stage matrix instead of explicit Cholesky.
-// More numerically stable than SQRT_CHOLESKY because it avoids forming normal
-// equations (W^T * W).
+// For fixed-size matrices, QR on the augmented matrix reduces to Cholesky on
+// the normal equations, which is mathematically equivalent to SQRT_CHOLESKY.
+// Delegates to SQRT_CHOLESKY. A true QR path avoiding normal equations would
+// require dynamic-sized Eigen::HouseholderQR, which is deferred.
 // ============================================================================
 #ifdef USE_EIGEN
 template <typename TrajVector, typename ModelType>
@@ -736,250 +737,8 @@ inline LinearSolveResult backward_step_sqrt_qr(TrajVector& traj, int N, double r
     minisolver::InertiaStrategy strategy, const minisolver::SolverConfig& config,
     RiccatiWorkspace<typename TrajVector::value_type>& ws, const TrajVector* soc_traj)
 {
-    using Knot = typename TrajVector::value_type;
-    constexpr int NX = Knot::NX;
-    constexpr int NU = Knot::NU;
-    LinearSolveResult result { true };
-
-    // Terminal: L_N = chol(Q_bar_N + reg*I)
-    MSMat<double, NX, NX> Lxx = traj[N].Q_bar;
-    for (int i = 0; i < NX; ++i) {
-        Lxx(i, i) += reg;
-    }
-    ws.sqrt_vxx_solver.compute(Lxx);
-    if (!MatOps::is_spd_solver_success(ws.sqrt_vxx_solver)) {
-        return { false };
-    }
-    Lxx = ws.sqrt_vxx_solver.matrixL();
-
-    MSVec<double, NX> Vx = traj[N].q_bar;
-
-    for (int k = N - 1; k >= 0; --k) {
-        auto& kp = traj[k];
-
-        // Compute defect
-        MSVec<double, NX> defect;
-        if (config.enable_defect_correction) {
-            if (soc_traj) {
-                defect = (*soc_traj)[k].f_resid - (*soc_traj)[k + 1].x;
-            } else {
-                defect = kp.f_resid - traj[k + 1].x;
-            }
-        } else {
-            defect.setZero();
-        }
-
-        // Construct augmented matrix:
-        // Row 0..NU-1:   [sqrt(R_bar),  0,     0    ]
-        // Row NU..NU+NX-1: [H_bar,     sqrt(Q_bar_mod), 0]
-        // Row NU+NX..end:  [L^T B,     L^T A,   L^T a]
-        // where Q_bar_mod = Q_bar + reg*I (already has it from barrier derivatives)
-
-        ws.A_aug.setZero();
-
-        // sqrt(R_bar) block — use Cholesky of R_bar
-        MSMat<double, NU, NU> R_bar_copy = kp.R_bar;
-        if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
-            for (int i = 0; i < NU; ++i) {
-                R_bar_copy(i, i) += reg;
-            }
-        } else {
-            for (int i = 0; i < NU; ++i) {
-                R_bar_copy(i, i) += config.reg_min;
-            }
-        }
-        Eigen::LLT<MSMat<double, NU, NU>> R_llt(R_bar_copy);
-        if (R_llt.info() != Eigen::Success) {
-            return { false };
-        }
-        ws.A_aug.template block<NU, NU>(0, 0) = R_llt.matrixL();
-
-        // sqrt(Q_bar) block — use existing Lxx (value function factor)
-        // But we need the stage Q_bar, not the full value function.
-        // The augmented matrix approach handles the future value through Lxx.
-        // Actually, the correct formulation is:
-        // A_aug = [[sqrt(R), 0, 0], [H, sqrt(Q), 0], [L^T B, L^T A, L^T a]]
-
-        // sqrt(Q_bar) — Cholesky of stage Q_bar
-        MSMat<double, NX, NX> Q_bar_copy = kp.Q_bar;
-        for (int i = 0; i < NX; ++i) {
-            Q_bar_copy(i, i) += reg;
-        }
-        // Use the workspace's sqrt_vxx_solver for Q_bar (will be overwritten later)
-        // We need a separate factorization for Q_bar. Use a local LLT.
-        Eigen::LLT<MSMat<double, NX, NX>> Q_llt(Q_bar_copy);
-        // Q_bar may not be SPD (it's the stage cost, not the value function).
-        // If not SPD, fall back to LDLT or return failure.
-        if (Q_llt.info() != Eigen::Success) {
-            // Q_bar is not SPD. The QR approach requires SPD stage cost.
-            // Fall back to ordinary.
-            return backward_step_ordinary<TrajVector, ModelType>(
-                traj, N, reg, strategy, config, ws, soc_traj);
-        }
-        ws.A_aug.template block<NX, NX>(NU, NU) = Q_llt.matrixL();
-
-        // H_bar block
-        ws.A_aug.template block<NU, NX>(0, NU).setZero();
-        ws.A_aug.template block<NX, NU>(NU, 0) = kp.H_bar;
-
-        // Future value block: L^T * [B, A, a]
-        ws.A_aug.template block<NX, NU>(NU + NU, 0) = Lxx.transpose() * kp.B;
-        ws.A_aug.template block<NX, NX>(NU + NU, NU) = Lxx.transpose() * kp.A;
-        MSVec<double, NX> L_defect = Lxx.transpose() * defect;
-        // We'll use the last column for L^T * a (defect term)
-        // But the augmented matrix has (NU+NX+1) columns. The last column is for the affine term.
-        // Actually, let me restructure: the augmented matrix is [(NU+NX) x (NU+NX+1)]
-        // where the last column is the RHS/affine term.
-
-        // For the QR approach, we need:
-        // min || A_aug * [du; dx; 1] - b ||^2
-        // where b = [0; 0; L^T * (Vx + defect)]
-
-        // Actually, let me use a simpler formulation.
-        // The augmented system is:
-        // [[sqrt(R), 0], [H, sqrt(Q)], [L^T B, L^T A]] * [du; dx] = [0; 0; L^T * rhs]
-        // where rhs = -(Vx + P*defect)
-
-        // Let me just do QR on the (NU+NX) x (NU+NX) system matrix
-        // and solve the RHS separately.
-
-        // System matrix M = [[sqrt(R), 0], [H, sqrt(Q)], [L^T B, L^T A]]
-        // This is (NU+2*NX) x (NU+NX). QR gives R which is (NU+NX) x (NU+NX).
-
-        // For simplicity, let me just use the Cholesky-based SQRT approach
-        // but with the QR on the augmented matrix.
-
-        // Actually, the cleanest SQRT_QR implementation is:
-        // 1. Form W = L^T * [B, A]
-        // 2. Form M = [[sqrt(R), 0], [H, sqrt(Q)], [W_B, W_A]]
-        // 3. QR(M) -> R
-        // 4. R = [[R_uu, R_ux], [0, R_xx]]
-        // 5. K = -R_uu^{-1} R_ux, d = -R_uu^{-1} rhs_u
-        // 6. L_new = R_xx (the new value function factor)
-
-        // Let me implement this properly.
-        const int rows = NU + NX + NX;
-        const int cols = NU + NX;
-        Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor> M(rows, cols);
-        M.setZero();
-
-        // Row 0..NU-1: [sqrt(R), 0]
-        auto R_L = R_llt.matrixL();
-        for (int i = 0; i < NU; ++i) {
-            for (int j = 0; j < NU; ++j) {
-                M(i, j) = R_L(i, j);
-            }
-        }
-
-        // Row NU..NU+NX-1: [H^T, sqrt(Q)]
-        for (int i = 0; i < NX; ++i) {
-            for (int j = 0; j < NU; ++j) {
-                M(NU + i, j) = kp.H_bar(j, i); // H^T
-            }
-        }
-        auto Q_L = Q_llt.matrixL();
-        for (int i = 0; i < NX; ++i) {
-            for (int j = 0; j < NX; ++j) {
-                M(NU + i, NU + j) = Q_L(i, j);
-            }
-        }
-
-        // Row NU+NX..end: [L^T B, L^T A]
-        M.template block<NX, NU>(NU + NX, 0) = Lxx.transpose() * kp.B;
-        M.template block<NX, NX>(NU + NX, NU) = Lxx.transpose() * kp.A;
-
-        // RHS: b = [0; 0; L^T * (Vx + P*defect)]
-        Eigen::Matrix<double, Eigen::Dynamic, 1> b(rows);
-        b.setZero();
-        MSVec<double, NX> rhs_vec = Vx;
-        if (config.enable_defect_correction) {
-            MSVec<double, NX> P_defect = Lxx * L_defect;
-            rhs_vec += P_defect;
-        }
-        b.template segment<NX>(NU + NX) = Lxx.transpose() * rhs_vec;
-
-        // QR factorization using fixed-size matrices
-        // Convert augmented matrix to a working matrix for QR
-        // M is (rows x cols) = (NU+2*NX) x (NU+NX)
-        // We need to do QR and extract R (NU+NX x NU+NX) and Q^T * b
-
-        // Use Eigen's fixed-size QR on the transpose approach:
-        // Instead of QR on M, use Cholesky on M^T * M (normal equations)
-        // which gives R^T * R = M^T * M. This is equivalent to SQRT_CHOLESKY
-        // but let's extract R directly from the augmented matrix.
-
-        // Actually, for fixed-size: compute M^T * M and M^T * b, then Cholesky solve.
-        // M^T * M = [[R^T R_ux + H^T Q H,  ...], ...] = the same as ordinary Riccati Schur
-        // complement. This means SQRT_QR with normal equations = SQRT_CHOLESKY. The QR advantage is
-        // only when we avoid forming M^T * M.
-
-        // For the fixed-size path, let's just use the augmented matrix directly.
-        // We solve: min ||M * z - b||^2 via normal equations: M^T M z = M^T b
-
-        MSMat<double, NU + NX, NU + NX> MtM;
-        MSVec<double, NU + NX> Mtb;
-        // MtM = M^T * M (using only the first (NU+NX) rows of M for the cost part,
-        // plus the dynamics rows)
-        // M has rows: [sqrt(R), 0; H, sqrt(Q); L^T B, L^T A]
-        // MtM = R + [H^T; 0]*[H, 0] + [0; Q] + [B^T L; A^T L]*[L^T B, L^T A]
-        //      = [[R + H^T H + B^T P B, H^T Q + B^T P A], [Q H + A^T P B, Q + A^T P A]]
-        // This is exactly the ordinary Riccati Schur complement!
-
-        // So for fixed-size, SQRT_QR reduces to ordinary. Let me just do the
-        // ordinary backward step computation but using the augmented matrix structure.
-
-        // Gradient: q_bar += A^T * Vx, r_bar += B^T * Vx (already done above)
-        // Future value: L^T * defect (already computed as L_defect)
-
-        // The Hessian updates are the same as SQRT_CHOLESKY:
-        // LA = L^T * A, LB = L^T * B (already in ws.VxxA, ws.VxxB)
-        // Q_bar += LA^T * LA, R_bar += LB^T * LB, H_bar += LB^T * LA (already done)
-
-        // The only difference in SQRT_QR is how we factorize the stage matrix.
-        // For fixed-size, we use Cholesky on the augmented normal equations,
-        // which is identical to SQRT_CHOLESKY.
-
-        // Fall through to SQRT_CHOLESKY logic for the Quu solve and value update.
-        // This means SQRT_QR with fixed-size = SQRT_CHOLESKY.
-
-        // Regularization
-        if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
-            for (int i = 0; i < Knot::NU; ++i) {
-                kp.R_bar(i, i) += reg;
-            }
-        } else {
-            for (int i = 0; i < Knot::NU; ++i) {
-                kp.R_bar(i, i) += config.reg_min;
-            }
-        }
-
-        // Quu solve
-        if (!solve_quu_subproblem(kp, ws, config, strategy, reg, result)) {
-            return { false };
-        }
-
-        // Guard: NaN in feedback gains
-        if (MatOps::has_nan(kp.K) || MatOps::has_nan(kp.d)) {
-            return { false };
-        }
-
-        // Value function update: P_new = Q_bar + H_bar^T * K, then chol -> Lxx
-        MSMat<double, NX, NX> P_new = kp.Q_bar;
-        P_new.noalias() += kp.H_bar.transpose() * kp.K;
-        MatOps::symmetrize(P_new);
-        for (int i = 0; i < NX; ++i) {
-            P_new(i, i) += reg;
-        }
-
-        ws.sqrt_vxx_solver.compute(P_new);
-        if (!MatOps::is_spd_solver_success(ws.sqrt_vxx_solver)) {
-            return { false };
-        }
-        Lxx = ws.sqrt_vxx_solver.matrixL();
-
-        Vx.noalias() = kp.q_bar + kp.H_bar.transpose() * kp.d;
-    }
-    return result;
+    return backward_step_sqrt_cholesky<TrajVector, ModelType>(
+        traj, N, reg, strategy, config, ws, soc_traj);
 }
 #endif // USE_EIGEN
 
@@ -1111,35 +870,51 @@ inline LinearSolveResult backward_step_banded_kkt(TrajVector& traj, int N, doubl
     for (int k = 0; k < N; ++k) {
         const int row = n_dy + k * NX;
         const int dx_kp1 = k * NX; // dx_{k+1} in dy
+        const int du_k = n_dx + k * NU;
 
         // G * dy part: dx_{k+1}
-        KKT.block(row, dx_kp1, NX, NX).setIdentity();
+        for (int i = 0; i < NX; ++i) {
+            KKT(row + i, dx_kp1 + i) = 1.0;
+        }
 
         // -A_k * dx_k (for k > 0; for k=0, dx_0=0 so no contribution)
         if (k > 0) {
             const int dx_k = (k - 1) * NX;
-            KKT.block(row, dx_k, NX, NX) = -traj[k].A;
+            for (int i = 0; i < NX; ++i) {
+                for (int j = 0; j < NX; ++j) {
+                    KKT(row + i, dx_k + j) = -traj[k].A(i, j);
+                }
+            }
         }
 
         // -B_k * du_k
-        const int du_k = n_dx + k * NU;
-        KKT.block(row, du_k, NX, NU) = -traj[k].B;
-
-        // G^T * dπ part in stationarity equations
-        // Stationarity for dx_{k+1}: includes +dπ_{k+1} (from constraint k) and -A_{k+1}^T dπ_{k+2}
-        // (from constraint k+1) Stationarity for du_k: includes -B_k^T dπ_{k+1}
-
-        // dπ_{k+1} appears in stationarity for dx_{k+1}
-        KKT.block(dx_kp1, row, NX, NX).setIdentity();
-
-        // -A_k^T dπ_{k+1} appears in stationarity for dx_k (k > 0)
-        if (k > 0) {
-            const int dx_k = (k - 1) * NX;
-            KKT.block(dx_k, row, NX, NX) = -traj[k].A.transpose();
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NU; ++j) {
+                KKT(row + i, du_k + j) = -traj[k].B(i, j);
+            }
         }
 
-        // -B_k^T dπ_{k+1} appears in stationarity for du_k
-        KKT.block(du_k, row, NU, NX) = -traj[k].B.transpose();
+        // G^T * dπ: dπ_{k+1} appears in stationarity for dx_{k+1}
+        for (int i = 0; i < NX; ++i) {
+            KKT(dx_kp1 + i, row + i) = 1.0;
+        }
+
+        // -A_k^T dπ_{k+1} in stationarity for dx_k (k > 0)
+        if (k > 0) {
+            const int dx_k = (k - 1) * NX;
+            for (int i = 0; i < NX; ++i) {
+                for (int j = 0; j < NX; ++j) {
+                    KKT(dx_k + i, row + j) = -traj[k].A(j, i); // -A^T
+                }
+            }
+        }
+
+        // -B_k^T dπ_{k+1} in stationarity for du_k
+        for (int i = 0; i < NU; ++i) {
+            for (int j = 0; j < NX; ++j) {
+                KKT(du_k + i, row + j) = -traj[k].B(j, i); // -B^T
+            }
+        }
 
         // RHS for dynamics constraint: h_k = -(f_resid_k - x_{k+1})
         MSVec<double, NX> a_k;
@@ -1223,8 +998,16 @@ inline LinearSolveResult dispatch_backward_pass(TrajVector& traj, int N, double 
         return backward_step_sqrt_cholesky<TrajVector, ModelType>(
             traj, N, reg, strategy, config, ws, soc_traj);
     }
-    // SQRT_QR and BANDED_KKT_LDLT are reserved for future implementation.
-    // Falls through to ORDINARY_SCHUR for now.
+#ifdef USE_EIGEN
+    if (config.riccati_factorization == minisolver::RiccatiFactorizationMode::SQRT_QR) {
+        return backward_step_sqrt_qr<TrajVector, ModelType>(
+            traj, N, reg, strategy, config, ws, soc_traj);
+    }
+    if (config.riccati_factorization == minisolver::RiccatiFactorizationMode::BANDED_KKT_LDLT) {
+        return backward_step_banded_kkt<TrajVector, ModelType>(
+            traj, N, reg, strategy, config, ws, soc_traj);
+    }
+#endif
     return backward_step_ordinary<TrajVector, ModelType>(
         traj, N, reg, strategy, config, ws, soc_traj);
 }
