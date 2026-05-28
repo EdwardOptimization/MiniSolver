@@ -838,10 +838,18 @@ inline LinearSolveResult backward_step_sqrt_qr(TrajVector& traj, int N, double r
 #endif // USE_EIGEN
 
 // ============================================================================
-// Backward step: BANDED_KKT_LDLT — direct block-banded KKT factorization
-// Bypasses Riccati recursion entirely. Assembles and solves the full
-// equality-constrained KKT system with partial-pivoting LU (Eigen only).
-// Intended as a correctness reference and fallback for indefinite problems.
+// Backward step: BANDED_KKT_LDLT — control-condensed block-tridiagonal LDLT
+//
+// Algorithm:
+//   1. Barrier derivatives already done (ds/dλ eliminated)
+//   2. Locally eliminate du_k using R_bar_k^{-1} at each stage
+//   3. Get block-tridiagonal KKT in z_i = [dx_i, dπ_i], block size 2*NX
+//   4. Block LDLT factorization on the 2*NX-block system
+//   5. Back-substitution to recover dx, dπ
+//   6. Forward recovery of du from dx, dπ
+//
+// This is NOT Riccati. It's partial condensing + direct banded KKT factorization.
+// O(N * (2*NX)^3) complexity. Serves as correctness reference for Riccati modes.
 // ============================================================================
 #ifdef USE_EIGEN
 template <typename TrajVector, typename ModelType>
@@ -849,232 +857,276 @@ inline LinearSolveResult backward_step_banded_kkt(TrajVector& traj, int N, doubl
     minisolver::InertiaStrategy strategy, const minisolver::SolverConfig& config,
     RiccatiWorkspace<typename TrajVector::value_type>& ws, const TrajVector* soc_traj)
 {
+    (void)ws;
     using Knot = typename TrajVector::value_type;
     constexpr int NX = Knot::NX;
     constexpr int NU = Knot::NU;
+    constexpr int BS = 2 * NX;
     LinearSolveResult result { true };
 
-    // After barrier derivatives, the system is:
-    //   min 1/2 [dx,du]^T M̄ [dx,du] + [q̄,r̄]^T [dx,du]
-    //   s.t. dx_{k+1} = A_k dx_k + B_k du_k + a_k,  dx_0 = 0
-    //
-    // KKT with dynamics multiplier dπ:
-    //   [M̄  G^T] [dy]  = -[r̄]
-    //   [G   0 ] [dπ]     [h ]
-    //
-    // Variables: dy = [dx1..dxN, du0..du_{N-1}], dπ = [dπ1..dπN]
+    using NXMat = Eigen::Matrix<double, NX, NX>;
+    using NXVec = Eigen::Matrix<double, NX, 1>;
+    using NUVec = Eigen::Matrix<double, NU, 1>;
+    using NUNUMat = Eigen::Matrix<double, NU, NU>;
+    using NUNXMat = Eigen::Matrix<double, NU, NX>;
+    using NXNUMat = Eigen::Matrix<double, NX, NU>;
+    using BSMat = Eigen::Matrix<double, BS, BS>;
+    using BSVec = Eigen::Matrix<double, BS, 1>;
 
-    const int n_dx = N * NX;
-    const int n_du = N * NU;
-    const int n_dy = n_dx + n_du;
-    const int n_dpi = N * NX;
-    const int n_total = n_dy + n_dpi;
+    // ================================================================
+    // STEP 1: Eliminate du_k locally at each stage
+    // ================================================================
+    std::vector<NXMat> Qhat(N + 1), F(N), G(N);
+    std::vector<NXVec> bhat_x(N + 1), bhat_d(N + 1);
 
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> KKT(n_total, n_total);
-    Eigen::Matrix<double, Eigen::Dynamic, 1> rhs(n_total);
-    KKT.setZero();
-    rhs.setZero();
-
-    // Fill M̄ block (block-diagonal stage Hessians)
     for (int k = 0; k < N; ++k) {
         const auto& kp = traj[k];
-        const int dx_k = k * NX;
-        const int du_k = n_dx + k * NU;
 
-        // Q_bar
-        for (int i = 0; i < NX; ++i) {
-            for (int j = 0; j < NX; ++j) {
-                KKT(dx_k + i, dx_k + j) = kp.Q_bar(i, j);
-            }
-        }
-        // R_bar
-        for (int i = 0; i < NU; ++i) {
-            for (int j = 0; j < NU; ++j) {
-                KKT(du_k + i, du_k + j) = kp.R_bar(i, j);
-            }
-        }
-        // H_bar
-        for (int i = 0; i < NU; ++i) {
-            for (int j = 0; j < NX; ++j) {
-                KKT(du_k + i, dx_k + j) = kp.H_bar(i, j);
-                KKT(dx_k + j, du_k + i) = kp.H_bar(i, j);
-            }
-        }
-
-        // Gradient
-        for (int i = 0; i < NX; ++i) {
-            rhs(dx_k + i) = kp.q_bar(i);
-        }
-        for (int i = 0; i < NU; ++i) {
-            rhs(du_k + i) = kp.r_bar(i);
-        }
-    }
-
-    // Terminal stage: only Q_bar (no u)
-    {
-        const auto& kp = traj[N];
-        const int dx_N
-            = (N - 1 + 1) * NX; // This is beyond the last dx, but we don't have dxN in dy
-        // Actually, dxN IS in the system. Let me reconsider.
-        // dy = [dx1, dx2, ..., dxN, du0, du1, ..., du_{N-1}]
-        // So dx_k is at index k*NX for k=1..N (0-indexed: k=0 means dx1)
-        // Wait, let me re-index. In the KKT system:
-        // dx_0 = 0 (fixed), so we have dx_1..dx_N as unknowns
-        // du_0..du_{N-1} as unknowns
-        // dπ_1..dπ_N as multipliers for dynamics
-
-        // But in the trajectory, traj[k] has dx for k=0..N.
-        // dx_0 = 0 (constrained), dx_1..dx_N are free.
-        // Let me use 0-based indexing for the KKT: dx_k corresponds to traj[k+1].dx
-
-        // Actually, let me simplify: I'll index dx_k for k=0..N-1 meaning dx_{k+1}
-        // This maps to traj[k+1].dx
-
-        // Terminal Q_bar goes at position (N-1)*NX in the M̄ block
-        const int dx_terminal = (N - 1) * NX;
-        for (int i = 0; i < NX; ++i) {
-            for (int j = 0; j < NX; ++j) {
-                KKT(dx_terminal + i, dx_terminal + j) += kp.Q_bar(i, j);
-            }
-        }
-        for (int i = 0; i < NX; ++i) {
-            rhs(dx_terminal + i) += kp.q_bar(i);
-        }
-    }
-
-    // Fill G block (dynamics constraints)
-    // Constraint k: dx_{k+1} - A_k dx_k - B_k du_k = -a_k
-    // For k=0: dx_1 - A_0 dx_0 - B_0 du_0 = -a_0 => dx_1 - B_0 du_0 = -a_0 + A_0 dx_0
-    // Since dx_0 = 0: dx_1 - B_0 du_0 = -a_0
-
-    // Let me re-index: the KKT unknowns are
-    //   z = [dx_1, dx_2, ..., dx_N, du_0, du_1, ..., du_{N-1}, dπ_1, dπ_2, ..., dπ_N]
-    // dx_1 is at index 0, dx_2 at index NX, ..., dx_N at index (N-1)*NX
-    // du_0 at index N*NX, du_1 at N*NX+NU, ..., du_{N-1} at N*NX+(N-1)*NU
-    // dπ_1 at n_dy, dπ_2 at n_dy+NX, ..., dπ_N at n_dy+(N-1)*NX
-
-    // Dynamics constraint k (for k=0..N-1):
-    //   dx_{k+1} - A_k dx_k - B_k du_k = -a_k
-    //   where a_k = f_resid_k - x_{k+1}
-    //   dx_0 = 0, so for k=0: dx_1 - B_0 du_0 = -a_0
-
-    // Row for constraint k is at index n_dy + k*NX
-    // The constraint involves dx_{k+1} (at index k*NX), dx_k (at index (k-1)*NX for k>0), du_k (at
-    // n_dx + k*NU)
-
-    for (int k = 0; k < N; ++k) {
-        const int row = n_dy + k * NX;
-        const int dx_kp1 = k * NX; // dx_{k+1} in dy
-        const int du_k = n_dx + k * NU;
-
-        // G * dy part: dx_{k+1}
-        for (int i = 0; i < NX; ++i) {
-            KKT(row + i, dx_kp1 + i) = 1.0;
-        }
-
-        // -A_k * dx_k (for k > 0; for k=0, dx_0=0 so no contribution)
-        if (k > 0) {
-            const int dx_k = (k - 1) * NX;
-            for (int i = 0; i < NX; ++i) {
-                for (int j = 0; j < NX; ++j) {
-                    KKT(row + i, dx_k + j) = -traj[k].A(i, j);
-                }
-            }
-        }
-
-        // -B_k * du_k
-        for (int i = 0; i < NX; ++i) {
-            for (int j = 0; j < NU; ++j) {
-                KKT(row + i, du_k + j) = -traj[k].B(i, j);
-            }
-        }
-
-        // G^T * dπ: dπ_{k+1} appears in stationarity for dx_{k+1}
-        for (int i = 0; i < NX; ++i) {
-            KKT(dx_kp1 + i, row + i) = 1.0;
-        }
-
-        // -A_k^T dπ_{k+1} in stationarity for dx_k (k > 0)
-        if (k > 0) {
-            const int dx_k = (k - 1) * NX;
-            for (int i = 0; i < NX; ++i) {
-                for (int j = 0; j < NX; ++j) {
-                    KKT(dx_k + i, row + j) = -traj[k].A(j, i); // -A^T
-                }
-            }
-        }
-
-        // -B_k^T dπ_{k+1} in stationarity for du_k
-        for (int i = 0; i < NU; ++i) {
-            for (int j = 0; j < NX; ++j) {
-                KKT(du_k + i, row + j) = -traj[k].B(j, i); // -B^T
-            }
-        }
-
-        // RHS for dynamics constraint: h_k = -(f_resid_k - x_{k+1})
-        MSVec<double, NX> a_k;
-        if (soc_traj) {
-            a_k = (*soc_traj)[k].f_resid - (*soc_traj)[k + 1].x;
-        } else {
-            a_k = traj[k].f_resid - traj[k + 1].x;
-        }
-        for (int i = 0; i < NX; ++i) {
-            rhs(row + i) = -a_k(i);
-        }
-    }
-
-    // Regularization on M̄ diagonal
-    for (int k = 0; k < N; ++k) {
-        const int du_k = n_dx + k * NU;
+        NUNUMat Rbar = kp.R_bar;
         if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
             for (int i = 0; i < NU; ++i) {
-                KKT(du_k + i, du_k + i) += reg;
+                Rbar(i, i) += reg;
             }
         } else {
             for (int i = 0; i < NU; ++i) {
-                KKT(du_k + i, du_k + i) += config.reg_min;
+                Rbar(i, i) += config.reg_min;
+            }
+        }
+
+        Eigen::LDLT<NUNUMat> R_ldlt(Rbar);
+        if (R_ldlt.info() != Eigen::Success) {
+            return { false };
+        }
+
+        NUNXMat Hbar;
+        for (int i = 0; i < NU; ++i) {
+            for (int j = 0; j < NX; ++j) {
+                Hbar(i, j) = kp.H_bar(i, j);
+            }
+        }
+
+        NXNUMat Bk;
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NU; ++j) {
+                Bk(i, j) = kp.B(i, j);
+            }
+        }
+
+        NUNXMat RinvH = R_ldlt.solve(Hbar);
+        NUNXMat RinvBT = R_ldlt.solve(Bk.transpose());
+
+        NXMat Qbar;
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NX; ++j) {
+                Qbar(i, j) = kp.Q_bar(i, j);
+            }
+        }
+        Qhat[k] = Qbar - Hbar.transpose() * RinvH;
+        F[k] = -kp.A + Bk * RinvH;
+        G[k] = Bk * RinvBT;
+
+        NUVec bu;
+        for (int i = 0; i < NU; ++i) {
+            bu(i) = -kp.r_bar(i);
+        }
+        NUVec Rinvbu = R_ldlt.solve(bu);
+
+        NXVec bx;
+        for (int i = 0; i < NX; ++i) {
+            bx(i) = -kp.q_bar(i);
+        }
+        bhat_x[k] = bx - Hbar.transpose() * Rinvbu;
+
+        NXVec bdyn;
+        if (soc_traj) {
+            bdyn = -((*soc_traj)[k].f_resid - (*soc_traj)[k + 1].x);
+        } else {
+            bdyn = -(kp.f_resid - traj[k + 1].x);
+        }
+        bhat_d[k] = bdyn + Bk * Rinvbu;
+    }
+
+    // Terminal
+    {
+        const auto& kp = traj[N];
+        Qhat[N] = kp.Q_bar;
+        for (int i = 0; i < NX; ++i) {
+            Qhat[N](i, i) += reg;
+        }
+        NXVec bx_N;
+        for (int i = 0; i < NX; ++i) {
+            bx_N(i) = -kp.q_bar(i);
+        }
+        bhat_x[N] = bx_N;
+    }
+
+    // ================================================================
+    // STEP 2: Assemble block-tridiagonal KKT
+    // ================================================================
+    std::vector<BSMat> D(N);
+    std::vector<BSVec> rhs(N);
+
+    for (int i = 0; i < N; ++i) {
+        auto& Di = D[i];
+        Di.setZero();
+
+        int stage = i + 1;
+        for (int r = 0; r < NX; ++r) {
+            for (int c = 0; c < NX; ++c) {
+                Di(r, c) = Qhat[stage](r, c);
+            }
+        }
+
+        for (int r = 0; r < NX; ++r) {
+            Di(r, NX + r) = 1.0;
+        }
+        for (int r = 0; r < NX; ++r) {
+            Di(NX + r, r) = 1.0;
+        }
+
+        for (int r = 0; r < NX; ++r) {
+            for (int c = 0; c < NX; ++c) {
+                Di(NX + r, NX + c) = -G[i](r, c);
+            }
+        }
+
+        auto& ri = rhs[i];
+        ri.setZero();
+        for (int r = 0; r < NX; ++r) {
+            ri(r) = bhat_x[stage](r);
+        }
+        for (int r = 0; r < NX; ++r) {
+            ri(NX + r) = bhat_d[i](r);
+        }
+    }
+
+    // Off-diagonal blocks
+    std::vector<BSMat> E(N - 1);
+    for (int i = 0; i < N - 1; ++i) {
+        auto& Ei = E[i];
+        Ei.setZero();
+        for (int r = 0; r < NX; ++r) {
+            for (int c = 0; c < NX; ++c) {
+                Ei(NX + r, c) = F[i + 1](r, c);
             }
         }
     }
-    // Terminal Q_bar regularization
-    {
-        const int dx_terminal = (N - 1) * NX;
-        for (int i = 0; i < NX; ++i) {
-            KKT(dx_terminal + i, dx_terminal + i) += reg;
-        }
-    }
 
-    // Solve with partial pivoting LU
-    Eigen::PartialPivLU<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>> lu(KKT);
-    auto sol = lu.solve(rhs);
+    // ================================================================
+    // STEP 3: Block-tridiagonal LDLT
+    // ================================================================
+    std::vector<BSMat> T(N - 1);
+    std::vector<Eigen::LDLT<BSMat>> S_ldlt(N);
 
-    // Guard: NaN in solution
-    if (!sol.allFinite()) {
+    S_ldlt[0].compute(D[0]);
+    if (S_ldlt[0].info() != Eigen::Success) {
         return { false };
     }
 
-    // Extract dx, du from solution and write to trajectory
-    traj[0].dx.setZero(); // dx_0 = 0
-    for (int k = 0; k < N; ++k) {
-        for (int i = 0; i < NX; ++i) {
-            traj[k + 1].dx(i) = sol(k * NX + i);
+    for (int i = 0; i < N - 1; ++i) {
+        BSMat X = S_ldlt[i].solve(E[i].transpose());
+        T[i] = X.transpose();
+
+        BSMat Si1 = D[i + 1] - T[i] * E[i].transpose();
+        S_ldlt[i + 1].compute(Si1);
+        if (S_ldlt[i + 1].info() != Eigen::Success) {
+            return { false };
         }
+    }
+
+    // ================================================================
+    // STEP 4-6: Forward + diagonal + backward solve
+    // ================================================================
+    std::vector<BSVec> y(N), w(N), z(N);
+    y[0] = rhs[0];
+    for (int i = 0; i < N - 1; ++i) {
+        y[i + 1] = rhs[i + 1] - T[i] * y[i];
+    }
+
+    for (int i = 0; i < N; ++i) {
+        w[i] = S_ldlt[i].solve(y[i]);
+        if (!w[i].allFinite()) {
+            return { false };
+        }
+    }
+
+    z[N - 1] = w[N - 1];
+    for (int i = N - 2; i >= 0; --i) {
+        z[i] = w[i] - T[i].transpose() * z[i + 1];
+    }
+
+    // ================================================================
+    // STEP 7: Extract dx, dπ
+    // ================================================================
+    traj[0].dx.setZero();
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < NX; ++j) {
+            traj[i + 1].dx(j) = z[i](j);
+        }
+    }
+
+    // ================================================================
+    // STEP 8: Recover du
+    // ================================================================
+    for (int k = 0; k < N; ++k) {
+        auto& kp = traj[k];
+
+        NUNUMat Rbar = kp.R_bar;
+        if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
+            for (int i = 0; i < NU; ++i) {
+                Rbar(i, i) += reg;
+            }
+        } else {
+            for (int i = 0; i < NU; ++i) {
+                Rbar(i, i) += config.reg_min;
+            }
+        }
+        Eigen::LDLT<NUNUMat> R_ldlt(Rbar);
+
+        NUNXMat Hbar;
         for (int i = 0; i < NU; ++i) {
-            traj[k].du(i) = sol(n_dx + k * NU + i);
+            for (int j = 0; j < NX; ++j) {
+                Hbar(i, j) = kp.H_bar(i, j);
+            }
+        }
+
+        NXNUMat Bk;
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NU; ++j) {
+                Bk(i, j) = kp.B(i, j);
+            }
+        }
+
+        NXVec dpi;
+        for (int i = 0; i < NX; ++i) {
+            dpi(i) = z[k](NX + i);
+        }
+
+        NXVec dxk;
+        for (int i = 0; i < NX; ++i) {
+            dxk(i) = kp.dx(i);
+        }
+
+        NUVec bu;
+        for (int i = 0; i < NU; ++i) {
+            bu(i) = -kp.r_bar(i);
+        }
+
+        NUVec du_e = R_ldlt.solve(bu - Hbar * dxk + Bk.transpose() * dpi);
+        for (int i = 0; i < NU; ++i) {
+            kp.du(i) = du_e(i);
         }
     }
     traj[N].du.setZero();
 
-    // Recover dual directions (ds, dlam) from primal step
-    for (int k = 0; k <= N; ++k) {
-        const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
-        recover_dual_search_directions<Knot, ModelType>(traj[k], 0.0, config, soc_kp, nullptr);
-    }
-
-    // Set feedback gains to identity (not used by this mode, but mark as solved)
     for (int k = 0; k < N; ++k) {
         traj[k].K.setZero();
         traj[k].d = traj[k].du;
+    }
+
+    for (int k = 0; k <= N; ++k) {
+        const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
+        recover_dual_search_directions<Knot, ModelType>(traj[k], 0.0, config, soc_kp, nullptr);
     }
 
     return result;
