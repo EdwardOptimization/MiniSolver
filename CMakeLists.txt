@@ -449,6 +449,10 @@ if(MINISOLVER_BUILD_TOOLS)
     add_minisolver_bench(warm_start_bench tools/warm_start_bench.cpp)
 
     add_minisolver_bench(scaling_bench tools/scaling_bench.cpp)
+
+    add_minisolver_bench(riccati_mode_bench tools/riccati_mode_bench.cpp)
+    add_dependencies(riccati_mode_bench minisolver_test_models)
+    target_include_directories(riccati_mode_bench PRIVATE ${TEST_GENERATED_DIR})
 endif()
 
 if(MINISOLVER_BUILD_TESTS)

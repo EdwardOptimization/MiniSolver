@@ -106,6 +106,7 @@ struct SnapshotLoadOptions {
     X_DOUBLE(barrier_tolerance_factor)                                                             \
     X_DOUBLE(mu_safety_margin)                                                                     \
     X_ENUM(inertia_strategy)                                                                       \
+    X_ENUM(riccati_factorization)                                                                  \
     X_DOUBLE(reg_init)                                                                             \
     X_DOUBLE(reg_min)                                                                              \
     X_DOUBLE(reg_max)                                                                              \
@@ -162,7 +163,7 @@ template <typename Model, int MAX_N> class SolverSnapshotIO {
 public:
     using SolverType = MiniSolver<Model, MAX_N>;
     static constexpr std::array<char, 8> kMagic = { 'M', 'S', 'N', 'A', 'P', '0', '1', '\0' };
-    static constexpr std::uint32_t kFormatVersion = 3;
+    static constexpr std::uint32_t kFormatVersion = 4;
 
     struct Snapshot {
         SolverConfig config;

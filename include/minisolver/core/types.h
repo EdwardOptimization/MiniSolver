@@ -202,6 +202,7 @@ struct SolverInfo {
     bool constraint_scaling_active = false;
     bool objective_scaling_active = false;
     bool problem_scaling_active = false;
+    bool riccati_fallback_occurred = false;
 
     void reset()
     {
@@ -230,6 +231,7 @@ struct SolverInfo {
         constraint_scaling_active = false;
         objective_scaling_active = false;
         problem_scaling_active = false;
+        riccati_fallback_occurred = false;
     }
 };
 

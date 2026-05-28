@@ -68,22 +68,22 @@ constexpr std::streamoff SnapshotHeaderBytes()
 
 constexpr std::streamoff SnapshotFirstConfigBoolOffset()
 {
-    return SnapshotHeaderBytes() + 252;
+    return SnapshotHeaderBytes() + 256;
 }
 
 constexpr std::streamoff SnapshotLineSearchTypeOffset()
 {
-    return SnapshotHeaderBytes() + 277;
+    return SnapshotHeaderBytes() + 281;
 }
 
 constexpr std::streamoff SnapshotLineSearchMaxItersOffset()
 {
-    return SnapshotHeaderBytes() + 281;
+    return SnapshotHeaderBytes() + 285;
 }
 
 constexpr std::streamoff SnapshotStatusOffset()
 {
-    return SnapshotHeaderBytes() + 449;
+    return SnapshotHeaderBytes() + 453;
 }
 
 SolverConfig MakeNonDefaultConfig()

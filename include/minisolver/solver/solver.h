@@ -1053,6 +1053,18 @@ private:
                 increase_regularization_after_failed_solve_(clamp_reg_to_min);
             }
         }
+        // SQRT_CHOLESKY fallback: if retries exhausted, try ORDINARY_SCHUR once
+        if (config.riccati_factorization == RiccatiFactorizationMode::SQRT_CHOLESKY) {
+            context_.info.riccati_fallback_occurred = true;
+            SolverConfig fallback_config = config;
+            fallback_config.riccati_factorization = RiccatiFactorizationMode::ORDINARY_SCHUR;
+            const LinearSolveResult fallback_result = linear_solver->solve(traj, N, target_mu,
+                context_.solve.reg, config.inertia_strategy, fallback_config, affine_traj);
+            record_linear_solver_diagnostics_(fallback_result);
+            if (fallback_result.ok) {
+                return true;
+            }
+        }
         return false;
     }
 

@@ -129,6 +129,13 @@ namespace detail {
             InertiaStrategy::SATURATION, InertiaStrategy::IGNORE_SINGULAR>(value);
     }
 
+    inline bool valid_enum(RiccatiFactorizationMode value)
+    {
+        return enum_is_one_of<RiccatiFactorizationMode, RiccatiFactorizationMode::ORDINARY_SCHUR,
+            RiccatiFactorizationMode::SQRT_CHOLESKY, RiccatiFactorizationMode::SQRT_QR,
+            RiccatiFactorizationMode::BANDED_KKT_LDLT>(value);
+    }
+
     inline bool valid_enum(LineSearchType value)
     {
         return enum_is_one_of<LineSearchType, LineSearchType::MERIT, LineSearchType::FILTER,
@@ -165,6 +172,7 @@ namespace detail {
     X(integrator)                                                                                  \
     X(barrier_strategy)                                                                            \
     X(inertia_strategy)                                                                            \
+    X(riccati_factorization)                                                                       \
     X(line_search_type)                                                                            \
     X(print_level)                                                                                 \
     X(hessian_approximation)                                                                       \

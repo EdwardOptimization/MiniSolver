@@ -479,6 +479,8 @@ public:
 
     int info() const { return success ? 0 : 1; }
 
+    const MiniMatrix<T, N, N>& matrixL() const { return L; }
+
     MiniMatrix<T, N, 1> solve(const MiniMatrix<T, N, 1>& b)
     {
         MiniMatrix<T, N, 1> x = b;

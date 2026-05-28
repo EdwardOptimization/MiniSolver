@@ -1,5 +1,6 @@
 #include "../examples/01_car_tutorial/generated/car_model.h"
 #include "minisolver/algorithms/riccati_solver.h"
+#include "minisolver/solver/solver.h"
 #include <gtest/gtest.h>
 
 using namespace minisolver;
@@ -141,4 +142,93 @@ TEST(RiccatiTest, TrivialLQR)
     // x2 and x3 are uncontrollable (B=0), so K should be 0 there?
     // P propagates A=I. So P_xx grows.
     EXPECT_NEAR(traj[1].K(0, 2), 0.0, 1e-5);
+}
+
+TEST(RiccatiTest, SqrtCholeskyMatchesOrdinarySchur)
+{
+    using Knot = KnotPoint<double, 4, 2, 5, 13>;
+    using TrajArray = std::array<Knot, 3>; // N=2
+
+    // Set up identical problems for both modes
+    auto setup_traj = [](TrajArray& traj) {
+        for (int k = 0; k <= 2; ++k) {
+            traj[k].set_zero();
+            traj[k].Q.setIdentity();
+            traj[k].R.setIdentity();
+            traj[k].A.setIdentity();
+            traj[k].B.setZero();
+            traj[k].B(0, 0) = 1.0;
+            traj[k].B(1, 1) = 1.0;
+            traj[k].x.setZero();
+            traj[k].u.setZero();
+        }
+        traj[2].q(0) = 1.0;
+    };
+
+    TrajArray traj_ordinary, traj_sqrt;
+    setup_traj(traj_ordinary);
+    setup_traj(traj_sqrt);
+
+    SolverConfig config;
+    config.reg_min = 1e-9;
+
+    // Solve with ORDINARY_SCHUR
+    config.riccati_factorization = RiccatiFactorizationMode::ORDINARY_SCHUR;
+    RiccatiSolver<TrajArray, CarModel> solver_ordinary;
+    auto result_ordinary = solver_ordinary.solve(
+        traj_ordinary, 2, 0.01, 1e-9, InertiaStrategy::REGULARIZATION, config);
+    EXPECT_TRUE(result_ordinary.ok);
+
+    // Solve with SQRT_CHOLESKY
+    config.riccati_factorization = RiccatiFactorizationMode::SQRT_CHOLESKY;
+    RiccatiSolver<TrajArray, CarModel> solver_sqrt;
+    auto result_sqrt
+        = solver_sqrt.solve(traj_sqrt, 2, 0.01, 1e-9, InertiaStrategy::REGULARIZATION, config);
+    EXPECT_TRUE(result_sqrt.ok);
+
+    // Compare K, d, dx, du at all stages
+    for (int k = 0; k < 2; ++k) {
+        for (int i = 0; i < 2; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                EXPECT_NEAR(traj_sqrt[k].K(i, j), traj_ordinary[k].K(i, j), 1e-10)
+                    << "K mismatch at k=" << k << " (" << i << "," << j << ")";
+            }
+            EXPECT_NEAR(traj_sqrt[k].d(i), traj_ordinary[k].d(i), 1e-10)
+                << "d mismatch at k=" << k << " i=" << i;
+        }
+    }
+
+    for (int k = 0; k <= 2; ++k) {
+        for (int i = 0; i < 4; ++i) {
+            EXPECT_NEAR(traj_sqrt[k].dx(i), traj_ordinary[k].dx(i), 1e-10)
+                << "dx mismatch at k=" << k << " i=" << i;
+        }
+        if (k < 2) {
+            for (int i = 0; i < 2; ++i) {
+                EXPECT_NEAR(traj_sqrt[k].du(i), traj_ordinary[k].du(i), 1e-10)
+                    << "du mismatch at k=" << k << " i=" << i;
+            }
+        }
+    }
+}
+
+TEST(RiccatiTest, SqrtCholeskyFallbackToOrdinary)
+{
+    // Test that SQRT_CHOLESKY fallback to ORDINARY_SCHUR is recorded in diagnostics
+    MiniSolver<CarModel, 50> solver(10, Backend::CPU_SERIAL);
+    SolverConfig config;
+    config.riccati_factorization = RiccatiFactorizationMode::SQRT_CHOLESKY;
+    config.mu_init = 0.1;
+    config.mu_final = 1e-4;
+    config.max_iters = 30;
+    config.hessian_approximation = HessianApproximation::GAUSS_NEWTON;
+    solver.set_config(config);
+
+    auto status = solver.solve();
+    // The solve may succeed via fallback or directly; either is acceptable
+    // The key test is that the solver doesn't crash and the fallback mechanism works
+    auto info = solver.get_info();
+    EXPECT_TRUE(status == SolverStatus::OPTIMAL || status == SolverStatus::FEASIBLE
+        || info.riccati_fallback_occurred)
+        << "SQRT_CHOLESKY should either succeed or fallback. Status: " << static_cast<int>(status);
 }

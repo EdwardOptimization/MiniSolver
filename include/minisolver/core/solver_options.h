@@ -28,6 +28,13 @@ enum class InertiaStrategy {
     // In the future: FACTORIZATION_MODIFY
 };
 
+enum class RiccatiFactorizationMode {
+    ORDINARY_SCHUR, // Current: explicit P/Vxx propagation (default)
+    SQRT_CHOLESKY, // Propagate L_k where P_k = L_k L_k^T
+    SQRT_QR, // QR-based orthogonal factor recursion (future)
+    BANDED_KKT_LDLT // Direct block-banded KKT factorization (future/debug)
+};
+
 // Line search strategy for globalization. For real-time NMPC (SQP-style) it's common to
 // disable backtracking and simply take a fraction-to-boundary step.
 enum class LineSearchType { MERIT, FILTER, NONE };
@@ -190,6 +197,7 @@ struct SolverConfig {
 
     // --- Regularization ---
     InertiaStrategy inertia_strategy = InertiaStrategy::REGULARIZATION;
+    RiccatiFactorizationMode riccati_factorization = RiccatiFactorizationMode::ORDINARY_SCHUR;
     double reg_init = 1e-4; // Slightly higher init to be safe
     double reg_min = 1e-8;
     double reg_max = 1e9;
