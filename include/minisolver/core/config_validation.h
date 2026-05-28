@@ -133,7 +133,9 @@ namespace detail {
     {
         return enum_is_one_of<RiccatiFactorizationMode, RiccatiFactorizationMode::ORDINARY_SCHUR,
             RiccatiFactorizationMode::SQRT_CHOLESKY, RiccatiFactorizationMode::SQRT_QR,
-            RiccatiFactorizationMode::BANDED_KKT_LDLT>(value);
+            RiccatiFactorizationMode::DUAL_SCHUR_CHOLESKY,
+            RiccatiFactorizationMode::DUAL_SCHUR_LDLT,
+            RiccatiFactorizationMode::CONTROL_CONDENSED_KKT_LDLT>(value);
     }
 
     inline bool valid_enum(LineSearchType value)

@@ -138,20 +138,28 @@ int main()
     for (const int N : horizons) {
         for (const auto mode :
             { RiccatiFactorizationMode::ORDINARY_SCHUR, RiccatiFactorizationMode::SQRT_CHOLESKY,
-                RiccatiFactorizationMode::SQRT_QR, RiccatiFactorizationMode::BANDED_KKT_LDLT }) {
+                RiccatiFactorizationMode::SQRT_QR, RiccatiFactorizationMode::DUAL_SCHUR_CHOLESKY,
+                RiccatiFactorizationMode::DUAL_SCHUR_LDLT,
+                RiccatiFactorizationMode::CONTROL_CONDENSED_KKT_LDLT }) {
             const char* mode_str = "UNKNOWN";
             switch (mode) {
             case RiccatiFactorizationMode::ORDINARY_SCHUR:
-                mode_str = "ORDINARY_SCHUR";
+                mode_str = "ORDINARY";
                 break;
             case RiccatiFactorizationMode::SQRT_CHOLESKY:
-                mode_str = "SQRT_CHOLESKY";
+                mode_str = "SQRT_CHOL";
                 break;
             case RiccatiFactorizationMode::SQRT_QR:
                 mode_str = "SQRT_QR";
                 break;
-            case RiccatiFactorizationMode::BANDED_KKT_LDLT:
-                mode_str = "BANDED_KKT_LDLT";
+            case RiccatiFactorizationMode::DUAL_SCHUR_CHOLESKY:
+                mode_str = "DUAL_CHOL";
+                break;
+            case RiccatiFactorizationMode::DUAL_SCHUR_LDLT:
+                mode_str = "DUAL_LDLT";
+                break;
+            case RiccatiFactorizationMode::CONTROL_CONDENSED_KKT_LDLT:
+                mode_str = "CTRL_COND";
                 break;
             }
 

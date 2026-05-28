@@ -31,8 +31,10 @@ enum class InertiaStrategy {
 enum class RiccatiFactorizationMode {
     ORDINARY_SCHUR, // Current: explicit P/Vxx propagation (default)
     SQRT_CHOLESKY, // Propagate L_k where P_k = L_k L_k^T
-    SQRT_QR, // QR-based orthogonal factor recursion (future)
-    BANDED_KKT_LDLT // Direct block-banded KKT factorization (future/debug)
+    SQRT_QR, // QR-based orthogonal factor recursion
+    DUAL_SCHUR_CHOLESKY, // NX block dπ-only dual Schur, SPD path
+    DUAL_SCHUR_LDLT, // NX block dπ-only dual Schur, indefinite
+    CONTROL_CONDENSED_KKT_LDLT // 2NX block [dx,dπ] banded KKT, robust fallback
 };
 
 // Line search strategy for globalization. For real-time NMPC (SQP-style) it's common to

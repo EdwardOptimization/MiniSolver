@@ -838,6 +838,373 @@ inline LinearSolveResult backward_step_sqrt_qr(TrajVector& traj, int N, double r
 #endif // USE_EIGEN
 
 // ============================================================================
+// Backward step: DUAL_SCHUR — dπ-only NX-block-tridiagonal system
+//
+// After eliminating du via R^{-1} Schur complement, further eliminates dx
+// to get a dπ-only NX-block-tridiagonal system:
+//   S_π dπ = h
+// where S_π = E Q̂^{-1} E^T + G (NX×NX blocks).
+//
+// Two factorization paths:
+//   use_cholesky=true:  Cholesky (requires Q̂_i SPD) — faster
+//   use_cholesky=false: LDLT (handles indefinite Q̂) — more robust
+//
+// O(N * NX^3) complexity — same block size as Riccati.
+// ============================================================================
+#ifdef USE_EIGEN
+template <typename TrajVector, typename ModelType>
+inline LinearSolveResult backward_step_dual_schur(TrajVector& traj, int N, double reg,
+    minisolver::InertiaStrategy strategy, const minisolver::SolverConfig& config,
+    RiccatiWorkspace<typename TrajVector::value_type>& ws, const TrajVector* soc_traj,
+    bool use_cholesky)
+{
+    (void)ws;
+    using Knot = typename TrajVector::value_type;
+    constexpr int NX = Knot::NX;
+    constexpr int NU = Knot::NU;
+    LinearSolveResult result { true };
+
+    using NXMat = Eigen::Matrix<double, NX, NX>;
+    using NXVec = Eigen::Matrix<double, NX, 1>;
+    using NUNUMat = Eigen::Matrix<double, NU, NU>;
+    using NUNXMat = Eigen::Matrix<double, NU, NX>;
+    using NXNUMat = Eigen::Matrix<double, NX, NU>;
+
+    using NUVec = Eigen::Matrix<double, NU, 1>;
+    // ================================================================
+    // STEP 1: Eliminate du_k (same as control-condensed)
+    // ================================================================
+    std::vector<NXMat> Qhat(N + 1), F(N), G(N);
+    std::vector<NXVec> bhat_x(N + 1), bhat_d(N + 1);
+
+    for (int k = 0; k < N; ++k) {
+        const auto& kp = traj[k];
+
+        NUNUMat Rbar = kp.R_bar;
+        if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
+            for (int i = 0; i < NU; ++i) {
+                Rbar(i, i) += reg;
+            }
+        } else {
+            for (int i = 0; i < NU; ++i) {
+                Rbar(i, i) += config.reg_min;
+            }
+        }
+
+        Eigen::LDLT<NUNUMat> R_ldlt(Rbar);
+        if (R_ldlt.info() != Eigen::Success) {
+            return { false };
+        }
+
+        NUNXMat Hbar;
+        for (int i = 0; i < NU; ++i) {
+            for (int j = 0; j < NX; ++j) {
+                Hbar(i, j) = kp.H_bar(i, j);
+            }
+        }
+
+        NXNUMat Bk;
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NU; ++j) {
+                Bk(i, j) = kp.B(i, j);
+            }
+        }
+
+        NUNXMat RinvH = R_ldlt.solve(Hbar);
+        NUNXMat RinvBT = R_ldlt.solve(Bk.transpose());
+
+        NXMat Qbar;
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NX; ++j) {
+                Qbar(i, j) = kp.Q_bar(i, j);
+            }
+        }
+        Qhat[k] = Qbar - Hbar.transpose() * RinvH;
+        F[k] = -kp.A + Bk * RinvH;
+        G[k] = Bk * RinvBT;
+
+        NUVec bu;
+        for (int i = 0; i < NU; ++i) {
+            bu(i) = -kp.r_bar(i);
+        }
+        NUVec Rinvbu = R_ldlt.solve(bu);
+
+        NXVec bx;
+        for (int i = 0; i < NX; ++i) {
+            bx(i) = -kp.q_bar(i);
+        }
+        bhat_x[k] = bx - Hbar.transpose() * Rinvbu;
+
+        NXVec bdyn;
+        if (soc_traj) {
+            bdyn = -((*soc_traj)[k].f_resid - (*soc_traj)[k + 1].x);
+        } else {
+            bdyn = -(kp.f_resid - traj[k + 1].x);
+        }
+        bhat_d[k] = bdyn + Bk * Rinvbu;
+    }
+
+    // Terminal
+    {
+        const auto& kp = traj[N];
+        Qhat[N] = kp.Q_bar;
+        for (int i = 0; i < NX; ++i) {
+            Qhat[N](i, i) += reg;
+        }
+        NXVec bx_N;
+        for (int i = 0; i < NX; ++i) {
+            bx_N(i) = -kp.q_bar(i);
+        }
+        bhat_x[N] = bx_N;
+    }
+
+    // ================================================================
+    // STEP 2: Factor Q̂_i and compute Z_i = Q̂_i^{-1}
+    // ================================================================
+    // For DualSchurCholesky: Q̂ must be SPD → use LLT
+    // For DualSchurLDLT: Q̂ can be indefinite → use LDLT
+
+    std::vector<NXMat> Z(N + 1); // Z_i = Q̂_i^{-1}
+    std::vector<NXVec> Zbx(N + 1); // Z_i * bhat_x_i
+
+    if (use_cholesky) {
+        for (int i = 0; i <= N; ++i) {
+            Eigen::LLT<NXMat> Qhat_llt(Qhat[i]);
+            if (Qhat_llt.info() != Eigen::Success) {
+                return { false };
+            }
+            Z[i] = Qhat_llt.solve(NXMat::Identity());
+            Zbx[i] = Qhat_llt.solve(bhat_x[i]);
+        }
+    } else {
+        for (int i = 0; i <= N; ++i) {
+            Eigen::LDLT<NXMat> Qhat_ldlt(Qhat[i]);
+            if (Qhat_ldlt.info() != Eigen::Success) {
+                return { false };
+            }
+            Z[i] = Qhat_ldlt.solve(NXMat::Identity());
+            Zbx[i] = Qhat_ldlt.solve(bhat_x[i]);
+        }
+    }
+
+    // ================================================================
+    // STEP 3: Assemble dπ-only NX-block-tridiagonal system
+    // ================================================================
+    // D_i = G_{i-1} + Z_i + F_i * Z_i * F_i^T   (i=1..N, but F_N doesn't exist)
+    // C_i = F_i * Z_i                              (off-diagonal, i=1..N-1)
+    // h_i = Z_i * bhat_x_i - bhat_d_{i-1}          (with F correction for i>1)
+    //
+    // Actually: for i=1..N:
+    //   D_1 = G_0 + Z_1
+    //   D_i = G_{i-1} + Z_i + F_{i-1} * Z_{i-1} * F_{i-1}^T  (i>=2)
+    // Wait, let me re-derive. The dual Schur complement is:
+    //   S_π = E Q̂^{-1} E^T + G
+    // where E is bidiagonal (F_i on sub-diagonal, I on diagonal).
+    //
+    // The block structure for dπ_i (i=1..N):
+    //   D_1 = G_0 + Z_1
+    //   D_i = G_{i-1} + Z_i + F_{i-1} Z_{i-1} F_{i-1}^T  (i=2..N-1)
+    //   D_N = G_{N-1} + Z_N + F_{N-1} Z_{N-1} F_{N-1}^T
+    //
+    // Off-diagonal: C_i = F_i Z_i  (connects dπ_i to dπ_{i+1})
+    //
+    // RHS: h_1 = Z_1 bhat_x_1 - bhat_d_0
+    //      h_i = Z_i bhat_x_i + F_{i-1} Z_{i-1} bhat_x_{i-1} - bhat_d_{i-1}
+
+    std::vector<NXMat> D(N), C(N - 1);
+    std::vector<NXVec> h(N);
+
+    // Stage 1 (i=0 in 0-indexed for dπ)
+    D[0] = G[0] + Z[1];
+    h[0] = Zbx[1] - bhat_d[0];
+
+    // Stages 2..N
+    for (int i = 1; i < N; ++i) {
+        // D_i = G_i + Z_{i+1} + F_i * Z_i * F_i^T
+        D[i] = G[i] + Z[i + 1] + F[i] * Z[i] * F[i].transpose();
+
+        // h_i = Z_{i+1} bhat_x_{i+1} + F_i Z_i bhat_x_i - bhat_d_i
+        h[i] = Zbx[i + 1] + F[i] * Zbx[i] - bhat_d[i];
+
+        // C_{i-1} = F_i * Z_i  (off-diagonal connecting dπ_i to dπ_{i+1})
+        C[i - 1] = F[i] * Z[i];
+    }
+
+    // ================================================================
+    // STEP 4: Block-tridiagonal solve on dπ system
+    // ================================================================
+    // Forward sweep: S_i = D_i - C_{i-1} S_{i-1}^{-1} C_{i-1}^T
+    // Back-substitution: dπ_i = S_i^{-1} (h_i - C_i dπ_{i+1})
+
+    std::vector<NXMat> S(N);
+    std::vector<Eigen::LLT<NXMat>> S_chol(N);
+    std::vector<Eigen::LDLT<NXMat>> S_ldlt(N);
+
+    // S_0 = D_0
+    S[0] = D[0];
+    if (use_cholesky) {
+        S_chol[0].compute(S[0]);
+        if (S_chol[0].info() != Eigen::Success) {
+            return { false };
+        }
+    } else {
+        S_ldlt[0].compute(S[0]);
+        if (S_ldlt[0].info() != Eigen::Success) {
+            return { false };
+        }
+    }
+
+    // Modified RHS
+    std::vector<NXVec> h_mod(N);
+    h_mod[0] = h[0];
+
+    for (int i = 1; i < N; ++i) {
+        // T = C_{i-1} * S_{i-1}^{-1}
+        NXMat T;
+        if (use_cholesky) {
+            T = S_chol[i - 1].solve(C[i - 1].transpose()).transpose();
+        } else {
+            T = S_ldlt[i - 1].solve(C[i - 1].transpose()).transpose();
+        }
+
+        // S_i = D_i - T * C_{i-1}^T
+        S[i] = D[i] - T * C[i - 1].transpose();
+
+        if (use_cholesky) {
+            S_chol[i].compute(S[i]);
+            if (S_chol[i].info() != Eigen::Success) {
+                return { false };
+            }
+        } else {
+            S_ldlt[i].compute(S[i]);
+            if (S_ldlt[i].info() != Eigen::Success) {
+                return { false };
+            }
+        }
+
+        // h_mod_i = h_i - T * h_mod_{i-1}
+        h_mod[i] = h[i] - T * h_mod[i - 1];
+    }
+
+    // Back-substitution
+    std::vector<NXVec> dpi(N);
+    if (use_cholesky) {
+        dpi[N - 1] = S_chol[N - 1].solve(h_mod[N - 1]);
+    } else {
+        dpi[N - 1] = S_ldlt[N - 1].solve(h_mod[N - 1]);
+    }
+    if (!dpi[N - 1].allFinite()) {
+        return { false };
+    }
+
+    for (int i = N - 2; i >= 0; --i) {
+        NXVec tmp;
+        if (use_cholesky) {
+            tmp = S_chol[i].solve(h_mod[i] - C[i].transpose() * dpi[i + 1]);
+        } else {
+            tmp = S_ldlt[i].solve(h_mod[i] - C[i].transpose() * dpi[i + 1]);
+        }
+        if (!tmp.allFinite()) {
+            return { false };
+        }
+        dpi[i] = tmp;
+    }
+
+    // ================================================================
+    // STEP 5: Recover dx from dπ
+    // ================================================================
+    // dx_i = Z_i (bhat_x_i - dπ_i - F_i^T dπ_{i+1})  for i=1..N-1
+    // dx_N = Z_N (bhat_x_N - dπ_N)
+
+    traj[0].dx.setZero();
+    for (int i = 0; i < N - 1; ++i) {
+        // dx_{i+1} = Z_{i+1} (bhat_x_{i+1} - dpi_i - F_i^T * dpi_{i+1})
+        // Wait, indexing: dpi[i] corresponds to dπ_{i+1}
+        // dx_{i+1} = Z_{i+1} (bhat_x_{i+1} - dπ_{i+1} - F_i^T dπ_{i+2})
+        // But dπ_{i+2} = dpi[i+1], dπ_{i+1} = dpi[i]
+        NXVec rhs_dx = bhat_x[i + 1] - dpi[i];
+        if (i < N - 1) {
+            rhs_dx -= F[i + 1].transpose() * dpi[i + 1];
+        }
+        NXVec dx_i = Z[i + 1] * rhs_dx;
+        for (int j = 0; j < NX; ++j) {
+            traj[i + 1].dx(j) = dx_i(j);
+        }
+    }
+    // Terminal: dx_N = Z_N (bhat_x_N - dπ_N)
+    {
+        NXVec dx_N = Z[N] * (bhat_x[N] - dpi[N - 1]);
+        for (int j = 0; j < NX; ++j) {
+            traj[N].dx(j) = dx_N(j);
+        }
+    }
+
+    // ================================================================
+    // STEP 6: Recover du from dx and dπ
+    // ================================================================
+    // du_k = R_bar_k^{-1} * (-r_bar_k - H_bar_k * dx_k + B_k^T * dπ_{k+1})
+    for (int k = 0; k < N; ++k) {
+        auto& kp = traj[k];
+
+        NUNUMat Rbar = kp.R_bar;
+        if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
+            for (int i = 0; i < NU; ++i) {
+                Rbar(i, i) += reg;
+            }
+        } else {
+            for (int i = 0; i < NU; ++i) {
+                Rbar(i, i) += config.reg_min;
+            }
+        }
+        Eigen::LDLT<NUNUMat> R_ldlt(Rbar);
+
+        NUNXMat Hbar;
+        for (int i = 0; i < NU; ++i) {
+            for (int j = 0; j < NX; ++j) {
+                Hbar(i, j) = kp.H_bar(i, j);
+            }
+        }
+
+        NXNUMat Bk;
+        for (int i = 0; i < NX; ++i) {
+            for (int j = 0; j < NU; ++j) {
+                Bk(i, j) = kp.B(i, j);
+            }
+        }
+
+        NXVec dpi_kp1 = dpi[k]; // dπ_{k+1}
+
+        NXVec dxk;
+        for (int i = 0; i < NX; ++i) {
+            dxk(i) = kp.dx(i);
+        }
+
+        NUVec bu;
+        for (int i = 0; i < NU; ++i) {
+            bu(i) = -kp.r_bar(i);
+        }
+
+        NUVec du_e = R_ldlt.solve(bu - Hbar * dxk + Bk.transpose() * dpi_kp1);
+        for (int i = 0; i < NU; ++i) {
+            kp.du(i) = du_e(i);
+        }
+    }
+    traj[N].du.setZero();
+
+    for (int k = 0; k < N; ++k) {
+        traj[k].K.setZero();
+        traj[k].d = traj[k].du;
+    }
+
+    for (int k = 0; k <= N; ++k) {
+        const Knot* soc_kp = (soc_traj) ? &((*soc_traj)[k]) : nullptr;
+        recover_dual_search_directions<Knot, ModelType>(traj[k], 0.0, config, soc_kp, nullptr);
+    }
+
+    return result;
+}
+#endif // USE_EIGEN
+// ============================================================================
 // Backward step: BANDED_KKT_LDLT — control-condensed block-tridiagonal LDLT
 //
 // Algorithm:
@@ -1150,7 +1517,16 @@ inline LinearSolveResult dispatch_backward_pass(TrajVector& traj, int N, double 
         return backward_step_sqrt_qr<TrajVector, ModelType>(
             traj, N, reg, strategy, config, ws, soc_traj);
     }
-    if (config.riccati_factorization == minisolver::RiccatiFactorizationMode::BANDED_KKT_LDLT) {
+    if (config.riccati_factorization == minisolver::RiccatiFactorizationMode::DUAL_SCHUR_CHOLESKY) {
+        return backward_step_dual_schur<TrajVector, ModelType>(
+            traj, N, reg, strategy, config, ws, soc_traj, true);
+    }
+    if (config.riccati_factorization == minisolver::RiccatiFactorizationMode::DUAL_SCHUR_LDLT) {
+        return backward_step_dual_schur<TrajVector, ModelType>(
+            traj, N, reg, strategy, config, ws, soc_traj, false);
+    }
+    if (config.riccati_factorization
+        == minisolver::RiccatiFactorizationMode::CONTROL_CONDENSED_KKT_LDLT) {
         return backward_step_banded_kkt<TrajVector, ModelType>(
             traj, N, reg, strategy, config, ws, soc_traj);
     }
