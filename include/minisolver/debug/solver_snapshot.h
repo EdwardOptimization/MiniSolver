@@ -111,14 +111,15 @@ public:
     };
 
 private:
-    template <typename, typename = void> struct has_constraint_types : std::false_type { };
+    template <typename, typename = void> struct has_constraint_has_l1 : std::false_type { };
     template <typename T>
-    struct has_constraint_types<T, std::void_t<decltype(T::constraint_types)>> : std::true_type { };
+    struct has_constraint_has_l1<T, std::void_t<decltype(T::constraint_has_l1)>> : std::true_type {
+    };
 
-    template <typename, typename = void> struct has_constraint_weights : std::false_type { };
+    template <typename, typename = void> struct has_constraint_has_l2 : std::false_type { };
     template <typename T>
-    struct has_constraint_weights<T, std::void_t<decltype(T::constraint_weights)>>
-        : std::true_type { };
+    struct has_constraint_has_l2<T, std::void_t<decltype(T::constraint_has_l2)>> : std::true_type {
+    };
 
     static SnapshotResult result(SnapshotStatus status, ApiStatus api_status = ApiStatus::OK)
     {
@@ -293,21 +294,21 @@ private:
         hash_name_array(hash, Model::state_names);
         hash_name_array(hash, Model::control_names);
         hash_name_array(hash, Model::param_names);
-        if constexpr (has_constraint_types<Model>::value) {
-            hash_integral(hash, static_cast<std::uint64_t>(Model::constraint_types.size()));
-            for (int type : Model::constraint_types) {
-                hash_integral(hash, type);
+        if constexpr (has_constraint_has_l1<Model>::value) {
+            hash_integral(hash, static_cast<std::uint64_t>(Model::constraint_has_l1.size()));
+            for (bool has_l1 : Model::constraint_has_l1) {
+                hash_integral(hash, has_l1 ? 1 : 0);
             }
         } else {
-            hash_string(hash, "no_constraint_types");
+            hash_string(hash, "no_constraint_has_l1");
         }
-        if constexpr (has_constraint_weights<Model>::value) {
-            hash_integral(hash, static_cast<std::uint64_t>(Model::constraint_weights.size()));
-            for (double weight : Model::constraint_weights) {
-                hash_double(hash, weight);
+        if constexpr (has_constraint_has_l2<Model>::value) {
+            hash_integral(hash, static_cast<std::uint64_t>(Model::constraint_has_l2.size()));
+            for (bool has_l2 : Model::constraint_has_l2) {
+                hash_integral(hash, has_l2 ? 1 : 0);
             }
         } else {
-            hash_string(hash, "no_constraint_weights");
+            hash_string(hash, "no_constraint_has_l2");
         }
         if constexpr (detail::has_generated_integrator_v<Model>) {
             hash_integral(hash, static_cast<int>(Model::generated_integrator));

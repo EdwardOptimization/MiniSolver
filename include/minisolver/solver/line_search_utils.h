@@ -38,17 +38,9 @@ double fraction_to_boundary_rule(
                 alpha_lam = std::min(alpha_lam, -tau * lam / dlam);
             }
 
-            double w = 0.0;
-            int type = 0;
-            if constexpr (NC > 0) {
-                if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
-                    type = ModelType::constraint_types[i];
-                    w = ModelType::constraint_weights[i];
-                }
-            }
-
             // For L1, we explicitly track soft_s and soft_dual
-            if (detail::is_l1_soft_constraint(type, w, config)) {
+            if (detail::active_l1_soft_constraint<ModelType>(kp, i, config)) {
+                const double w = kp.l1_weight(i);
                 double ss = kp.soft_s(i);
                 double dss = kp.dsoft_s(i);
                 // soft_s >= 0

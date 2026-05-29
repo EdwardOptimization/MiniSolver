@@ -22,17 +22,11 @@ struct InitializationKernel {
     static void initialize_constraint_primal_dual(
         Knot& kp, int i, double mu, const SolverConfig& config = SolverConfig())
     {
+        update_soft_constraint_weights<Model>(kp);
         double g = kp.g_val(i);
-        double w = 0.0;
-        int type = 0;
-        if constexpr (Model::NC > 0) {
-            if (static_cast<std::size_t>(i) < Model::constraint_types.size()) {
-                type = Model::constraint_types[i];
-                w = Model::constraint_weights[i];
-            }
-        }
 
-        if (is_l1_soft_constraint(type, w, config)) {
+        if (active_l1_soft_constraint<Model>(kp, i, config)) {
+            const double w = kp.l1_weight(i);
             // Central Path:
             // 1) g + s - soft_s = 0
             // 2) s * lam = mu
@@ -59,7 +53,8 @@ struct InitializationKernel {
             kp.lam(i) = lam_val;
             kp.s(i) = mu / lam_val;
             kp.soft_s(i) = mu / (w - lam_val);
-        } else if (is_l2_soft_constraint(type, w)) {
+        } else if (active_l2_soft_constraint<Model>(kp, i)) {
+            const double w = kp.l2_weight(i);
             // Central Path:
             // 1) g + s - lam/w = 0
             // 2) s * lam = mu
@@ -102,15 +97,8 @@ struct WarmStartKernel {
                     ++total_pairs;
                 }
 
-                double w = 0.0;
-                int type = 0;
-                if constexpr (Model::NC > 0) {
-                    if (static_cast<std::size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
-                if (is_l1_soft_constraint(type, w, config)) {
+                if (active_l1_soft_constraint<Model>(kp, i, config)) {
+                    const double w = kp.l1_weight(i);
                     const double soft_s = kp.soft_s(i);
                     const double soft_dual = w - lam;
                     if (std::isfinite(soft_s) && std::isfinite(soft_dual) && soft_s > 0.0

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "minisolver/core/constraint_semantics.h"
 #include "minisolver/core/model_traits.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
@@ -242,6 +243,7 @@ namespace detail {
     template <typename Model, typename Knot>
     void evaluate_soc_constraints(const Knot& active_kp, Knot& trial_kp, const SolverConfig& config)
     {
+        update_soft_constraint_weights<Model>(trial_kp);
         if constexpr (has_compute_soc_constraints<Model, Knot>::value) {
             Model::template compute_soc_constraints<double>(active_kp, trial_kp);
             apply_soc_constraint_row_scaling<Model>(trial_kp, config);
@@ -278,6 +280,8 @@ namespace detail {
     void evaluate_model_stage(Knot& kp, const SolverConfig& config, double dt,
         bool is_terminal = false, bool refresh_auto_constraint_scaling = false)
     {
+        update_soft_constraint_weights<Model>(kp);
+
         if (config.hessian_approximation == HessianApproximation::OBJECTIVE_HESSIAN_ONLY) {
             if constexpr (has_compute_terminal_cost_gn<Model, Knot>::value) {
                 if (is_terminal) {

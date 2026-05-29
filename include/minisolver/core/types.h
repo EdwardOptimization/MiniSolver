@@ -271,6 +271,8 @@ template <typename T, int _NX, int _NU, int _NC, int _NP> struct KnotState {
     MSVec<T, _NC> s; // Slack variables
     MSVec<T, _NC> lam; // Dual variables (Lambda)
     MSVec<T, _NC> soft_s; // Soft constraint slack (L1)
+    MSVec<T, _NC> l1_weight; // Per-knot L1 soft weights
+    MSVec<T, _NC> l2_weight; // Per-knot L2 soft weights
     // Note: The L1 soft constraint dual is (w - lam), computed implicitly.
     // No separate soft_dual variable is needed.
 
@@ -382,6 +384,8 @@ struct KnotPoint : KnotState<T, _NX, _NU, _NC, _NP>, KnotMatrices<T, _NX, _NU, _
         this->s.setOnes();
         this->lam.setOnes();
         this->soft_s.setOnes();
+        MatOps::setZero(this->l1_weight);
+        MatOps::setZero(this->l2_weight);
 
         this->cost = 0;
         this->cost_unscaled = 0;
@@ -421,6 +425,8 @@ struct KnotPoint : KnotState<T, _NX, _NU, _NC, _NP>, KnotMatrices<T, _NX, _NU, _
         this->s.fill(1.0);
         this->lam.fill(1.0);
         this->soft_s.fill(1.0);
+        MatOps::setZero(this->l1_weight);
+        MatOps::setZero(this->l2_weight);
         this->constraint_row_scale.fill(1.0);
         this->objective_scale = 1.0;
     }

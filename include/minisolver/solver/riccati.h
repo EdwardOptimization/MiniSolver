@@ -111,20 +111,14 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
             s_i = config.min_barrier_slack;
         }
 
-        double w = 0.0;
-        int type = 0;
-        if constexpr (Knot::NC > 0) {
-            if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
-                type = ModelType::constraint_types[i];
-                w = ModelType::constraint_weights[i];
-            }
-        }
-
         double sigma_val = lam_i / s_i;
 
-        if (detail::is_l2_soft_constraint(type, w)) { // L2 Soft (Dual Reg)
+        if (detail::active_l2_soft_constraint<ModelType>(kp, i)) { // L2 Soft (Dual Reg)
+            const double w = kp.l2_weight(i);
             sigma_val = 1.0 / (s_i / lam_i + 1.0 / w);
-        } else if (detail::is_l1_soft_constraint(type, w, config)) { // L1 Soft (Dual Box)
+        } else if (detail::active_l1_soft_constraint<ModelType>(
+                       kp, i, config)) { // L1 Soft (Dual Box)
+            const double w = kp.l1_weight(i);
             double soft_s_i = kp.soft_s(i);
             if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
@@ -147,7 +141,8 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
         // Primal residual base
         double g_val_i = (soc_kp) ? soc_kp->g_val(i) : kp.g_val(i);
 
-        if (detail::is_l1_soft_constraint(type, w, config)) {
+        if (detail::active_l1_soft_constraint<ModelType>(kp, i, config)) {
+            const double w = kp.l1_weight(i);
             double soft_s_i = kp.soft_s(i);
             if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
@@ -169,7 +164,8 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
         } else {
             // Standard / L2
             double term2;
-            if (detail::is_l2_soft_constraint(type, w)) {
+            if (detail::active_l2_soft_constraint<ModelType>(kp, i)) {
+                const double w = kp.l2_weight(i);
                 double r_prim_L2 = g_val_i + s_i - lam_i / w;
                 term2 = sigma_val * (r_y / lam_i);
                 grad_mod(i) = sigma_val * r_prim_L2 - term2 + lam_i;
@@ -227,15 +223,6 @@ void recover_dual_search_directions(Knot& kp, double mu, const minisolver::Solve
             s_i = config.min_barrier_slack;
         }
 
-        double w = 0.0;
-        int type = 0;
-        if constexpr (Knot::NC > 0) {
-            if (static_cast<size_t>(i) < ModelType::constraint_types.size()) {
-                type = ModelType::constraint_types[i];
-                w = ModelType::constraint_weights[i];
-            }
-        }
-
         double lam_i = kp.lam(i);
         if (lam_i < config.min_barrier_slack) {
             lam_i = config.min_barrier_slack;
@@ -247,7 +234,8 @@ void recover_dual_search_directions(Knot& kp, double mu, const minisolver::Solve
 
         double g_val_i = (soc_kp) ? soc_kp->g_val(i) : kp.g_val(i);
 
-        if (detail::is_l1_soft_constraint(type, w, config)) { // L1 Soft
+        if (detail::active_l1_soft_constraint<ModelType>(kp, i, config)) { // L1 Soft
+            const double w = kp.l1_weight(i);
             double soft_s_i = kp.soft_s(i);
             if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
@@ -273,7 +261,8 @@ void recover_dual_search_directions(Knot& kp, double mu, const minisolver::Solve
 
             kp.ds(i) = (-r_y - s_i * dlam) / lam_i;
             kp.dsoft_s(i) = -(r_z - soft_s_i * dlam) / soft_dual_i;
-        } else if (detail::is_l2_soft_constraint(type, w)) { // L2 Soft
+        } else if (detail::active_l2_soft_constraint<ModelType>(kp, i)) { // L2 Soft
+            const double w = kp.l2_weight(i);
             double r_prim_L2 = g_val_i + s_i - lam_i / w;
             double term_rhs = -r_y + lam_i * (r_prim_L2 + constraint_step(i));
             double factor = 1.0 / (s_i + lam_i / w);

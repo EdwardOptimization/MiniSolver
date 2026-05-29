@@ -89,7 +89,8 @@ class OptimalControlModel:
         self.special_constraints = []
         
         # Soft Constraints Meta Data
-        # list of {index, type='L1'/'L2', weight}
+        # list of {index, type='L1'/'L2', weight}. The row/type structure is
+        # fixed by Python modeling; generated C++ only refreshes runtime weights.
         self.soft_constraints = []
 
         self.use_sparse_kernels = True
@@ -225,6 +226,16 @@ class OptimalControlModel:
             raise ValueError("residual weight must not depend on state or control variables")
         return weight_expr
 
+    def _validate_soft_constraint_weight(self, weight):
+        weight_expr = sp.sympify(weight)
+        self._validate_declared_symbols("soft constraint weight", weight_expr)
+        if self._is_numeric_expr(weight_expr) and float(sp.N(weight_expr)) < 0.0:
+            raise ValueError("soft constraint weight must be non-negative")
+        decision_symbols = set(self.states) | set(self.controls)
+        if weight_expr.free_symbols.intersection(decision_symbols):
+            raise ValueError("soft constraint weight must not depend on state or control variables")
+        return weight_expr
+
     def add_residual(self, residual, weight=1.0):
         """
         Add least-squares residual cost terms:
@@ -331,6 +342,88 @@ class OptimalControlModel:
             hess += w_expr * (jac.T * jac)
         return sp.simplify(hess)
 
+    def _flatten_constraint_args(self, value):
+        if isinstance(value, DynamicsEquation):
+            return [value]
+        if isinstance(value, (sp.LessThan, sp.GreaterThan, sp.Equality)):
+            return [value]
+        if isinstance(value, sp.MatrixBase):
+            return [item for item in value]
+        if isinstance(value, (list, tuple)):
+            result = []
+            for item in value:
+                result.extend(self._flatten_constraint_args(item))
+            return result
+        return [value]
+
+    def _sequence_items(self, value):
+        if isinstance(value, sp.MatrixBase):
+            return [item for item in value]
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return None
+
+    def _normalize_row_soft_entries(self, row_index, weight, loss):
+        if weight is None:
+            return []
+
+        weight_items = self._sequence_items(weight)
+        loss_items = self._sequence_items(loss)
+
+        if loss_items is None:
+            if weight_items is not None:
+                if len(weight_items) != 1:
+                    raise ValueError("soft constraint weight/loss lengths must match")
+                weight_items = [weight_items[0]]
+            else:
+                weight_items = [weight]
+            loss_items = [loss]
+        else:
+            if weight_items is None:
+                weight_items = [weight] * len(loss_items)
+            if len(weight_items) != len(loss_items):
+                raise ValueError("soft constraint weight/loss lengths must match")
+
+        entries = []
+        seen_losses = set()
+        for weight_item, loss_item in zip(weight_items, loss_items):
+            if loss_item not in ("L1", "L2"):
+                raise ValueError("soft constraint loss must be L1 or L2")
+            if loss_item in seen_losses:
+                raise ValueError("duplicate soft constraint loss for one row")
+            seen_losses.add(loss_item)
+
+            weight_expr = self._validate_soft_constraint_weight(weight_item)
+            if self._is_numeric_expr(weight_expr) and float(sp.N(weight_expr)) == 0.0:
+                continue
+            entries.append({
+                'index': row_index,
+                'type': loss_item,
+                'weight': weight_expr
+            })
+        return entries
+
+    def _row_soft_specs(self, row_count, weight, loss):
+        if weight is None:
+            return [(None, None)] * row_count
+
+        weight_items = self._sequence_items(weight)
+        loss_items = self._sequence_items(loss)
+
+        if row_count > 1 and weight_items is not None and len(weight_items) == row_count:
+            row_weights = weight_items
+        else:
+            row_weights = [weight] * row_count
+
+        if row_count > 1 and loss_items is not None and len(loss_items) == row_count:
+            row_losses = loss_items
+        else:
+            row_losses = [loss] * row_count
+
+        if len(row_weights) != row_count or len(row_losses) != row_count:
+            raise ValueError("soft constraint weight/loss row counts must match constraints")
+        return list(zip(row_weights, row_losses))
+
     def subject_to(self, *constraints, weight=None, loss='L2', include_terminal=True):
         """
         Add inequality constraint.
@@ -344,7 +437,13 @@ class OptimalControlModel:
         Instead, it registers metadata so the Solver can apply Dual Regularization (L2) 
         or Dual Bounding (L1) during the solve phase.
         """
-        for constraint in constraints:
+        constraint_rows = []
+        for constraint_arg in constraints:
+            constraint_rows.extend(self._flatten_constraint_args(constraint_arg))
+
+        soft_specs = self._row_soft_specs(len(constraint_rows), weight, loss)
+
+        for constraint, (row_weight, row_loss) in zip(constraint_rows, soft_specs):
             if isinstance(constraint, DynamicsEquation):
                 self._set_dynamics_equation(constraint)
                 continue
@@ -367,26 +466,9 @@ class OptimalControlModel:
             self.true_constraints.append(expr)
             self.constraint_include_terminal.append(bool(include_terminal))
             idx = len(self.constraints) - 1
-            
-            if weight is not None:
-                weight_expr = sp.sympify(weight)
-                self._validate_declared_symbols("soft constraint weight", weight_expr)
-                if not self._is_numeric_expr(weight_expr):
-                    raise ValueError("soft constraint weight must be numeric")
-                weight_value = float(sp.N(weight_expr))
-                if weight_value < 0.0:
-                    raise ValueError("soft constraint weight must be non-negative")
-            else:
-                weight_value = 0.0
 
-            if weight_value > 0.0:
-                if loss not in ("L1", "L2"):
-                    raise ValueError("soft constraint loss must be L1 or L2")
-                self.soft_constraints.append({
-                    'index': idx,
-                    'type': loss,
-                    'weight': weight_value
-                })
+            self.soft_constraints.extend(
+                self._normalize_row_soft_entries(idx, row_weight, row_loss))
 
     def subject_to_quad(self, Q, x, center=None, rhs=0.0, sense='<=', type='outside',
                         linearize_at_boundary=False, rhs_mode='quadratic',
@@ -1330,19 +1412,38 @@ class OptimalControlModel:
         # fused kernel because its sparsity pattern is pinned to this integrator.
         code += f"\n\n    static constexpr IntegratorType generated_integrator = IntegratorType::{integrator_type};"
 
-        weights_list = [0.0] * nc
-        types_list = [0] * nc
+        has_l1 = [False] * nc
+        has_l2 = [False] * nc
         for sc in self.soft_constraints:
             idx = sc['index']
             if idx < nc:
-                weights_list[idx] = sc['weight']
-                types_list[idx] = 2 if sc['type'] == 'L2' else 1
+                if sc['type'] == 'L1':
+                    has_l1[idx] = True
+                elif sc['type'] == 'L2':
+                    has_l2[idx] = True
 
-        soft_weights = "{" + ", ".join([str(w) for w in weights_list]) + "}"
-        soft_types = "{" + ", ".join([str(t) for t in types_list]) + "}"
+        l1_flags = "{" + ", ".join("true" if flag else "false" for flag in has_l1) + "}"
+        l2_flags = "{" + ", ".join("true" if flag else "false" for flag in has_l2) + "}"
+        any_l1 = "true" if any(has_l1) else "false"
+        any_l2 = "true" if any(has_l2) else "false"
         code += "\n\n"
-        code += f"    static constexpr std::array<double, NC> constraint_weights = {soft_weights};\n"
-        code += f"    static constexpr std::array<int, NC> constraint_types = {soft_types};\n"
+        code += f"    static constexpr std::array<bool, NC> constraint_has_l1 = {l1_flags};\n"
+        code += f"    static constexpr std::array<bool, NC> constraint_has_l2 = {l2_flags};\n"
+        code += f"    static constexpr bool any_l1_constraints = {any_l1};\n"
+        code += f"    static constexpr bool any_l2_constraints = {any_l2};\n"
+        return code
+
+    def _generate_soft_constraint_weights_body(self):
+        code = "        kp.l1_weight.setZero();\n"
+        code += "        kp.l2_weight.setZero();\n"
+        if not self.soft_constraints:
+            return code
+
+        weight_exprs = [sc['weight'] for sc in self.soft_constraints]
+        code += self._generate_unpack_block(source_kp=True, expressions=weight_exprs)
+        for sc in self.soft_constraints:
+            target = "l1_weight" if sc['type'] == 'L1' else "l2_weight"
+            code += f"        kp.{target}({sc['index']}) = {sp.ccode(sc['weight'])};\n"
         return code
 
     def _generate_name_arrays(self):
@@ -1752,6 +1853,7 @@ class OptimalControlModel:
         code_compute_terminal_con = self._generate_terminal_constraints_body(x_vec, u_vec)
         code_compute_terminal_true_con = self._generate_true_constraints_body(terminal=True)
         code_compute_soc_con = self._generate_soc_constraints_body()
+        code_update_soft_weights = self._generate_soft_constraint_weights_body()
 
         code_compute_terminal_cost = self._generate_terminal_cost_section(x_vec, u_vec)
         
@@ -1784,6 +1886,7 @@ class OptimalControlModel:
             "CONTINUOUS_DYNAMICS_SECTION": code_continuous_section,
             "INTEGRATE_BODY": code_integrate,
             "COMPUTE_DYNAMICS_BODY": code_compute_dyn,
+            "UPDATE_SOFT_CONSTRAINT_WEIGHTS_BODY": code_update_soft_weights,
             "COMPUTE_CONSTRAINTS_BODY": code_compute_con,
             "COMPUTE_TRUE_CONSTRAINTS_BODY": code_compute_true_con,
             "COMPUTE_TERMINAL_CONSTRAINTS_BODY": code_compute_terminal_con,

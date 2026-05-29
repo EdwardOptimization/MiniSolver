@@ -977,15 +977,8 @@ private:
 
                 // L1 soft constraint has an additional complementarity pair:
                 //   soft_s * (w - lam) = mu, with implicit soft-dual (w - lam) > 0.
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
-                if (detail::is_l1_soft_constraint(type, w, config)) {
+                if (detail::active_l1_soft_constraint<Model>(traj[k], i, config)) {
+                    const double w = traj[k].l1_weight(i);
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - lam);
                     const double soft_gap = soft_s * soft_dual;
@@ -1137,15 +1130,8 @@ private:
                 }
 
                 // L1 soft: soft_s > 0 and (w - lam) > 0.
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
-                if (detail::is_l1_soft_constraint(type, w, config)) {
+                if (detail::active_l1_soft_constraint<Model>(direction_traj[k], i, config)) {
+                    const double w = direction_traj[k].l1_weight(i);
                     double soft_s = direction_traj[k].soft_s(i);
                     double dsoft_s = direction_traj[k].dsoft_s(i);
                     if (dsoft_s < 0) {
@@ -1189,15 +1175,8 @@ private:
                 total_dim++;
 
                 // L1 soft pair: soft_s * (w - lam).
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
-                if (detail::is_l1_soft_constraint(type, w, config)) {
+                if (detail::active_l1_soft_constraint<Model>(base_traj[k], i, config)) {
+                    const double w = base_traj[k].l1_weight(i);
                     double soft_s_new
                         = base_traj[k].soft_s(i) + alpha_primal_aff * affine_traj[k].dsoft_s(i);
                     double soft_dual_new = w - lam_new;
@@ -1655,16 +1634,8 @@ private:
                     return false;
                 }
 
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
-
-                if (detail::is_l1_soft_constraint(type, w, config)) {
+                if (detail::active_l1_soft_constraint<Model>(kp, i, config)) {
+                    const double w = kp.l1_weight(i);
                     if (!MatOps::is_finite_scalar(kp.soft_s(i)) || kp.soft_s(i) <= 0.0) {
                         return false;
                     }
@@ -1771,15 +1742,8 @@ private:
                     // For L1 soft constraints, maintain:
                     // - soft_s > 0
                     // - w - lam > 0  (implicit soft-dual)
-                    double w = 0.0;
-                    int type = 0;
-                    if constexpr (NC > 0) {
-                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                            type = Model::constraint_types[i];
-                            w = Model::constraint_weights[i];
-                        }
-                    }
-                    if (detail::is_l1_soft_constraint(type, w, config)) {
+                    if (detail::active_l1_soft_constraint<Model>(traj[k], i, config)) {
+                        const double w = traj[k].l1_weight(i);
                         const double soft_s = traj[k].soft_s(i);
                         const double dsoft_s = traj[k].dsoft_s(i);
                         if (dsoft_s < 0) {
@@ -1825,16 +1789,8 @@ private:
                     traj[k].s(i) = detail::barrier_floor(config);
                 }
 
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
-
-                if (detail::is_l1_soft_constraint(type, w, config)) {
+                if (detail::active_l1_soft_constraint<Model>(traj[k], i, config)) {
+                    const double w = traj[k].l1_weight(i);
                     (void)project_l1_soft_pair_to_central_path_(traj[k], i, saved_mu, w);
                 } else {
                     // Preserve dual info from restoration if valuable, but ensure complementarity
@@ -2241,6 +2197,14 @@ private:
             config, has_valid_primal_dual_guess(trajectory.active()));
     }
 
+    void refresh_soft_constraint_weights_for_active_()
+    {
+        auto& traj = trajectory.active();
+        for (int k = 0; k <= N; ++k) {
+            detail::update_soft_constraint_weights<Model>(traj[k]);
+        }
+    }
+
     void initialize_primal_dual_from_model_()
     {
         auto& traj = trajectory.active();
@@ -2257,6 +2221,7 @@ private:
 
     void presolve()
     {
+        refresh_soft_constraint_weights_for_active_();
         const bool initialize_primal_dual = should_initialize_primal_dual_();
 
         reset_solve_runtime_state_(!initialize_primal_dual);
@@ -2307,16 +2272,8 @@ private:
                     residuals.max_complementarity_gap = std::abs(gap);
                 }
 
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
-
-                if (detail::is_l1_soft_constraint(type, w, config)) {
+                if (detail::active_l1_soft_constraint<Model>(traj[k], i, config)) {
+                    const double w = traj[k].l1_weight(i);
                     const double soft_s = traj[k].soft_s(i);
                     const double soft_dual = (w - traj[k].lam(i));
                     const double soft_gap = soft_s * soft_dual;
@@ -2483,15 +2440,8 @@ private:
 
                     // For L1 soft constraints, also keep the implicit soft-dual feasible:
                     // (w - lam) > 0.
-                    double w = 0.0;
-                    int type = 0;
-                    if constexpr (NC > 0) {
-                        if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                            type = Model::constraint_types[i];
-                            w = Model::constraint_weights[i];
-                        }
-                    }
-                    if (detail::is_l1_soft_constraint(type, w, config)) {
+                    if (detail::active_l1_soft_constraint<Model>(kp, i, config)) {
+                        const double w = kp.l1_weight(i);
                         (void)project_l1_soft_pair_to_central_path_(kp, i, context_.solve.mu, w);
                     }
                 }
@@ -2511,18 +2461,11 @@ private:
             for (int i = 0; i < NC; ++i) {
                 double viol = 0.0;
 
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
                 const double g_true = detail::true_constraint_value<Model>(kp, i);
-                if (detail::is_l1_soft_constraint(type, w, config)) { // L1
+                if (detail::active_l1_soft_constraint<Model>(kp, i, config)) { // L1
                     viol = std::abs(g_true + kp.s(i) - kp.soft_s(i));
-                } else if (detail::is_l2_soft_constraint(type, w)) { // L2
+                } else if (detail::active_l2_soft_constraint<Model>(kp, i)) { // L2
+                    const double w = kp.l2_weight(i);
                     viol = std::abs(g_true + kp.s(i) - kp.lam(i) / w);
                 } else { // Hard
                     viol = std::abs(g_true + kp.s(i));
@@ -2559,20 +2502,12 @@ private:
                 const double scale = detail::active_constraint_row_scale(kp, config, i);
                 const double inv_scale = (scale != 0.0) ? (1.0 / scale) : 1.0;
 
-                double w = 0.0;
-                int type = 0;
-                if constexpr (NC > 0) {
-                    if (static_cast<size_t>(i) < Model::constraint_types.size()) {
-                        type = Model::constraint_types[i];
-                        w = Model::constraint_weights[i];
-                    }
-                }
-
                 const double g_raw = detail::unscaled_true_constraint_value<Model>(kp, i, config);
                 double viol = 0.0;
-                if (detail::is_l1_soft_constraint(type, w, config)) {
+                if (detail::active_l1_soft_constraint<Model>(kp, i, config)) {
                     viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.soft_s(i) * inv_scale);
-                } else if (detail::is_l2_soft_constraint(type, w)) {
+                } else if (detail::active_l2_soft_constraint<Model>(kp, i)) {
+                    const double w = kp.l2_weight(i);
                     viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.lam(i) / w);
                 } else {
                     viol = std::abs(g_raw + kp.s(i) * inv_scale);

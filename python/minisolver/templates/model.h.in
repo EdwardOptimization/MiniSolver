@@ -38,6 +38,12 @@ struct {{MODEL_NAME}} {
 {{COMPUTE_DYNAMICS_BODY}}
     }
 
+    // --- 1.5 Update Soft Constraint Weights ---
+    template<typename T>
+    static void update_soft_constraint_weights(KnotPoint<T,NX,NU,NC,NP>& kp) {
+{{UPDATE_SOFT_CONSTRAINT_WEIGHTS_BODY}}
+    }
+
     // --- 2. Compute QP/IPM Constraints (g_val, C, D) ---
     template<typename T>
     static void compute_qp_constraints(KnotPoint<T,NX,NU,NC,NP>& kp) {
@@ -91,6 +97,7 @@ struct {{MODEL_NAME}} {
     // --- 4. Compute All (Convenience) ---
     template<typename T>
     static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        update_soft_constraint_weights(kp);
         compute_dynamics(kp, type, dt);
         compute_qp_constraints(kp);
         compute_true_constraints(kp);
@@ -99,6 +106,7 @@ struct {{MODEL_NAME}} {
 
     template<typename T>
     static void compute_exact(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        update_soft_constraint_weights(kp);
         compute_dynamics(kp, type, dt);
         compute_qp_constraints(kp);
         compute_true_constraints(kp);
