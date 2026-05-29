@@ -190,10 +190,11 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                     if (kp.soft_s(i) > config.min_barrier_slack) {
                         dphi -= mu * kp.dsoft_s(i) / kp.soft_s(i);
                     }
-                    if (w - kp.lam(i) > detail::l1_soft_dual_floor(w, config)) {
-                        dphi += mu * kp.dlam(i) / (w - kp.lam(i));
+                    const double soft_dual = detail::l1_soft_dual_gap<Model>(kp, i);
+                    if (soft_dual > detail::l1_soft_dual_floor(w, config)) {
+                        dphi -= mu * detail::l1_soft_dual_direction<Model>(kp, i) / soft_dual;
                     }
-                    dphi += w * kp.dsoft_s(i);
+                    dphi += detail::l1_soft_penalty_direction<Model>(kp, i);
 
                     const double residual = g_true + kp.s(i) - kp.soft_s(i);
                     const double residual_dir = g_dir - kp.dsoft_s(i);
@@ -258,14 +259,15 @@ class MeritLineSearch : public LineSearchStrategy<Model, MAX_N> {
                         total_merit += config.barrier_inf_cost;
                     }
 
-                    if (w - kp.lam(i) > detail::l1_soft_dual_floor(w, config)) {
-                        total_merit -= mu * std::log(w - kp.lam(i));
+                    const double soft_dual = detail::l1_soft_dual_gap<Model>(kp, i);
+                    if (soft_dual > detail::l1_soft_dual_floor(w, config)) {
+                        total_merit -= mu * std::log(soft_dual);
                     } else {
                         total_merit += config.barrier_inf_cost;
                     }
 
-                    // 2. L1 Linear Penalty
-                    total_merit += w * kp.soft_s(i);
+                    // 2. L1 linear penalty plus same-row L2 quadratic penalty, if present.
+                    total_merit += detail::l1_soft_penalty_value<Model>(kp, i);
                 }
 
                 // L2 Soft Constraint: Quadratic Penalty
@@ -515,14 +517,15 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                         phi += config.barrier_inf_cost;
                     }
 
-                    if (w - kp.lam(i) > detail::l1_soft_dual_floor(w, config)) {
-                        phi -= mu * std::log(w - kp.lam(i));
+                    const double soft_dual = detail::l1_soft_dual_gap<Model>(kp, i);
+                    if (soft_dual > detail::l1_soft_dual_floor(w, config)) {
+                        phi -= mu * std::log(soft_dual);
                     } else {
                         phi += config.barrier_inf_cost;
                     }
 
-                    // L1 Linear Penalty
-                    phi += w * kp.soft_s(i);
+                    // L1 linear penalty plus same-row L2 quadratic penalty, if present.
+                    phi += detail::l1_soft_penalty_value<Model>(kp, i);
                 }
 
                 // L2 Soft Constraint
@@ -604,11 +607,11 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
                     if (kp.soft_s(i) > config.min_barrier_slack) {
                         dphi -= mu * kp.dsoft_s(i) / kp.soft_s(i);
                     }
-                    const double soft_dual = w - kp.lam(i);
+                    const double soft_dual = detail::l1_soft_dual_gap<Model>(kp, i);
                     if (soft_dual > detail::l1_soft_dual_floor(w, config)) {
-                        dphi += mu * kp.dlam(i) / soft_dual;
+                        dphi -= mu * detail::l1_soft_dual_direction<Model>(kp, i) / soft_dual;
                     }
-                    dphi += w * kp.dsoft_s(i);
+                    dphi += detail::l1_soft_penalty_direction<Model>(kp, i);
                 } else if (detail::active_l2_soft_constraint<Model>(kp, i)) {
                     const double w = kp.l2_weight(i);
                     const double residual = detail::true_constraint_value<Model>(kp, i) + kp.s(i);

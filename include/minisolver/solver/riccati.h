@@ -113,22 +113,25 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
 
         double sigma_val = lam_i / s_i;
 
-        if (detail::active_l2_soft_constraint<ModelType>(kp, i)) { // L2 Soft (Dual Reg)
-            const double w = kp.l2_weight(i);
-            sigma_val = 1.0 / (s_i / lam_i + 1.0 / w);
-        } else if (detail::active_l1_soft_constraint<ModelType>(
-                       kp, i, config)) { // L1 Soft (Dual Box)
+        if (detail::active_l1_soft_constraint<ModelType>(
+                kp, i, config)) { // L1 or mixed L1+L2 soft row
             const double w = kp.l1_weight(i);
             double soft_s_i = kp.soft_s(i);
             if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
             }
-            const double soft_dual_i = detail::positive_l1_soft_dual_gap(w - lam_i, w, config);
+            const double soft_dual_i = detail::positive_l1_soft_dual_gap(
+                detail::l1_soft_dual_gap_from_values<ModelType>(kp, i, lam_i, soft_s_i), w, config);
+            const double soft_denom_i
+                = detail::l1_soft_stationarity_denominator<ModelType>(kp, i, soft_s_i, soft_dual_i);
 
             double term_hard = s_i / lam_i;
-            double term_soft = soft_s_i / soft_dual_i;
+            double term_soft = soft_s_i / soft_denom_i;
 
             sigma_val = 1.0 / (term_hard + term_soft);
+        } else if (detail::active_l2_soft_constraint<ModelType>(kp, i)) { // L2 Soft (Dual Reg)
+            const double w = kp.l2_weight(i);
+            sigma_val = 1.0 / (s_i / lam_i + 1.0 / w);
         }
 
         sigma(i) = sigma_val;
@@ -147,19 +150,26 @@ void compute_barrier_derivatives(Knot& kp, double mu, const minisolver::SolverCo
             if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
             }
-            const double soft_dual_i = detail::positive_l1_soft_dual_gap(w - lam_i, w, config);
+            const double soft_dual_i = detail::positive_l1_soft_dual_gap(
+                detail::l1_soft_dual_gap_from_values<ModelType>(kp, i, lam_i, soft_s_i), w, config);
+            const double soft_denom_i
+                = detail::l1_soft_stationarity_denominator<ModelType>(kp, i, soft_s_i, soft_dual_i);
 
             double r_eq = g_val_i + s_i - soft_s_i;
             double r_z = soft_s_i * soft_dual_i - mu;
             if (aff_kp) {
                 double dsoft_s_i = aff_kp->dsoft_s(i);
                 double dlam_aff_i = aff_kp->dlam(i);
-                r_z += dsoft_s_i * (-dlam_aff_i);
+                double dsoft_dual_i = -dlam_aff_i;
+                if (detail::active_l2_soft_constraint<ModelType>(kp, i)) {
+                    dsoft_dual_i += kp.l2_weight(i) * dsoft_s_i;
+                }
+                r_z += dsoft_s_i * dsoft_dual_i;
             }
 
             // Corrected Signs:
-            // grad_mod = lam + sigma * (r_eq - r_y/lam + r_z/(w-lam))
-            double term_correction = r_eq - r_y / lam_i + r_z / soft_dual_i;
+            // grad_mod = lam + sigma * (r_eq - r_y/lam + r_z/(z + w2*soft_s))
+            double term_correction = r_eq - r_y / lam_i + r_z / soft_denom_i;
             grad_mod(i) = lam_i + sigma_val * term_correction;
         } else {
             // Standard / L2
@@ -240,27 +250,34 @@ void recover_dual_search_directions(Knot& kp, double mu, const minisolver::Solve
             if (soft_s_i < config.min_barrier_slack) {
                 soft_s_i = config.min_barrier_slack;
             }
-            const double soft_dual_i = detail::positive_l1_soft_dual_gap(w - lam_i, w, config);
+            const double soft_dual_i = detail::positive_l1_soft_dual_gap(
+                detail::l1_soft_dual_gap_from_values<ModelType>(kp, i, lam_i, soft_s_i), w, config);
+            const double soft_denom_i
+                = detail::l1_soft_stationarity_denominator<ModelType>(kp, i, soft_s_i, soft_dual_i);
 
             double term_hard = s_i / lam_i;
-            double term_soft = soft_s_i / soft_dual_i;
+            double term_soft = soft_s_i / soft_denom_i;
             double sigma_val = 1.0 / (term_hard + term_soft);
 
             double r_eq = g_val_i + s_i - soft_s_i;
             double r_z = soft_s_i * soft_dual_i - mu;
             if (aff_kp) {
-                r_z += aff_kp->dsoft_s(i) * (-aff_kp->dlam(i));
+                double dsoft_dual_i = -aff_kp->dlam(i);
+                if (detail::active_l2_soft_constraint<ModelType>(kp, i)) {
+                    dsoft_dual_i += kp.l2_weight(i) * aff_kp->dsoft_s(i);
+                }
+                r_z += aff_kp->dsoft_s(i) * dsoft_dual_i;
             }
 
             // Corrected Signs for dlam recovery
-            // dlam = sigma * (C dx + r_eq - r_y/lam + r_z/(w-lam))
-            double eff_r = r_eq - r_y / lam_i + r_z / soft_dual_i;
+            // dlam = sigma * (C dx + r_eq - r_y/lam + r_z/(z + w2*soft_s))
+            double eff_r = r_eq - r_y / lam_i + r_z / soft_denom_i;
 
             double dlam = sigma_val * (constraint_step(i) + eff_r);
             kp.dlam(i) = dlam;
 
             kp.ds(i) = (-r_y - s_i * dlam) / lam_i;
-            kp.dsoft_s(i) = -(r_z - soft_s_i * dlam) / soft_dual_i;
+            kp.dsoft_s(i) = -(r_z - soft_s_i * dlam) / soft_denom_i;
         } else if (detail::active_l2_soft_constraint<ModelType>(kp, i)) { // L2 Soft
             const double w = kp.l2_weight(i);
             double r_prim_L2 = g_val_i + s_i - lam_i / w;

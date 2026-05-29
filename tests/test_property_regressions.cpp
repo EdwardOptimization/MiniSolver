@@ -64,6 +64,28 @@ struct L2SoftConstraintModel {
     }
 };
 
+struct MixedL1L2SoftConstraintModel {
+    static constexpr int NX = 1;
+    static constexpr int NU = 1;
+    static constexpr int NC = 1;
+    static constexpr int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr double l1_weight = 2.0;
+    static constexpr double l2_weight = 3.0;
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { true };
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(l1_weight);
+        kp.l2_weight(0) = T(l2_weight);
+    }
+};
+
 struct ScalingPropertyModel {
     static constexpr int NX = 2;
     static constexpr int NU = 1;
@@ -280,6 +302,35 @@ TEST(PropertyRegressionTest, FractionToBoundaryKeepsHardAndL1VariablesInterior)
             EXPECT_GT(soft_dual_new, -1e-12);
         }
     }
+}
+
+TEST(PropertyRegressionTest, FractionToBoundaryKeepsMixedL1L2SoftDualInterior)
+{
+    using Knot = KnotPoint<double, 1, 1, 1, 0>;
+    constexpr int MaxN = 0;
+    constexpr int N = 0;
+    constexpr double tau = 0.95;
+
+    std::array<Knot, MaxN + 1> traj;
+    traj[0].set_zero();
+    traj[0].s(0) = 1.0;
+    traj[0].lam(0) = 31.0;
+    traj[0].soft_s(0) = 10.0;
+    traj[0].ds(0) = 0.0;
+    traj[0].dlam(0) = 0.0;
+    traj[0].dsoft_s(0) = -1.0;
+    MixedL1L2SoftConstraintModel::update_soft_constraint_weights(traj[0]);
+
+    const double alpha
+        = fraction_to_boundary_rule<decltype(traj), MixedL1L2SoftConstraintModel>(traj, N, tau);
+
+    const double soft_dual_new = MixedL1L2SoftConstraintModel::l1_weight
+        + MixedL1L2SoftConstraintModel::l2_weight * (traj[0].soft_s(0) + alpha * traj[0].dsoft_s(0))
+        - (traj[0].lam(0) + alpha * traj[0].dlam(0));
+
+    EXPECT_LT(alpha, 0.34) << "The mixed soft dual w1 + w2*soft_s - lam becomes nonpositive "
+                              "before soft_s itself reaches zero.";
+    EXPECT_GT(soft_dual_new, -1e-12);
 }
 
 TEST(PropertyRegressionTest, AutomaticConstraintRowScalingBoundsRandomRows)

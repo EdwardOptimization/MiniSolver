@@ -92,4 +92,80 @@ template <typename Model, typename Knot> bool active_l2_soft_constraint(const Kn
         && kp.l2_weight(row) > 0.0;
 }
 
+template <typename Model, typename Knot>
+bool active_mixed_l1_l2_soft_constraint(const Knot& kp, int row, const SolverConfig& config)
+{
+    return active_l1_soft_constraint<Model>(kp, row, config)
+        && active_l2_soft_constraint<Model>(kp, row);
+}
+
+template <typename Model, typename Knot>
+double l1_soft_dual_gap_from_values(const Knot& kp, int row, double lam, double soft_s)
+{
+    double soft_dual = kp.l1_weight(row) - lam;
+    if (active_l2_soft_constraint<Model>(kp, row)) {
+        soft_dual += kp.l2_weight(row) * soft_s;
+    }
+    return soft_dual;
+}
+
+template <typename Model, typename Knot> double l1_soft_dual_gap(const Knot& kp, int row)
+{
+    return l1_soft_dual_gap_from_values<Model>(kp, row, kp.lam(row), kp.soft_s(row));
+}
+
+template <typename Model, typename Knot> double l1_soft_dual_direction(const Knot& kp, int row)
+{
+    double direction = -kp.dlam(row);
+    if (active_l2_soft_constraint<Model>(kp, row)) {
+        direction += kp.l2_weight(row) * kp.dsoft_s(row);
+    }
+    return direction;
+}
+
+template <typename Model, typename Knot>
+double l1_soft_stationarity_denominator(const Knot& kp, int row, double soft_s, double soft_dual)
+{
+    double denominator = soft_dual;
+    if (active_l2_soft_constraint<Model>(kp, row)) {
+        denominator += kp.l2_weight(row) * soft_s;
+    }
+    return denominator;
+}
+
+template <typename Model, typename Knot> double l1_soft_penalty_value(const Knot& kp, int row)
+{
+    const double soft_s = kp.soft_s(row);
+    double value = kp.l1_weight(row) * soft_s;
+    if (active_l2_soft_constraint<Model>(kp, row)) {
+        value += 0.5 * kp.l2_weight(row) * soft_s * soft_s;
+    }
+    return value;
+}
+
+template <typename Model, typename Knot> double l1_soft_penalty_direction(const Knot& kp, int row)
+{
+    double slope = kp.l1_weight(row);
+    if (active_l2_soft_constraint<Model>(kp, row)) {
+        slope += kp.l2_weight(row) * kp.soft_s(row);
+    }
+    return slope * kp.dsoft_s(row);
+}
+
+template <typename Model, typename Knot>
+double l1_soft_slack_from_dual(
+    const Knot& kp, int row, double lam, double mu, const SolverConfig& config)
+{
+    const double w1 = kp.l1_weight(row);
+    const double w2 = active_l2_soft_constraint<Model>(kp, row) ? kp.l2_weight(row) : 0.0;
+    if (w2 > 0.0) {
+        const double b = w1 - lam;
+        const double disc = std::max(0.0, b * b + 4.0 * w2 * mu);
+        const double soft_s = (-b + std::sqrt(disc)) / (2.0 * w2);
+        return std::max(config.min_barrier_slack, soft_s);
+    }
+    const double soft_dual = positive_l1_soft_dual_gap(w1 - lam, w1, config);
+    return std::max(config.min_barrier_slack, mu / soft_dual);
+}
+
 } // namespace minisolver::detail

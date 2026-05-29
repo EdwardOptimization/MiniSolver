@@ -38,7 +38,8 @@ double fraction_to_boundary_rule(
                 alpha_lam = std::min(alpha_lam, -tau * lam / dlam);
             }
 
-            // For L1, we explicitly track soft_s and soft_dual
+            // For L1 and mixed L1+L2, explicitly track soft_s and the
+            // implicit soft dual z = w1 + w2*soft_s - lam.
             if (detail::active_l1_soft_constraint<ModelType>(kp, i, config)) {
                 const double w = kp.l1_weight(i);
                 double ss = kp.soft_s(i);
@@ -48,17 +49,14 @@ double fraction_to_boundary_rule(
                     alpha_soft_s = std::min(alpha_soft_s, -tau * ss / dss);
                 }
 
-                // Upper bound on lam implies w - lam >= 0.
-                // Let nu = w - lam. dnu = -dlam.
-                // nu + alpha * dnu >= 0 => w - lam - alpha * dlam >= 0.
-                // If dlam > 0, alpha <= (w - lam) / dlam.
-                if (dlam > 0) {
-                    double gap = w - lam;
-                    const double soft_dual_floor = detail::l1_soft_dual_floor(w, config);
-                    if (gap < soft_dual_floor) {
-                        gap = soft_dual_floor;
+                const double soft_dual_floor = detail::l1_soft_dual_floor(w, config);
+                double gap = detail::l1_soft_dual_gap<ModelType>(kp, i) - soft_dual_floor;
+                const double dgap = detail::l1_soft_dual_direction<ModelType>(kp, i);
+                if (dgap < 0.0) {
+                    if (gap < 0.0) {
+                        gap = 0.0;
                     }
-                    alpha_lam = std::min(alpha_lam, tau * gap / dlam);
+                    alpha_lam = std::min(alpha_lam, tau * gap / (-dgap));
                 }
             }
         }

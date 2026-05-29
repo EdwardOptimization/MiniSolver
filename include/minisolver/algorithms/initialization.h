@@ -19,13 +19,61 @@ struct InitializationKernel {
     }
 
     template <typename Model, typename Knot>
+    static void initialize_mixed_l1_l2_constraint_primal_dual(
+        Knot& kp, int i, double mu, const SolverConfig& config)
+    {
+        const double g = kp.g_val(i);
+        const double w1 = kp.l1_weight(i);
+        const double w2 = kp.l2_weight(i);
+        const double floor = barrier_floor(config);
+
+        auto centrality_residual = [g, w1, w2, mu](double soft_s) {
+            return w1 + w2 * soft_s - mu / (soft_s - g) - mu / soft_s;
+        };
+        auto centrality_derivative = [g, w2, mu](double soft_s) {
+            const double hard_s = soft_s - g;
+            return w2 + mu / (hard_s * hard_s) + mu / (soft_s * soft_s);
+        };
+
+        double lo = std::max(floor, (g >= 0.0) ? (g + floor) : floor);
+        double hi = std::max(lo + 1.0, 2.0 * lo);
+        for (int iter = 0; iter < 80 && centrality_residual(hi) <= 0.0; ++iter) {
+            hi = 2.0 * hi + 1.0;
+        }
+
+        double soft_s = 0.5 * (lo + hi);
+        for (int iter = 0; iter < 80; ++iter) {
+            const double residual = centrality_residual(soft_s);
+            if (residual > 0.0) {
+                hi = soft_s;
+            } else {
+                lo = soft_s;
+            }
+
+            const double derivative = centrality_derivative(soft_s);
+            const double newton = soft_s - residual / derivative;
+            if (std::isfinite(newton) && newton > lo && newton < hi) {
+                soft_s = newton;
+            } else {
+                soft_s = 0.5 * (lo + hi);
+            }
+        }
+
+        kp.soft_s(i) = std::max(config.min_barrier_slack, soft_s);
+        kp.s(i) = std::max(config.min_barrier_slack, kp.soft_s(i) - g);
+        kp.lam(i) = mu / kp.s(i);
+    }
+
+    template <typename Model, typename Knot>
     static void initialize_constraint_primal_dual(
         Knot& kp, int i, double mu, const SolverConfig& config = SolverConfig())
     {
         update_soft_constraint_weights<Model>(kp);
         double g = kp.g_val(i);
 
-        if (active_l1_soft_constraint<Model>(kp, i, config)) {
+        if (active_mixed_l1_l2_soft_constraint<Model>(kp, i, config)) {
+            initialize_mixed_l1_l2_constraint_primal_dual<Model>(kp, i, mu, config);
+        } else if (active_l1_soft_constraint<Model>(kp, i, config)) {
             const double w = kp.l1_weight(i);
             // Central Path:
             // 1) g + s - soft_s = 0
@@ -100,7 +148,8 @@ struct WarmStartKernel {
                 if (active_l1_soft_constraint<Model>(kp, i, config)) {
                     const double w = kp.l1_weight(i);
                     const double soft_s = kp.soft_s(i);
-                    const double soft_dual = w - lam;
+                    const double soft_dual
+                        = l1_soft_dual_gap_from_values<Model>(kp, i, lam, soft_s);
                     if (std::isfinite(soft_s) && std::isfinite(soft_dual) && soft_s > 0.0
                         && soft_dual > l1_soft_dual_floor(w, config)) {
                         total_gap += soft_s * soft_dual;

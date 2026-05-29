@@ -975,12 +975,12 @@ private:
                 total_gap += gap;
                 total_gap_dim += 1;
 
-                // L1 soft constraint has an additional complementarity pair:
-                //   soft_s * (w - lam) = mu, with implicit soft-dual (w - lam) > 0.
+                // L1 soft constraint has an additional complementarity pair.
+                // Same-row L1+L2 uses z = w1 + w2*soft_s - lam.
                 if (detail::active_l1_soft_constraint<Model>(traj[k], i, config)) {
-                    const double w = traj[k].l1_weight(i);
                     const double soft_s = traj[k].soft_s(i);
-                    const double soft_dual = (w - lam);
+                    const double soft_dual
+                        = detail::l1_soft_dual_gap_from_values<Model>(traj[k], i, lam, soft_s);
                     const double soft_gap = soft_s * soft_dual;
                     double comp_soft = std::abs(soft_s * soft_dual - mu_eval);
                     if (comp_soft > summary.max_barrier_complementarity_residual) {
@@ -1129,9 +1129,8 @@ private:
                     }
                 }
 
-                // L1 soft: soft_s > 0 and (w - lam) > 0.
+                // L1/mixed soft: soft_s > 0 and z = w1 + w2*soft_s - lam > 0.
                 if (detail::active_l1_soft_constraint<Model>(direction_traj[k], i, config)) {
-                    const double w = direction_traj[k].l1_weight(i);
                     double soft_s = direction_traj[k].soft_s(i);
                     double dsoft_s = direction_traj[k].dsoft_s(i);
                     if (dsoft_s < 0) {
@@ -1140,9 +1139,8 @@ private:
                             alpha.primal = a;
                         }
                     }
-                    // soft dual: (w - lam) with direction -dlam.
-                    double soft_dual = w - lam;
-                    double dsoft_dual = -dlam; // d(w-lam)/dalpha = -dlam
+                    double soft_dual = detail::l1_soft_dual_gap<Model>(direction_traj[k], i);
+                    double dsoft_dual = detail::l1_soft_dual_direction<Model>(direction_traj[k], i);
                     if (dsoft_dual < 0) {
                         double a = -soft_dual / dsoft_dual;
                         if (a < alpha.dual) {
@@ -1174,15 +1172,16 @@ private:
                 total_comp += s_new * lam_new;
                 total_dim++;
 
-                // L1 soft pair: soft_s * (w - lam).
+                // L1/mixed soft pair: soft_s * (w1 + w2*soft_s - lam).
                 if (detail::active_l1_soft_constraint<Model>(base_traj[k], i, config)) {
                     const double w = base_traj[k].l1_weight(i);
                     double soft_s_new
                         = base_traj[k].soft_s(i) + alpha_primal_aff * affine_traj[k].dsoft_s(i);
-                    double soft_dual_new = w - lam_new;
                     if (soft_s_new < 0) {
                         soft_s_new = detail::barrier_floor(config);
                     }
+                    double soft_dual_new = detail::l1_soft_dual_gap_from_values<Model>(
+                        base_traj[k], i, lam_new, soft_s_new);
                     if (soft_dual_new < detail::l1_soft_dual_floor(w, config)) {
                         soft_dual_new = detail::l1_soft_dual_floor(w, config);
                     }
@@ -1626,7 +1625,8 @@ private:
                     if (!MatOps::is_finite_scalar(kp.soft_s(i)) || kp.soft_s(i) <= 0.0) {
                         return false;
                     }
-                    if (w - kp.lam(i) <= detail::l1_soft_dual_floor(w, config)) {
+                    if (detail::l1_soft_dual_gap<Model>(kp, i)
+                        <= detail::l1_soft_dual_floor(w, config)) {
                         return false;
                     }
                 }
@@ -1726,9 +1726,9 @@ private:
                         alpha = std::min(alpha, -config.restoration_alpha * lam / dlam);
                     }
 
-                    // For L1 soft constraints, maintain:
+                    // For L1/mixed soft constraints, maintain:
                     // - soft_s > 0
-                    // - w - lam > 0  (implicit soft-dual)
+                    // - w1 + w2*soft_s - lam > 0  (implicit soft-dual)
                     if (detail::active_l1_soft_constraint<Model>(traj[k], i, config)) {
                         const double w = traj[k].l1_weight(i);
                         const double soft_s = traj[k].soft_s(i);
@@ -1737,12 +1737,15 @@ private:
                             alpha = std::min(alpha, -config.restoration_alpha * soft_s / dsoft_s);
                         }
 
-                        if (dlam > 0) {
-                            const double gap = (w - lam) - detail::l1_soft_dual_floor(w, config);
+                        const double dsoft_dual = detail::l1_soft_dual_direction<Model>(traj[k], i);
+                        if (dsoft_dual < 0) {
+                            const double gap = detail::l1_soft_dual_gap<Model>(traj[k], i)
+                                - detail::l1_soft_dual_floor(w, config);
                             if (gap <= 0.0) {
                                 alpha = 0.0;
                             } else {
-                                alpha = std::min(alpha, config.restoration_alpha * gap / dlam);
+                                alpha = std::min(
+                                    alpha, config.restoration_alpha * gap / (-dsoft_dual));
                             }
                         }
                     }
@@ -1777,8 +1780,7 @@ private:
                 }
 
                 if (detail::active_l1_soft_constraint<Model>(traj[k], i, config)) {
-                    const double w = traj[k].l1_weight(i);
-                    (void)project_l1_soft_pair_to_central_path_(traj[k], i, saved_mu, w);
+                    (void)project_l1_soft_pair_to_central_path_(traj[k], i, saved_mu);
                 } else {
                     // Preserve dual info from restoration if valuable, but ensure complementarity
                     // lower bound.
@@ -1805,11 +1807,33 @@ private:
         return restored;
     }
 
-    bool project_l1_soft_pair_to_central_path_(Knot& kp, int i, double mu, double w) const
+    bool project_l1_soft_pair_to_central_path_(Knot& kp, int i, double mu) const
     {
         const double barrier_floor
             = std::max(config.min_barrier_slack, std::numeric_limits<double>::epsilon());
+        const double w = kp.l1_weight(i);
         const double soft_dual_floor = detail::l1_soft_dual_floor(w, config);
+
+        if (detail::active_l2_soft_constraint<Model>(kp, i)) {
+            if (kp.s(i) < barrier_floor) {
+                kp.s(i) = barrier_floor;
+            }
+            const double lam_min = mu / kp.s(i);
+            kp.lam(i) = std::max(kp.lam(i), lam_min);
+            kp.soft_s(i) = detail::l1_soft_slack_from_dual<Model>(kp, i, kp.lam(i), mu, config);
+
+            double soft_dual = detail::l1_soft_dual_gap<Model>(kp, i);
+            if (soft_dual < soft_dual_floor) {
+                const double min_soft_s = (kp.lam(i) + soft_dual_floor - w) / kp.l2_weight(i);
+                kp.soft_s(i) = std::max(kp.soft_s(i), min_soft_s);
+                soft_dual = detail::l1_soft_dual_gap<Model>(kp, i);
+            }
+
+            return MatOps::is_finite_scalar(kp.s(i)) && MatOps::is_finite_scalar(kp.lam(i))
+                && MatOps::is_finite_scalar(kp.soft_s(i)) && kp.s(i) > 0.0 && kp.lam(i) > 0.0
+                && soft_dual >= soft_dual_floor;
+        }
+
         const double lam_max = w - soft_dual_floor;
         if (!MatOps::is_finite_scalar(lam_max) || lam_max <= barrier_floor) {
             return false;
@@ -1819,7 +1843,6 @@ private:
         if (kp.s(i) < min_s_for_box) {
             kp.s(i) = min_s_for_box;
         }
-
         const double lam_min = mu / kp.s(i);
         kp.lam(i) = std::clamp(kp.lam(i), lam_min, lam_max);
 
@@ -1828,7 +1851,7 @@ private:
 
         return MatOps::is_finite_scalar(kp.s(i)) && MatOps::is_finite_scalar(kp.lam(i))
             && MatOps::is_finite_scalar(kp.soft_s(i)) && kp.s(i) > 0.0 && kp.lam(i) > 0.0
-            && (w - kp.lam(i)) > soft_dual_floor;
+            && (w - kp.lam(i)) >= soft_dual_floor;
     }
 
 public:
@@ -2260,9 +2283,8 @@ private:
                 }
 
                 if (detail::active_l1_soft_constraint<Model>(traj[k], i, config)) {
-                    const double w = traj[k].l1_weight(i);
                     const double soft_s = traj[k].soft_s(i);
-                    const double soft_dual = (w - traj[k].lam(i));
+                    const double soft_dual = detail::l1_soft_dual_gap<Model>(traj[k], i);
                     const double soft_gap = soft_s * soft_dual;
                     double comp_soft = std::abs(soft_s * soft_dual - mu_eval);
                     if (comp_soft > residuals.max_barrier_complementarity_residual) {
@@ -2425,11 +2447,9 @@ private:
                     // breaking KKT complementarity (|s*lam - mu| ~ mu_init).
                     kp.lam(i) = std::max(kp.lam(i), context_.solve.mu / kp.s(i));
 
-                    // For L1 soft constraints, also keep the implicit soft-dual feasible:
-                    // (w - lam) > 0.
+                    // For L1/mixed soft constraints, also keep the implicit soft-dual feasible.
                     if (detail::active_l1_soft_constraint<Model>(kp, i, config)) {
-                        const double w = kp.l1_weight(i);
-                        (void)project_l1_soft_pair_to_central_path_(kp, i, context_.solve.mu, w);
+                        (void)project_l1_soft_pair_to_central_path_(kp, i, context_.solve.mu);
                     }
                 }
             }

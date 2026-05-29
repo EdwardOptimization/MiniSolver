@@ -45,6 +45,14 @@ struct SoftModel {
         l2_weights[0] = weight;
     }
 
+    static void set_l1_l2(double l1_weight, double l2_weight)
+    {
+        constraint_has_l1[0] = true;
+        constraint_has_l2[0] = true;
+        l1_weights[0] = l1_weight;
+        l2_weights[0] = l2_weight;
+    }
+
     template <typename T>
     static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
     {
@@ -328,6 +336,90 @@ TEST(SoftConstraintTest, L1BarrierDerivativeUsesSharedSoftDualFloor)
     EXPECT_NEAR(kp.Q_bar(0, 0) - kp.Q(0, 0), expected_sigma, 1e-15)
         << "Riccati barrier derivatives must use the same L1 soft-dual floor as "
            "initialization/restoration.";
+}
+
+TEST(SoftConstraintTest, MixedL1L2InitializationUsesCombinedSoftDual)
+{
+    SoftModel::set_l1_l2(2.0, 3.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.35;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    const double soft_dual
+        = SoftModel::l1_weights[0] + SoftModel::l2_weights[0] * kp.soft_s(0) - kp.lam(0);
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_GT(kp.soft_s(0), 0.0);
+    EXPECT_GT(soft_dual, detail::l1_soft_dual_floor(SoftModel::l1_weights[0], config));
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.soft_s(0) * soft_dual, mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.soft_s(0), 0.0, 1e-12);
+}
+
+TEST(SoftConstraintTest, MixedL1L2BarrierDerivativeUsesBothWeights)
+{
+    SoftModel::set_l1_l2(2.0, 3.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.s(0) = 1.25;
+    kp.lam(0) = 0.7;
+    kp.soft_s(0) = 0.4;
+    kp.C(0, 0) = 1.0;
+    SoftModel::update_soft_constraint_weights(kp);
+
+    RiccatiWorkspace<Knot> workspace;
+    compute_barrier_derivatives<Knot, SoftModel>(kp, 5e-2, config, workspace);
+
+    const double soft_dual
+        = SoftModel::l1_weights[0] + SoftModel::l2_weights[0] * kp.soft_s(0) - kp.lam(0);
+    const double soft_denom = soft_dual + SoftModel::l2_weights[0] * kp.soft_s(0);
+    const double expected_sigma = 1.0 / (kp.s(0) / kp.lam(0) + kp.soft_s(0) / soft_denom);
+
+    EXPECT_NEAR(kp.Q_bar(0, 0) - kp.Q(0, 0), expected_sigma, 1e-15)
+        << "Same-row L1+L2 must use the combined soft dual "
+           "w1 + w2*soft_s - lam, not the pure L1 or pure L2 branch.";
+}
+
+TEST(SoftConstraintTest, MixedL1L2DualRecoveryUsesBothWeights)
+{
+    SoftModel::set_l1_l2(2.0, 3.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.s(0) = 1.25;
+    kp.lam(0) = 0.7;
+    kp.soft_s(0) = 0.4;
+    kp.g_val(0) = -0.85;
+    SoftModel::update_soft_constraint_weights(kp);
+
+    constexpr double mu = 5e-2;
+    const double soft_dual
+        = SoftModel::l1_weights[0] + SoftModel::l2_weights[0] * kp.soft_s(0) - kp.lam(0);
+    const double soft_denom = soft_dual + SoftModel::l2_weights[0] * kp.soft_s(0);
+    const double r_y = kp.s(0) * kp.lam(0) - mu;
+    const double r_eq = kp.g_val(0) + kp.s(0) - kp.soft_s(0);
+    const double r_z = kp.soft_s(0) * soft_dual - mu;
+    const double sigma = 1.0 / (kp.s(0) / kp.lam(0) + kp.soft_s(0) / soft_denom);
+    const double expected_dlam = sigma * (r_eq - r_y / kp.lam(0) + r_z / soft_denom);
+    const double expected_ds = (-r_y - kp.s(0) * expected_dlam) / kp.lam(0);
+    const double expected_dsoft_s = -(r_z - kp.soft_s(0) * expected_dlam) / soft_denom;
+
+    recover_dual_search_directions<Knot, SoftModel>(kp, mu, config);
+
+    EXPECT_NEAR(kp.dlam(0), expected_dlam, 1e-15);
+    EXPECT_NEAR(kp.ds(0), expected_ds, 1e-15);
+    EXPECT_NEAR(kp.dsoft_s(0), expected_dsoft_s, 1e-15);
 }
 
 TEST(SoftConstraintTest, L2_Convergence)

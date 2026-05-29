@@ -273,7 +273,8 @@ template <typename T, int _NX, int _NU, int _NC, int _NP> struct KnotState {
     MSVec<T, _NC> soft_s; // Soft constraint slack (L1)
     MSVec<T, _NC> l1_weight; // Per-knot L1 soft weights
     MSVec<T, _NC> l2_weight; // Per-knot L2 soft weights
-    // Note: The L1 soft constraint dual is (w - lam), computed implicitly.
+    // Note: The L1 soft constraint dual is computed implicitly. For same-row
+    // L1+L2 it is w1 + w2*soft_s - lam.
     // No separate soft_dual variable is needed.
 
     // --- Evaluation Results ---
