@@ -1,67 +1,12 @@
 #pragma once
 
-#include "minisolver/algorithms/riccati_solver.h"
-#include "minisolver/solver/solver.h"
+#include "solver_internal_access.h"
 #include <array>
 #include <cmath>
 #include <gtest/gtest.h>
 #include <limits>
-#include <memory>
 
 using namespace minisolver;
-
-// Test-only friend for MiniSolver internals. Forward-declared in solver.h's
-// minisolver::test namespace; defined here so the friend access is a pure
-// test concern and production builds don't link against it.
-namespace minisolver::test {
-template <typename Model, int MAX_N> struct SolverInternalAccess {
-    using Solver = MiniSolver<Model, MAX_N>;
-    static double& mu(Solver& s) { return s.context_.solve.mu; }
-    static double& reg(Solver& s) { return s.context_.solve.reg; }
-    static void apply_slack_reset(Solver& s, typename Solver::TrajArray& traj)
-    {
-        s.apply_slack_reset_(traj);
-    }
-    static double last_mu_aff(const Solver& s) { return s.context_.metrics.last_mu_aff; }
-    static double last_alpha_aff(const Solver& s) { return s.context_.metrics.last_alpha_aff; }
-    static double soft_s(const Solver& s, int stage, int idx)
-    {
-        return s.trajectory[stage].soft_s(idx);
-    }
-    static bool has_nans(Solver& s, const typename Solver::TrajArray& t) { return s.has_nans(t); }
-    static typename Solver::TrajArray& get_trajectory(Solver& s) { return s.trajectory.active(); }
-    static StepResidualSummary evaluate_step_model(Solver& s, typename Solver::TrajArray& traj)
-    {
-        return s.evaluate_step_model_(traj);
-    }
-    static bool check_convergence(
-        Solver& s, const StepResidualSummary& residuals, double max_dual_inf)
-    {
-        return s.check_convergence(residuals, max_dual_inf);
-    }
-    static SolverStatus postsolve(Solver& s, SolverStatus loop_status)
-    {
-        return s.postsolve(loop_status);
-    }
-    static PostsolveResiduals refresh_postsolve_residuals(
-        Solver& s, typename Solver::TrajArray& traj)
-    {
-        return s.refresh_postsolve_residuals_(traj);
-    }
-    static SolverStatus step(Solver& s) { return s.execute_solve_iteration_().status; }
-    static void set_linear_solver(
-        Solver& s, std::unique_ptr<RiccatiSolver<typename Solver::TrajArray, Model>> solver)
-    {
-        s.linear_solver = std::move(solver);
-    }
-    static bool build_dirty(const Solver& s) { return s.build_state_.dirty; }
-    static LineSearchType plan_line_search_type(const Solver& s)
-    {
-        return s.build_state_.plan.line_search_type;
-    }
-    static Backend plan_backend(const Solver& s) { return s.build_state_.plan.backend; }
-};
-} // namespace minisolver::test
 
 // Minimal test model: 1 state, 1 control, 1 constraint.
 struct BugTestModel {
