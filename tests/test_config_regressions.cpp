@@ -222,6 +222,11 @@ TEST(ConfigRegressionTest, SetConfigRejectsInvalidConfigWithoutMutation)
     EXPECT_DOUBLE_EQ(solver.get_config().default_dt, 0.1);
 
     invalid = solver.get_config();
+    invalid.mu_linear_decrease_factor = 1.0;
+    EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);
+    EXPECT_LT(solver.get_config().mu_linear_decrease_factor, 1.0);
+
+    invalid = solver.get_config();
     invalid.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
     invalid.constraint_row_scale_min = 0.0;
     EXPECT_EQ(solver.set_config(invalid), ApiStatus::InvalidArgument);

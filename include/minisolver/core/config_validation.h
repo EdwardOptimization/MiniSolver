@@ -210,7 +210,7 @@ namespace detail {
         if (status != ApiStatus::OK) {
             return status;
         }
-        status = validate_positive_finite_config_value(conf.mu_linear_decrease_factor);
+        status = validate_open_unit_interval_config_value(conf.mu_linear_decrease_factor);
         if (status != ApiStatus::OK) {
             return status;
         }
