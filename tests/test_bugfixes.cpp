@@ -170,8 +170,16 @@ struct L1TestModel {
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
-    static constexpr std::array<double, NC> constraint_weights = { 100.0 }; // L1 weight
-    static constexpr std::array<int, NC> constraint_types = { 1 }; // L1 type
+    static constexpr double soft_weight = 100.0;
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { false };
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(soft_weight);
+        kp.l2_weight(0) = T(0);
+    }
 
     template <typename T>
     static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
@@ -238,8 +246,16 @@ struct TinyWeightL1ResetModel {
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
-    static constexpr std::array<double, NC> constraint_weights = { 1e-3 };
-    static constexpr std::array<int, NC> constraint_types = { 1 };
+    static constexpr double soft_weight = 1e-3;
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { false };
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(soft_weight);
+        kp.l2_weight(0) = T(0);
+    }
 
     template <typename T>
     static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
@@ -844,8 +860,9 @@ TEST(BugfixTest, MehrotraMuAffIncludesL1SoftPair)
     base[0].s(0) = 2.0;
     base[0].lam(0) = 3.0;
     base[0].soft_s(0) = 5.0;
+    L1TestModel::update_soft_constraint_weights(base[0]);
 
-    constexpr double w = L1TestModel::constraint_weights[0]; // 100.0
+    constexpr double w = L1TestModel::soft_weight;
     const double expected_mu_aff = (2.0 * 3.0 + 5.0 * (w - 3.0)) / 2.0;
 
     const double mu_aff = Access::compute_affine_barrier_mu(solver, base, affine, 1.0, 1.0);
@@ -1150,7 +1167,7 @@ TEST(BugfixRegression, MehrotraMuAff_L1SoftPairImpact)
     // We recompute from the post-step trajectory to get the "true" value.
     double full_comp = 0.0;
     int full_dim = 0;
-    constexpr double w = L1TestModel::constraint_weights[0];
+    constexpr double w = L1TestModel::soft_weight;
     for (int k = 0; k <= N; ++k) {
         full_comp += solver.get_slack(k, 0) * solver.get_dual(k, 0);
         full_dim++;
@@ -1528,10 +1545,11 @@ TEST(BugfixTest, L1BarrierDerivativesClampSoftDualGapAtWeightBoundary)
     kp.Q.setIdentity();
     kp.R.setIdentity();
     kp.s(0) = 1.0;
-    kp.lam(0) = L1TestModel::constraint_weights[0]; // Exact boundary: w - lam == 0
+    kp.lam(0) = L1TestModel::soft_weight; // Exact boundary: w - lam == 0
     kp.soft_s(0) = 1.0;
     kp.C(0, 0) = 1.0;
     kp.D(0, 0) = 1.0;
+    L1TestModel::update_soft_constraint_weights(kp);
 
     SolverConfig config;
     config.min_barrier_slack = 1e-9;
@@ -1566,6 +1584,7 @@ TEST(BugfixTest, L1DualRecoveryFloorsNonpositiveLambda)
     kp.D(0, 0) = 1.0;
     kp.dx(0) = 0.1;
     kp.du(0) = 0.1;
+    L1TestModel::update_soft_constraint_weights(kp);
 
     SolverConfig config;
     config.min_barrier_slack = 1e-8;
@@ -1614,11 +1633,12 @@ TEST(BugfixTest, L1RestorationRebuildKeepsDualInsideBoxWhenSlackIsTiny)
     Access::mu(solver) = config.mu_init;
 
     auto& traj = Access::get_trajectory(solver);
-    constexpr double w = L1TestModel::constraint_weights[0];
+    constexpr double w = L1TestModel::soft_weight;
     for (int k = 0; k <= 1; ++k) {
         traj[k].s(0) = 1e-12; // Forces saved_mu / s far above the L1 dual box.
         traj[k].lam(0) = 1.0;
         traj[k].soft_s(0) = 1.0;
+        L1TestModel::update_soft_constraint_weights(traj[k]);
     }
 
     (void)Access::feasibility_restoration(solver);
@@ -1655,11 +1675,12 @@ TEST(BugfixTest, L1SlackResetKeepsDualInsideBoxAndCentralPathWhenWeightIsSmall)
         traj[k].s(0) = 1e-12;
         traj[k].lam(0) = 1e-12;
         traj[k].soft_s(0) = 1.0;
+        TinyWeightL1ResetModel::update_soft_constraint_weights(traj[k]);
     }
 
     Access::apply_slack_reset(solver, traj);
 
-    constexpr double w = TinyWeightL1ResetModel::constraint_weights[0];
+    constexpr double w = TinyWeightL1ResetModel::soft_weight;
     for (int k = 0; k <= 1; ++k) {
         const double soft_dual = w - traj[k].lam(0);
         EXPECT_TRUE(MatOps::is_finite_scalar(traj[k].s(0)));

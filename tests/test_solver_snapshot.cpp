@@ -256,12 +256,19 @@ struct L1SoftModel {
     static constexpr int NC = 1;
     static constexpr int NP = 0;
 
-    inline static std::array<double, NC> constraint_weights = { 0.0 };
-    inline static std::array<int, NC> constraint_types = { 0 };
-
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr double soft_weight = 1.0;
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { false };
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(soft_weight);
+        kp.l2_weight(0) = T(0);
+    }
 
     template <typename T>
     static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
@@ -442,9 +449,6 @@ TEST(SolverSnapshotTest, CaptureAndSaveAndLoad)
 
 TEST(SolverSnapshotTest, SnapshotPreservesSoftS_L1)
 {
-    L1SoftModel::constraint_types[0] = 1; // L1
-    L1SoftModel::constraint_weights[0] = 1.0; // w=1
-
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
     config.max_iters = 0; // Presolve initializes soft_s; no need to iterate.
@@ -709,9 +713,6 @@ TEST(SolverSnapshotTest, SaveFailureSnapshotWritesPreSolveStateOnFailure)
 
 TEST(SolverSnapshotTest, LoadRejectsSameDimensionDifferentModelFingerprint)
 {
-    L1SoftModel::constraint_types[0] = 0;
-    L1SoftModel::constraint_weights[0] = 0.0;
-
     MiniSolver<L1SoftModel, 5> solverA(1, Backend::CPU_SERIAL);
     const std::string filename = MakeUniqueTestFilename("test_model_fingerprint", ".bin");
     ASSERT_EQ((SolverSnapshotIO<L1SoftModel, 5>::save_case(filename, solverA).status),
@@ -726,9 +727,6 @@ TEST(SolverSnapshotTest, LoadRejectsSameDimensionDifferentModelFingerprint)
 
 TEST(SolverSnapshotTest, LoadRejectsSameMetadataDifferentGeneratedFingerprint)
 {
-    L1SoftModel::constraint_types[0] = 0;
-    L1SoftModel::constraint_weights[0] = 0.0;
-
     MiniSolver<L1SoftModelFingerprintA, 5> solverA(1, Backend::CPU_SERIAL);
     const std::string filename = MakeUniqueTestFilename("test_generated_model_fingerprint", ".bin");
     ASSERT_EQ((SolverSnapshotIO<L1SoftModelFingerprintA, 5>::save_case(filename, solverA).status),

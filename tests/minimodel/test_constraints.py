@@ -249,6 +249,57 @@ def test_stage_only_constraint_zeros_terminal_row():
         )
 
 
+def test_soft_constraint_parameter_weight_packet_updates_knot():
+    model = OptimalControlModel("SoftWeightPacketModel")
+    x = model.state("x")
+    u = model.control("u")
+    l1_w, l2_w, row2_w = model.parameter("l1_w", "l2_w", "row2_w")
+    model.subject_to(Dot(x) == u)
+    model.minimize(x**2 + u**2)
+    model.subject_to(
+        [x <= 1.0, u <= 2.0],
+        weight=[[l1_w, l2_w], row2_w],
+        loss=[["L1", "L2"], "L2"],
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        compile_and_run(
+            tmpdir,
+            "soft_weight_packet_check.cpp",
+            "soft_weight_packet_check",
+            """
+            #include "softweightpacketmodel.h"
+            #include <cmath>
+
+            int main() {
+                using Model = minisolver::SoftWeightPacketModel;
+                static_assert(Model::NC == 2, "expected two physical constraint rows");
+                static_assert(Model::constraint_has_l1[0], "row 0 should have L1");
+                static_assert(Model::constraint_has_l2[0], "row 0 should have L2");
+                static_assert(!Model::constraint_has_l1[1], "row 1 should not have L1");
+                static_assert(Model::constraint_has_l2[1], "row 1 should have L2");
+                static_assert(Model::any_l1_constraints, "model should have L1 rows");
+                static_assert(Model::any_l2_constraints, "model should have L2 rows");
+
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                kp.set_zero();
+                kp.p(0) = 3.0;
+                kp.p(1) = 4.0;
+                kp.p(2) = 5.0;
+
+                Model::update_soft_constraint_weights(kp);
+
+                if (std::abs(kp.l1_weight(0) - 3.0) > 1e-12) return 1;
+                if (std::abs(kp.l2_weight(0) - 4.0) > 1e-12) return 2;
+                if (std::abs(kp.l1_weight(1)) > 1e-12) return 3;
+                if (std::abs(kp.l2_weight(1) - 5.0) > 1e-12) return 4;
+                return 0;
+            }
+            """,
+        )
+
+
 def test_quad_constraint_domain_guards():
     def negative_rhs():
         model = OptimalControlModel("BadRhsModel")
@@ -327,5 +378,6 @@ if __name__ == "__main__":
     test_quad_boundary_projection_splits_qp_and_true_residuals()
     test_quad_norm2_generates_exact_constraint_hessian()
     test_stage_only_constraint_zeros_terminal_row()
+    test_soft_constraint_parameter_weight_packet_updates_knot()
     test_quad_constraint_domain_guards()
     test_generated_model_uses_automatic_constraint_row_scaling()

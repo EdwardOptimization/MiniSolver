@@ -47,14 +47,25 @@ def test_soft_constraint_weight_validation_is_explicit():
         x = model.state("x")
         model.subject_to(x <= 0, weight=-1.0)
 
-    def symbolic_weight():
-        model = OptimalControlModel("SymbolicSoftWeightModel")
+    def state_dependent_weight():
+        model = OptimalControlModel("StateSoftWeightModel")
         x = model.state("x")
-        w = model.parameter("w")
-        model.subject_to(x <= 0, weight=w)
+        model.subject_to(x <= 0, weight=x)
+
+    def control_dependent_weight():
+        model = OptimalControlModel("ControlSoftWeightModel")
+        x = model.state("x")
+        u = model.control("u")
+        model.subject_to(x <= 0, weight=u)
 
     expect_value_error(negative_weight, "non-negative")
-    expect_value_error(symbolic_weight, "numeric")
+    expect_value_error(state_dependent_weight, "state or control")
+    expect_value_error(control_dependent_weight, "state or control")
+
+    model = OptimalControlModel("ParameterSoftWeightModel")
+    x = model.state("x")
+    w = model.parameter("w")
+    model.subject_to(x <= 0, weight=w)
 
 
 def test_quad_constraint_dimension_errors_are_reported_early():

@@ -169,8 +169,16 @@ struct ReferenceL1SoftModel {
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
-    static constexpr std::array<double, NC> constraint_weights = { 1.0 };
-    static constexpr std::array<int, NC> constraint_types = { 1 };
+    static constexpr double soft_weight = 1.0;
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { false };
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(soft_weight);
+        kp.l2_weight(0) = T(0);
+    }
 
     template <typename T>
     static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,

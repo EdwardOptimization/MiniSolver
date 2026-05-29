@@ -13,20 +13,44 @@
 
 using namespace minisolver;
 
-// Define SoftModel with mutable constraint configuration
+// Define SoftModel with mutable test-only soft structure.
 struct SoftModel {
     static const int NX = 1;
     static const int NU = 1;
     static const int NC = 1;
     static const int NP = 0;
 
-    // Mutable for testing purposes
-    static std::array<double, NC> constraint_weights;
-    static std::array<int, NC> constraint_types;
+    static std::array<bool, NC> constraint_has_l1;
+    static std::array<bool, NC> constraint_has_l2;
+    static std::array<double, NC> l1_weights;
+    static std::array<double, NC> l2_weights;
 
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
+
+    static void set_l1(double weight)
+    {
+        constraint_has_l1[0] = true;
+        constraint_has_l2[0] = false;
+        l1_weights[0] = weight;
+        l2_weights[0] = 0.0;
+    }
+
+    static void set_l2(double weight)
+    {
+        constraint_has_l1[0] = false;
+        constraint_has_l2[0] = true;
+        l1_weights[0] = 0.0;
+        l2_weights[0] = weight;
+    }
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(l1_weights[0]);
+        kp.l2_weight(0) = T(l2_weights[0]);
+    }
 
     template <typename T>
     static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
@@ -95,14 +119,89 @@ struct SoftModel {
 };
 
 // Define static members
-std::array<double, SoftModel::NC> SoftModel::constraint_weights = { 0.0 };
-std::array<int, SoftModel::NC> SoftModel::constraint_types = { 0 };
+std::array<bool, SoftModel::NC> SoftModel::constraint_has_l1 = { false };
+std::array<bool, SoftModel::NC> SoftModel::constraint_has_l2 = { false };
+std::array<double, SoftModel::NC> SoftModel::l1_weights = { 0.0 };
+std::array<double, SoftModel::NC> SoftModel::l2_weights = { 0.0 };
+
+// New-style soft metadata: Python/codegen fixes the L1/L2 structure, and a
+// generated updater fills per-knot runtime weights from parameters.
+struct ParameterWeightedL1Model {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 1;
+
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { false };
+    static constexpr bool any_l1_constraints = true;
+    static constexpr bool any_l2_constraints = false;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = { "w" };
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = kp.p(0);
+        kp.l2_weight(0) = T(0);
+    }
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> x_next;
+        x_next(0) = x(0) + u(0) * dt;
+        return x_next;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = kp.x(0) - 5.0;
+        kp.C(0, 0) = 1.0;
+        kp.D(0, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_cost_impl(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        const T diff = kp.x(0) - 10.0;
+        kp.cost = diff * diff + 1e-4 * kp.u(0) * kp.u(0);
+        kp.q(0) = 2 * diff;
+        kp.r(0) = 2e-4 * kp.u(0);
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2e-4;
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_impl(kp);
+    }
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_impl(kp);
+    }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_impl(kp);
+    }
+};
 
 TEST(SoftConstraintTest, L1_Convergence)
 {
     // Setup L1
-    SoftModel::constraint_types[0] = 1; // L1
-    SoftModel::constraint_weights[0] = 1.0; // w=1
+    SoftModel::set_l1(1.0);
 
     SolverConfig config;
     // config.print_level = PrintLevel::DEBUG;
@@ -133,10 +232,30 @@ TEST(SoftConstraintTest, L1_Convergence)
     EXPECT_NEAR(x_final, 9.5, 1.0e-3);
 }
 
+TEST(SoftConstraintTest, L1RuntimeParameterWeightAffectsSolve)
+{
+    SolverConfig config;
+    config.tol_con = 1e-4;
+    config.tol_dual = 1e-4;
+    config.max_iters = 80;
+
+    MiniSolver<ParameterWeightedL1Model, 5> solver(1, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(1.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_initial_state("x", 0.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_control_guess(0, "u", 10.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_parameter(0, "w", 2.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_parameter(1, "w", 2.0), ApiStatus::OK);
+    solver.rollout_dynamics();
+
+    ASSERT_NE(solver.solve(), SolverStatus::NUMERICAL_ERROR);
+
+    const double x_final = solver.get_state(1, 0);
+    EXPECT_NEAR(x_final, 9.0, 1.0e-3);
+}
+
 TEST(SoftConstraintTest, L1InvalidDualWarmStartFallsBackSafely)
 {
-    SoftModel::constraint_types[0] = 1;
-    SoftModel::constraint_weights[0] = 1.0;
+    SoftModel::set_l1(1.0);
 
     SolverConfig config;
     config.tol_con = 1e-4;
@@ -151,9 +270,9 @@ TEST(SoftConstraintTest, L1InvalidDualWarmStartFallsBackSafely)
     solver.rollout_dynamics();
 
     solver.set_slack_guess(0, 0, 0.1);
-    solver.set_dual_guess(0, 0, SoftModel::constraint_weights[0]);
+    solver.set_dual_guess(0, 0, SoftModel::l1_weights[0]);
     solver.set_slack_guess(1, 0, 0.1);
-    solver.set_dual_guess(1, 0, SoftModel::constraint_weights[0]);
+    solver.set_dual_guess(1, 0, SoftModel::l1_weights[0]);
 
     SolverStatus status = solver.solve();
     EXPECT_NE(status, SolverStatus::NUMERICAL_ERROR);
@@ -163,8 +282,7 @@ TEST(SoftConstraintTest, L1InvalidDualWarmStartFallsBackSafely)
 
 TEST(SoftConstraintTest, L1TinyWeightInitializationStaysFinite)
 {
-    SoftModel::constraint_types[0] = 1;
-    SoftModel::constraint_weights[0] = 1e-7;
+    SoftModel::set_l1(1e-7);
 
     KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP> kp;
     kp.set_zero();
@@ -178,17 +296,16 @@ TEST(SoftConstraintTest, L1TinyWeightInitializationStaysFinite)
     EXPECT_TRUE(std::isfinite(kp.soft_s(0)));
     EXPECT_GT(kp.s(0), 0.0);
     EXPECT_GT(kp.lam(0), 0.0);
-    EXPECT_LT(kp.lam(0), SoftModel::constraint_weights[0]);
+    EXPECT_LT(kp.lam(0), SoftModel::l1_weights[0]);
     EXPECT_GT(kp.soft_s(0), 0.0);
     EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-14);
-    EXPECT_NEAR(kp.soft_s(0) * (SoftModel::constraint_weights[0] - kp.lam(0)), mu, 1e-14);
+    EXPECT_NEAR(kp.soft_s(0) * (SoftModel::l1_weights[0] - kp.lam(0)), mu, 1e-14);
     EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.soft_s(0), 0.0, 1e-8);
 }
 
 TEST(SoftConstraintTest, L1BarrierDerivativeUsesSharedSoftDualFloor)
 {
-    SoftModel::constraint_types[0] = 1;
-    SoftModel::constraint_weights[0] = 1e-7;
+    SoftModel::set_l1(1e-7);
 
     SolverConfig config;
     config.min_barrier_slack = 1e-12;
@@ -197,15 +314,15 @@ TEST(SoftConstraintTest, L1BarrierDerivativeUsesSharedSoftDualFloor)
     Knot kp;
     kp.set_zero();
     kp.s(0) = 1.0;
-    kp.lam(0) = SoftModel::constraint_weights[0] - 1.5e-12;
+    kp.lam(0) = SoftModel::l1_weights[0] - 1.5e-12;
     kp.soft_s(0) = 1.0;
     kp.C(0, 0) = 1.0;
+    SoftModel::update_soft_constraint_weights(kp);
 
     RiccatiWorkspace<Knot> workspace;
     compute_barrier_derivatives<Knot, SoftModel>(kp, 1e-10, config, workspace);
 
-    const double soft_dual_floor
-        = detail::l1_soft_dual_floor(SoftModel::constraint_weights[0], config);
+    const double soft_dual_floor = detail::l1_soft_dual_floor(SoftModel::l1_weights[0], config);
     const double expected_sigma = 1.0 / (kp.s(0) / kp.lam(0) + kp.soft_s(0) / soft_dual_floor);
 
     EXPECT_NEAR(kp.Q_bar(0, 0) - kp.Q(0, 0), expected_sigma, 1e-15)
@@ -216,8 +333,7 @@ TEST(SoftConstraintTest, L1BarrierDerivativeUsesSharedSoftDualFloor)
 TEST(SoftConstraintTest, L2_Convergence)
 {
     // Setup L2
-    SoftModel::constraint_types[0] = 2; // L2
-    SoftModel::constraint_weights[0] = 1.0; // w=1
+    SoftModel::set_l2(1.0);
 
     SolverConfig config;
     config.tol_con = 1e-4;
@@ -254,12 +370,37 @@ struct InterfaceModel {
     static const int NC = 1;
     static const int NP = 0;
 
-    static std::array<double, NC> constraint_weights;
-    static std::array<int, NC> constraint_types;
+    static std::array<bool, NC> constraint_has_l1;
+    static std::array<bool, NC> constraint_has_l2;
+    static std::array<double, NC> l1_weights;
+    static std::array<double, NC> l2_weights;
 
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
+
+    static void set_l1(double weight)
+    {
+        constraint_has_l1[0] = true;
+        constraint_has_l2[0] = false;
+        l1_weights[0] = weight;
+        l2_weights[0] = 0.0;
+    }
+
+    static void set_l2(double weight)
+    {
+        constraint_has_l1[0] = false;
+        constraint_has_l2[0] = true;
+        l1_weights[0] = 0.0;
+        l2_weights[0] = weight;
+    }
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(l1_weights[0]);
+        kp.l2_weight(0) = T(l2_weights[0]);
+    }
 
     template <typename T>
     static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
@@ -312,8 +453,10 @@ struct InterfaceModel {
     }
 };
 
-std::array<double, 1> InterfaceModel::constraint_weights = { 0.0 };
-std::array<int, 1> InterfaceModel::constraint_types = { 0 };
+std::array<bool, 1> InterfaceModel::constraint_has_l1 = { false };
+std::array<bool, 1> InterfaceModel::constraint_has_l2 = { false };
+std::array<double, 1> InterfaceModel::l1_weights = { 0.0 };
+std::array<double, 1> InterfaceModel::l2_weights = { 0.0 };
 
 // ==========================================
 // 2. Manual L1 Model
@@ -507,8 +650,7 @@ TEST(ComparisonTest, L1_SoftConstraint)
     int N = 2;
 
     // --- 1. Interface (Ground Truth) ---
-    InterfaceModel::constraint_types[0] = 1; // L1
-    InterfaceModel::constraint_weights[0] = 1.0;
+    InterfaceModel::set_l1(1.0);
 
     MiniSolver<InterfaceModel, 5> solver_if(N, Backend::CPU_SERIAL, config);
     solver_if.set_dt(1.0);
@@ -567,8 +709,7 @@ TEST(ComparisonTest, L2_SoftConstraint)
     int N = 2;
 
     // --- 1. Interface ---
-    InterfaceModel::constraint_types[0] = 2; // L2
-    InterfaceModel::constraint_weights[0] = 1.0;
+    InterfaceModel::set_l2(1.0);
 
     MiniSolver<InterfaceModel, 5> solver_if(N, Backend::CPU_SERIAL, config);
     solver_if.set_dt(1.0);

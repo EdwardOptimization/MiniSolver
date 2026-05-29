@@ -20,8 +20,6 @@ struct HardConstraintModel {
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
-    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
-    static constexpr std::array<int, NC> constraint_types = { 0 };
 };
 
 struct L1SoftConstraintModel {
@@ -33,8 +31,16 @@ struct L1SoftConstraintModel {
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
-    static constexpr std::array<double, NC> constraint_weights = { 2.0 };
-    static constexpr std::array<int, NC> constraint_types = { 1 };
+    static constexpr double soft_weight = 2.0;
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { false };
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(soft_weight);
+        kp.l2_weight(0) = T(0);
+    }
 };
 
 struct L2SoftConstraintModel {
@@ -46,8 +52,16 @@ struct L2SoftConstraintModel {
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
-    static constexpr std::array<double, NC> constraint_weights = { 2.0 };
-    static constexpr std::array<int, NC> constraint_types = { 2 };
+    static constexpr double soft_weight = 2.0;
+    static constexpr std::array<bool, NC> constraint_has_l1 = { false };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { true };
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(0);
+        kp.l2_weight(0) = T(soft_weight);
+    }
 };
 
 struct ScalingPropertyModel {
@@ -59,8 +73,6 @@ struct ScalingPropertyModel {
     static constexpr std::array<const char*, NX> state_names = { "x0", "x1" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
     static constexpr std::array<const char*, NP> param_names = {};
-    static constexpr std::array<double, NC> constraint_weights = { 0.0, 0.0 };
-    static constexpr std::array<int, NC> constraint_types = { 0, 0 };
 };
 
 double row_inf_norm(const KnotPoint<double, ScalingPropertyModel::NX, ScalingPropertyModel::NU,
@@ -167,7 +179,7 @@ TEST(PropertyRegressionTest, ViolatedHardConstraintInitializationScalesSlackWith
 TEST(PropertyRegressionTest, L1SoftInitializationStaysInsideDualBox)
 {
     using Knot = KnotPoint<double, 1, 1, 1, 0>;
-    constexpr double w = L1SoftConstraintModel::constraint_weights[0];
+    constexpr double w = L1SoftConstraintModel::soft_weight;
 
     std::mt19937 rng(0x51A7E);
     std::uniform_real_distribution<double> g_dist(-1.0, 1.0);
@@ -199,7 +211,7 @@ TEST(PropertyRegressionTest, L1SoftInitializationStaysInsideDualBox)
 TEST(PropertyRegressionTest, L2SoftInitializationSatisfiesCentralPathResidual)
 {
     using Knot = KnotPoint<double, 1, 1, 1, 0>;
-    constexpr double w = L2SoftConstraintModel::constraint_weights[0];
+    constexpr double w = L2SoftConstraintModel::soft_weight;
 
     std::mt19937 rng(0x1202);
     std::uniform_real_distribution<double> g_dist(-2.0, 2.0);
@@ -230,7 +242,7 @@ TEST(PropertyRegressionTest, FractionToBoundaryKeepsHardAndL1VariablesInterior)
     constexpr int MaxN = 3;
     constexpr int N = 3;
     constexpr double tau = 0.95;
-    constexpr double w = L1SoftConstraintModel::constraint_weights[0];
+    constexpr double w = L1SoftConstraintModel::soft_weight;
 
     std::mt19937 rng(0xB0A7);
     std::uniform_real_distribution<double> positive_dist(1e-3, 1.0);
@@ -247,6 +259,7 @@ TEST(PropertyRegressionTest, FractionToBoundaryKeepsHardAndL1VariablesInterior)
             traj[k].ds(0) = direction_dist(rng);
             traj[k].dlam(0) = direction_dist(rng);
             traj[k].dsoft_s(0) = direction_dist(rng);
+            L1SoftConstraintModel::update_soft_constraint_weights(traj[k]);
         }
 
         const double alpha
