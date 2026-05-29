@@ -803,54 +803,66 @@ private:
         }
     }
 
-    void record_iteration_info_(const StepResidualSummary& residuals, double max_dual)
+    void project_common_info_()
     {
         context_.info.iterations = context_.solve.current_iter;
+        context_.info.alpha = context_.metrics.last_alpha;
+        context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
+        context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
+        context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
+    }
+
+    void project_iteration_residuals_to_info_(const StepResidualSummary& residuals, double max_dual)
+    {
         context_.info.primal_inf = residuals.max_primal_inf;
         context_.info.unscaled_primal_inf = residuals.max_unscaled_primal_inf;
         context_.info.dual_inf = max_dual;
         context_.info.complementarity_inf = residuals.max_complementarity_gap;
         context_.info.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
         context_.info.mu = residuals.barrier_mu;
-        context_.info.alpha = context_.metrics.last_alpha;
-        context_.info.linear_ok = true;
-        context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
-        context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
-        context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
     }
 
-    void record_postsolve_info_(SolverStatus final_status, SolverStatus loop_status,
-        TerminationReason reason, const PostsolveResiduals& residuals)
+    void project_postsolve_residuals_to_info_(const PostsolveResiduals& residuals)
     {
-        context_.info.status = final_status;
-        context_.info.loop_status = loop_status;
-        context_.info.termination_reason = reason;
-        context_.info.iterations = context_.solve.current_iter;
         context_.info.primal_inf = residuals.max_primal_inf;
         context_.info.unscaled_primal_inf = residuals.max_unscaled_primal_inf;
         context_.info.dual_inf = residuals.max_dual_inf;
         context_.info.complementarity_inf = residuals.max_complementarity_gap;
         context_.info.barrier_centrality_inf = residuals.max_barrier_complementarity_residual;
         context_.info.mu = residuals.barrier_mu;
-        context_.info.alpha = context_.metrics.last_alpha;
         context_.info.linear_ok = residuals.linear_ok;
-        context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
-        context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
-        context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
+    }
+
+    void project_terminal_status_to_info_(
+        SolverStatus final_status, SolverStatus loop_status, TerminationReason reason)
+    {
+        context_.info.status = final_status;
+        context_.info.loop_status = loop_status;
+        context_.info.termination_reason = reason;
+    }
+
+    void record_iteration_info_(const StepResidualSummary& residuals, double max_dual)
+    {
+        project_common_info_();
+        project_iteration_residuals_to_info_(residuals, max_dual);
+        context_.info.linear_ok = true;
+    }
+
+    void record_postsolve_info_(SolverStatus final_status, SolverStatus loop_status,
+        TerminationReason reason, const PostsolveResiduals& residuals)
+    {
+        project_terminal_status_to_info_(final_status, loop_status, reason);
+        project_common_info_();
+        project_postsolve_residuals_to_info_(residuals);
     }
 
     void record_terminal_info_(SolverStatus final_status, SolverStatus loop_status)
     {
-        context_.info.status = final_status;
-        context_.info.loop_status = loop_status;
-        context_.info.termination_reason = reason_for_loop_status_(loop_status);
-        context_.info.iterations = context_.solve.current_iter;
+        project_terminal_status_to_info_(
+            final_status, loop_status, reason_for_loop_status_(loop_status));
+        project_common_info_();
         context_.info.mu = context_.solve.mu;
-        context_.info.alpha = context_.metrics.last_alpha;
         context_.info.linear_ok = false;
-        context_.info.constraint_scaling_active = build_state_.plan.constraint_scaling_active;
-        context_.info.objective_scaling_active = build_state_.plan.objective_scaling_active;
-        context_.info.problem_scaling_active = build_state_.plan.problem_scaling_active;
     }
 
     bool check_convergence(const StepResidualSummary& residuals, double max_dual)
