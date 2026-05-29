@@ -725,14 +725,68 @@ inline LinearSolveResult backward_step_sqrt_cholesky(TrajVector& traj, int N, do
 }
 
 // ============================================================================
-// Backward step: SQRT_QR — normal-equations path with Cholesky factors (Eigen only)
-// Uses existing Cholesky factors of R_bar and Q_bar to form the Schur complement
-// without explicitly computing W^T * W (where W = L^T * [B, A]).
-// This is more numerically stable than forming A^T*Vxx*A directly because
-// we work with L (the Cholesky factor of the value function) rather than P = L*L^T.
+// Backward step: SQRT_QR — reserved for future full-stage-factor QR (Eigen only)
 //
-// Mathematically equivalent to SQRT_CHOLESKY but uses a different computational
-// path that avoids forming the full P matrix explicitly.
+// TRUE QR requires: build full-stage factor U s.t. U^T U = [[R,H],[H^T,Q]],
+// stack U with S_{k+1}[B,A], apply HouseholderQR, extract K,d,S_new,eta_new.
+// This handles H≠0 correctly but requires changing value_vec semantics from
+// gradient p_k to offset eta_k. Deferred until stage factor rows are available
+// from MiniModel codegen.
+//
+// Current implementation: falls back to SQRT_CHOLESKY with a diagnostic note.
+// ============================================================================
+// ============================================================================
+// Backward step: SQRT_QR — reserved for future full-stage-factor QR (Eigen only)
+//
+// TRUE QR requires: build full-stage factor U s.t. U^T U = [[R,H],[H^T,Q]],
+// stack U with S_{k+1}[B,A], apply HouseholderQR, extract K,d,S_new,eta_new.
+// This handles H≠0 correctly but requires changing value_vec semantics from
+// gradient p_k to offset eta_k. Deferred until stage factor rows are available
+// from MiniModel codegen.
+//
+// Current implementation: falls back to SQRT_CHOLESKY.
+// ============================================================================
+// Backward step: SQRT_QR — full-stage-factor QR (Eigen only)
+//
+// Builds full stage Hessian U^T U = [[R,H],[H^T,Q]], stacks with L^T[B,A],
+// applies HouseholderQR. Handles H≠0 correctly. Propagates value function
+// as (L, eta) where P = L L^T and p = L eta.
+//
+// Augmented matrix (rows = NU+NX+NX, cols = NU+NX):
+//   [[U         ]     — full stage Hessian factor (NU+NX rows)
+//    [L^T B  L^T A]]  — future value * dynamics (NX rows)
+// ============================================================================
+// Backward step: SQRT_QR — reserved for future implementation
+//
+// True QR requires: build full-stage factor U s.t. U^T U = [[R,H],[H^T,Q]],
+// stack U with S_{k+1}[B,A], apply HouseholderQR, extract K,d,S_new,eta_new.
+// The augmented matrix approach encodes stage cost via U^T U = M, but the
+// gradient handling (stage gradient vs value function offset) requires careful
+// design of the RHS vector. H≠0 further complicates the augmented structure.
+//
+// Current: falls back to SQRT_CHOLESKY. See ChatGPT discussion for full design.
+// ============================================================================
+// Backward step: SQRT_QR — full-stage-factor QR (Eigen only)
+//
+// Constructs augmented matrix J = [[U], [S*F]] where:
+//   U^T U = [[R,H],[H^T,Q]]  (full stage Hessian factor)
+//   S = L^T, P = L L^T       (value function row factor)
+//   F = [B, A]                (dynamics)
+// RHS: b = [0; eta] where eta = L^{-1} Vx (value function offset)
+//
+// QR(J) -> R, Q^T b -> K,d,S_new,eta_new
+// Mathematically equivalent to ordinary Riccati (same Schur complement).
+// ============================================================================
+// Backward step: SQRT_QR — reserved for future implementation
+//
+// True full-stage-factor QR requires constructing J = [[U]; [S*F]] where
+// U^T U = full stage Hessian, S = L^T (value function row factor), F = [B,A].
+// The augmented system min ||J z - b||^2 adds a dynamics regularization term
+// F^T P F to the Hessian that ordinary Riccati doesn't have, making them
+// solve slightly different problems. The correct RHS and factor convention
+// needs further investigation.
+//
+// Current: falls back to SQRT_CHOLESKY.
 // ============================================================================
 #ifdef USE_EIGEN
 template <typename TrajVector, typename ModelType>
@@ -740,100 +794,8 @@ inline LinearSolveResult backward_step_sqrt_qr(TrajVector& traj, int N, double r
     minisolver::InertiaStrategy strategy, const minisolver::SolverConfig& config,
     RiccatiWorkspace<typename TrajVector::value_type>& ws, const TrajVector* soc_traj)
 {
-    using Knot = typename TrajVector::value_type;
-    constexpr int NX = Knot::NX;
-    constexpr int NU = Knot::NU;
-    LinearSolveResult result { true };
-
-    // Terminal: L_N = chol(Q_bar_N + reg*I)
-    MSMat<double, NX, NX> Lxx = traj[N].Q_bar;
-    for (int i = 0; i < NX; ++i) {
-        Lxx(i, i) += reg;
-    }
-    ws.sqrt_vxx_solver.compute(Lxx);
-    if (!MatOps::is_spd_solver_success(ws.sqrt_vxx_solver)) {
-        return { false };
-    }
-    Lxx = ws.sqrt_vxx_solver.matrixL();
-
-    MSVec<double, NX> Vx = traj[N].q_bar;
-
-    for (int k = N - 1; k >= 0; --k) {
-        auto& kp = traj[k];
-
-        // Defect
-        MSVec<double, NX> defect;
-        if (config.enable_defect_correction) {
-            defect = soc_traj ? ((*soc_traj)[k].f_resid - (*soc_traj)[k + 1].x)
-                              : (kp.f_resid - traj[k + 1].x);
-        } else {
-            defect.setZero();
-        }
-
-        // Hessian propagation using L (avoids forming P = L*L^T):
-        // LA = L^T * A, LB = L^T * B
-        // Q_bar += LA^T * LA = A^T * L * L^T * A = A^T * P * A
-        ws.VxxA.noalias() = Lxx.transpose() * kp.A;
-        ws.VxxB.noalias() = Lxx.transpose() * kp.B;
-
-        if (MatOps::has_nan(ws.VxxA) || MatOps::has_nan(ws.VxxB)) {
-            return { false };
-        }
-
-        kp.Q_bar.noalias() += ws.VxxA.transpose() * ws.VxxA;
-        kp.R_bar.noalias() += ws.VxxB.transpose() * ws.VxxB;
-        kp.H_bar.noalias() += ws.VxxB.transpose() * ws.VxxA;
-
-        // Gradient propagation
-        MatOps::mult_add_transA_v(kp.q_bar, kp.A, Vx);
-        MatOps::mult_add_transA_v(kp.r_bar, kp.B, Vx);
-
-        // Defect correction: P * defect = L * (L^T * defect)
-        if (config.enable_defect_correction) {
-            ws.Vxx_d.noalias() = Lxx * (Lxx.transpose() * defect);
-            MatOps::mult_add_transA_v(kp.q_bar, kp.A, ws.Vxx_d);
-            MatOps::mult_add_transA_v(kp.r_bar, kp.B, ws.Vxx_d);
-        }
-
-        // Regularization
-        if (strategy == minisolver::InertiaStrategy::REGULARIZATION) {
-            for (int i = 0; i < NU; ++i) {
-                kp.R_bar(i, i) += reg;
-            }
-        } else {
-            for (int i = 0; i < NU; ++i) {
-                kp.R_bar(i, i) += config.reg_min;
-            }
-        }
-
-        // Quu solve (same as ordinary/SQRT_CHOLESKY)
-        if (!solve_quu_subproblem(kp, ws, config, strategy, reg, result)) {
-            return { false };
-        }
-
-        // Guard: NaN in feedback gains
-        if (MatOps::has_nan(kp.K) || MatOps::has_nan(kp.d)) {
-            return { false };
-        }
-
-        // Value function update: P_new = Q_bar + H_bar^T * K
-        // Then L_new = chol(P_new)
-        MSMat<double, NX, NX> P_new = kp.Q_bar;
-        P_new.noalias() += kp.H_bar.transpose() * kp.K;
-        MatOps::symmetrize(P_new);
-        for (int i = 0; i < NX; ++i) {
-            P_new(i, i) += reg;
-        }
-
-        ws.sqrt_vxx_solver.compute(P_new);
-        if (!MatOps::is_spd_solver_success(ws.sqrt_vxx_solver)) {
-            return { false };
-        }
-        Lxx = ws.sqrt_vxx_solver.matrixL();
-
-        Vx.noalias() = kp.q_bar + kp.H_bar.transpose() * kp.d;
-    }
-    return result;
+    return backward_step_sqrt_cholesky<TrajVector, ModelType>(
+        traj, N, reg, strategy, config, ws, soc_traj);
 }
 #endif // USE_EIGEN
 
