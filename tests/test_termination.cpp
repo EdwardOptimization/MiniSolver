@@ -48,6 +48,19 @@ ApiStatus no_op_bug_model_callback(MiniSolver<BugTestModel, 10>& /*solver*/, voi
 
 } // namespace
 
+TEST(TerminationTest, TinyStepStagnationDoesNotClaimStrictOptimality)
+{
+    SolverConfig config;
+    config.tol_con = 1e-6;
+
+    EXPECT_EQ(detail::TerminationKernel::classify_tiny_step_stagnation(config, 0.5e-6),
+        SolverStatus::FEASIBLE)
+        << "Tiny-step stagnation has no fresh complementarity proof; strict OPTIMAL must stay "
+           "with the normal convergence/postsolve path.";
+    EXPECT_EQ(detail::TerminationKernel::classify_tiny_step_stagnation(config, 2.0e-6),
+        SolverStatus::UNSOLVED);
+}
+
 TEST(TerminationTest, ResidualStagnationMonitorRequiresConfiguredWindow)
 {
     detail::ResidualStagnationMonitor monitor;

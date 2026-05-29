@@ -1226,10 +1226,9 @@ private:
         context_.metrics.last_dual_inf = max_dual_inf;
     }
 
-    SolverStatus classify_tiny_step_stagnation_(double max_prim_inf, double max_dual_inf) const
+    SolverStatus classify_tiny_step_stagnation_(double max_prim_inf) const
     {
-        return detail::TerminationKernel::classify_tiny_step_stagnation(
-            config, max_prim_inf, max_dual_inf);
+        return detail::TerminationKernel::classify_tiny_step_stagnation(config, max_prim_inf);
     }
 
     bool attempt_tiny_step_recovery_(TrajArray& traj_after_ls, double alpha)
@@ -1278,8 +1277,7 @@ private:
         return recovered;
     }
 
-    GlobalizationResult globalize_step_(
-        double barrier_mu_at_residual_eval, double max_prim_inf, double max_dual_inf)
+    GlobalizationResult globalize_step_(double barrier_mu_at_residual_eval, double max_prim_inf)
     {
         GlobalizationResult result;
 
@@ -1304,18 +1302,7 @@ private:
         if (result.alpha > 1e-8) {
             context_.solve.slack_reset_consecutive_count = 0;
         } else {
-            SolverStatus stagnation_status
-                = classify_tiny_step_stagnation_(max_prim_inf, max_dual_inf);
-            if (stagnation_status == SolverStatus::OPTIMAL) {
-                if (config.print_level >= PrintLevel::INFO) {
-                    MLOG_INFO("Line search stagnated at optimal point (PrimInf: "
-                        << max_prim_inf << ", DualInf: " << max_dual_inf
-                        << "). Terminating as OPTIMAL.");
-                }
-                timer.stop();
-                result.status = SolverStatus::OPTIMAL;
-                return result;
-            }
+            SolverStatus stagnation_status = classify_tiny_step_stagnation_(max_prim_inf);
             if (stagnation_status == SolverStatus::FEASIBLE) {
                 if (config.print_level >= PrintLevel::INFO) {
                     MLOG_INFO("Line search stagnated at feasible point (PrimInf: "
@@ -2149,7 +2136,7 @@ private:
         }
 
         GlobalizationResult globalization
-            = globalize_step_(residuals.barrier_mu, residuals.max_primal_inf, max_dual_inf);
+            = globalize_step_(residuals.barrier_mu, residuals.max_primal_inf);
         if (globalization.status != SolverStatus::UNSOLVED) {
             result.status = globalization.status;
             return result;

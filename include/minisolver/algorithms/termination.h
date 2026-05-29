@@ -80,13 +80,10 @@ struct TerminationKernel {
     }
 
     static SolverStatus classify_tiny_step_stagnation(
-        const SolverConfig& config, double max_prim_inf, double max_dual_inf)
+        const SolverConfig& config, double max_prim_inf)
     {
         if (max_prim_inf > config.tol_con) {
             return SolverStatus::UNSOLVED;
-        }
-        if (max_dual_inf <= config.tol_dual) {
-            return SolverStatus::OPTIMAL;
         }
         return SolverStatus::FEASIBLE;
     }
