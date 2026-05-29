@@ -48,6 +48,174 @@ ApiStatus no_op_bug_model_callback(MiniSolver<BugTestModel, 10>& /*solver*/, voi
 
 } // namespace
 
+TEST(TerminationTest, ResidualStagnationMonitorRequiresConfiguredWindow)
+{
+    detail::ResidualStagnationMonitor monitor;
+    const detail::ResidualStagnationConfigView config {
+        true,
+        false,
+        false,
+        1,
+        2,
+        1e-3,
+        0.0,
+        1e-3,
+        1e-3,
+        1e-3,
+        10.0,
+    };
+    const detail::ResidualStagnationSample first {
+        1e-4,
+        1e-2,
+        1e-2,
+        1e-1,
+        0,
+    };
+    EXPECT_EQ(monitor.update(first, config).status, SolverStatus::UNSOLVED);
+
+    const detail::ResidualStagnationSample stalled {
+        1e-4,
+        1e-2,
+        1e-2,
+        1e-1,
+        1,
+    };
+    EXPECT_EQ(monitor.update(stalled, config).status, SolverStatus::UNSOLVED);
+
+    const detail::ResidualStagnationResult result = monitor.update(stalled, config);
+    EXPECT_EQ(result.status, SolverStatus::INSUFFICIENT_PROGRESS);
+    EXPECT_EQ(result.reason, TerminationReason::RESIDUAL_STAGNATION);
+}
+
+TEST(TerminationTest, ResidualStagnationMonitorHonorsMinIterations)
+{
+    detail::ResidualStagnationMonitor monitor;
+    const detail::ResidualStagnationConfigView config {
+        true,
+        false,
+        false,
+        3,
+        1,
+        1e-3,
+        0.0,
+        1e-3,
+        1e-3,
+        1e-3,
+        10.0,
+    };
+    const detail::ResidualStagnationSample first {
+        1e-4,
+        1e-2,
+        1e-2,
+        1e-1,
+        0,
+    };
+    EXPECT_EQ(monitor.update(first, config).status, SolverStatus::UNSOLVED);
+
+    const detail::ResidualStagnationSample before_min_iter {
+        1e-4,
+        1e-2,
+        1e-2,
+        1e-1,
+        2,
+    };
+    EXPECT_EQ(monitor.update(before_min_iter, config).status, SolverStatus::UNSOLVED);
+    EXPECT_EQ(monitor.stagnation_count(), 0);
+
+    const detail::ResidualStagnationSample at_min_iter {
+        1e-4,
+        1e-2,
+        1e-2,
+        1e-1,
+        3,
+    };
+    const detail::ResidualStagnationResult result = monitor.update(at_min_iter, config);
+    EXPECT_EQ(result.status, SolverStatus::INSUFFICIENT_PROGRESS);
+    EXPECT_EQ(result.reason, TerminationReason::RESIDUAL_STAGNATION);
+}
+
+TEST(TerminationTest, ResidualStagnationMonitorResetsOnFeasibleMuDecrease)
+{
+    detail::ResidualStagnationMonitor monitor;
+    const detail::ResidualStagnationConfigView config {
+        true,
+        false,
+        false,
+        0,
+        2,
+        1e-3,
+        0.0,
+        1e-3,
+        1e-3,
+        1e-3,
+        10.0,
+    };
+    const detail::ResidualStagnationSample first {
+        1e-4,
+        1e-2,
+        1e-2,
+        1e-1,
+        0,
+    };
+    EXPECT_EQ(monitor.update(first, config).status, SolverStatus::UNSOLVED);
+
+    const detail::ResidualStagnationSample stalled {
+        1e-4,
+        1e-2,
+        1e-2,
+        1e-1,
+        1,
+    };
+    EXPECT_EQ(monitor.update(stalled, config).status, SolverStatus::UNSOLVED);
+    EXPECT_EQ(monitor.stagnation_count(), 1);
+
+    const detail::ResidualStagnationSample lower_mu {
+        1e-4,
+        1e-2,
+        1e-2,
+        5e-2,
+        2,
+    };
+    EXPECT_EQ(monitor.update(lower_mu, config).status, SolverStatus::UNSOLVED);
+    EXPECT_EQ(monitor.stagnation_count(), 0);
+    EXPECT_TRUE(monitor.feasible_mode());
+
+    EXPECT_EQ(monitor.update(lower_mu, config).status, SolverStatus::UNSOLVED);
+    const detail::ResidualStagnationResult result = monitor.update(lower_mu, config);
+    EXPECT_EQ(result.status, SolverStatus::INSUFFICIENT_PROGRESS);
+    EXPECT_EQ(result.reason, TerminationReason::RESIDUAL_STAGNATION);
+}
+
+TEST(TerminationTest, ResidualStagnationMonitorSkipsCallbacksAndFixedIteration)
+{
+    detail::ResidualStagnationMonitor monitor;
+    detail::ResidualStagnationConfigView config {
+        true,
+        false,
+        true,
+        0,
+        1,
+        1e-3,
+        0.0,
+        1e-3,
+        1e-3,
+        1e-3,
+        10.0,
+    };
+    const detail::ResidualStagnationSample sample {
+        1e-4,
+        1e-2,
+        1e-2,
+        1e-1,
+        3,
+    };
+    EXPECT_EQ(monitor.update(sample, config).status, SolverStatus::UNSOLVED);
+
+    config.callback_installed = false;
+    config.fixed_iteration_profile = true;
+    EXPECT_EQ(monitor.update(sample, config).status, SolverStatus::UNSOLVED);
+}
+
 TEST(TerminationTest, RtiFixedIterationDoesNotMaskLinearSolveFailure)
 {
     constexpr int N = 1;

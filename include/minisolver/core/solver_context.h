@@ -1,5 +1,6 @@
 #pragma once
 
+#include "minisolver/algorithms/residual_stagnation_monitor.h"
 #include "minisolver/core/types.h"
 #include <limits>
 
@@ -124,19 +125,13 @@ struct GlobalizationResult {
 struct TerminationState {
     SolverStatus loop_exit_status = SolverStatus::UNSOLVED;
     bool cost_stagnated = false;
-    double residual_progress_best_norm = std::numeric_limits<double>::infinity();
-    double residual_progress_mu = std::numeric_limits<double>::infinity();
-    int residual_stagnation_count = 0;
-    bool residual_progress_feasible_mode = false;
+    detail::ResidualStagnationMonitor residual_stagnation_monitor;
 
     void reset_solve()
     {
         loop_exit_status = SolverStatus::UNSOLVED;
         cost_stagnated = false;
-        residual_progress_best_norm = std::numeric_limits<double>::infinity();
-        residual_progress_mu = std::numeric_limits<double>::infinity();
-        residual_stagnation_count = 0;
-        residual_progress_feasible_mode = false;
+        residual_stagnation_monitor.reset();
     }
 };
 

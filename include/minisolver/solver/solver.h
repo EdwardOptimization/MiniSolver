@@ -1280,7 +1280,7 @@ private:
             // SlackReset to be used again in the future
             if (recovered) {
                 context_.solve.slack_reset_consecutive_count = 0;
-                reset_residual_progress_monitor_();
+                reset_residual_stagnation_monitor_();
             }
         }
 
@@ -1968,84 +1968,39 @@ private:
         return true;
     }
 
-    void reset_residual_progress_monitor_()
+    void reset_residual_stagnation_monitor_()
     {
-        context_.termination.residual_progress_best_norm = std::numeric_limits<double>::infinity();
-        context_.termination.residual_progress_mu = std::numeric_limits<double>::infinity();
-        context_.termination.residual_stagnation_count = 0;
-        context_.termination.residual_progress_feasible_mode = false;
+        context_.termination.residual_stagnation_monitor.reset();
     }
 
     IterationResult check_residual_stagnation_(
         const StepResidualSummary& residuals, double max_dual_inf)
     {
         IterationResult result;
-        if (!config.enable_residual_stagnation_detection
-            || detail::TerminationKernel::uses_fixed_iteration_profile(config)
-            || model_update_callback_ != nullptr) {
-            return result;
-        }
-
-        auto& termination = context_.termination;
-        const double current_mu = context_.solve.mu;
-
-        const double feasible_bound = config.tol_con * config.feasible_tol_scale;
-        const bool feasible_mode = residuals.max_primal_inf <= feasible_bound;
-        const double primal_norm = residuals.max_primal_inf / std::max(config.tol_con, 1.0e-300);
-        const double dual_norm = max_dual_inf / std::max(config.tol_dual, 1.0e-300);
-        const double complementarity_norm
-            = residuals.max_complementarity_gap / std::max(config.tol_mu, 1.0e-300);
-        if (!MatOps::is_finite_scalar(primal_norm) || !MatOps::is_finite_scalar(dual_norm)
-            || !MatOps::is_finite_scalar(complementarity_norm)) {
-            result.status = SolverStatus::NUMERICAL_ERROR;
-            result.reason = TerminationReason::NUMERICAL_ERROR;
-            return result;
-        }
-        const double kkt_norm = std::max(primal_norm, std::max(dual_norm, complementarity_norm));
-
-        if (feasible_mode && MatOps::is_finite_scalar(termination.residual_progress_mu)
-            && current_mu < termination.residual_progress_mu) {
-            reset_residual_progress_monitor_();
-        }
-        termination.residual_progress_mu = current_mu;
-
-        if (MatOps::is_finite_scalar(termination.residual_progress_best_norm)
-            && feasible_mode != termination.residual_progress_feasible_mode) {
-            reset_residual_progress_monitor_();
-            termination.residual_progress_mu = current_mu;
-        }
-        termination.residual_progress_feasible_mode = feasible_mode;
-
-        // Before the iterate is loosely primal-feasible, only primal progress is
-        // relevant. Dual and complementarity residuals may oscillate while the
-        // solver is still repairing feasibility. Once primal feasibility is
-        // acceptable, monitor the normalized KKT residual to avoid wasting the
-        // remaining budget on a stalled optimality cleanup.
-        const double progress_norm = feasible_mode ? kkt_norm : primal_norm;
-
-        const bool first_sample
-            = !MatOps::is_finite_scalar(termination.residual_progress_best_norm);
-        const double required_progress = std::max(config.residual_stagnation_abs_tol,
-            config.residual_stagnation_rel_tol
-                * std::max(1.0, termination.residual_progress_best_norm));
-        const bool improved = first_sample
-            || progress_norm + required_progress < termination.residual_progress_best_norm;
-        if (improved) {
-            termination.residual_progress_best_norm = progress_norm;
-            termination.residual_stagnation_count = 0;
-            return result;
-        }
-
-        if (context_.solve.current_iter >= config.residual_stagnation_min_iters) {
-            ++termination.residual_stagnation_count;
-        }
-
-        if (termination.residual_stagnation_count < config.residual_stagnation_window) {
-            return result;
-        }
-
-        result.status = SolverStatus::INSUFFICIENT_PROGRESS;
-        result.reason = TerminationReason::RESIDUAL_STAGNATION;
+        const detail::ResidualStagnationConfigView monitor_config {
+            config.enable_residual_stagnation_detection,
+            detail::TerminationKernel::uses_fixed_iteration_profile(config),
+            model_update_callback_ != nullptr,
+            config.residual_stagnation_min_iters,
+            config.residual_stagnation_window,
+            config.residual_stagnation_rel_tol,
+            config.residual_stagnation_abs_tol,
+            config.tol_con,
+            config.tol_dual,
+            config.tol_mu,
+            config.feasible_tol_scale,
+        };
+        const detail::ResidualStagnationSample sample {
+            residuals.max_primal_inf,
+            max_dual_inf,
+            residuals.max_complementarity_gap,
+            context_.solve.mu,
+            context_.solve.current_iter,
+        };
+        const detail::ResidualStagnationResult monitor_result
+            = context_.termination.residual_stagnation_monitor.update(sample, monitor_config);
+        result.status = monitor_result.status;
+        result.reason = monitor_result.reason;
         return result;
     }
 
