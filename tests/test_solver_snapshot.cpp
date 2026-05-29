@@ -6,10 +6,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio> // for remove()
+#include <cstring>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace minisolver;
@@ -37,28 +39,6 @@ bool FileExists(const std::string& filename)
     return in.good();
 }
 
-bool OverwriteByteAt(const std::string& filename, std::streamoff offset, std::uint8_t value)
-{
-    std::fstream file(filename, std::ios::in | std::ios::out | std::ios::binary);
-    if (!file.good()) {
-        return false;
-    }
-    file.seekp(offset);
-    file.put(static_cast<char>(value));
-    return file.good();
-}
-
-bool OverwriteInt32At(const std::string& filename, std::streamoff offset, std::int32_t value)
-{
-    std::fstream file(filename, std::ios::in | std::ios::out | std::ios::binary);
-    if (!file.good()) {
-        return false;
-    }
-    file.seekp(offset);
-    file.write(reinterpret_cast<const char*>(&value), static_cast<std::streamsize>(sizeof(value)));
-    return file.good();
-}
-
 constexpr std::streamoff SnapshotHeaderBytes()
 {
     return 8 + 2 * static_cast<std::streamoff>(sizeof(std::uint32_t))
@@ -66,25 +46,110 @@ constexpr std::streamoff SnapshotHeaderBytes()
         + static_cast<std::streamoff>(sizeof(std::uint64_t));
 }
 
-constexpr std::streamoff SnapshotFirstConfigBoolOffset()
+std::streamoff SnapshotConfigFieldOffset(const char* field_name)
 {
-    return SnapshotHeaderBytes() + 252;
+    std::streamoff offset = SnapshotHeaderBytes();
+#define MS_TEST_CONFIG_OFFSET_ENUM(field)                                                          \
+    if (std::strcmp(#field, field_name) == 0) {                                                    \
+        return offset;                                                                             \
+    }                                                                                              \
+    offset += static_cast<std::streamoff>(sizeof(std::int32_t));
+#define MS_TEST_CONFIG_OFFSET_INT(field) MS_TEST_CONFIG_OFFSET_ENUM(field)
+#define MS_TEST_CONFIG_OFFSET_DOUBLE(field)                                                        \
+    if (std::strcmp(#field, field_name) == 0) {                                                    \
+        return offset;                                                                             \
+    }                                                                                              \
+    offset += static_cast<std::streamoff>(sizeof(double));
+#define MS_TEST_CONFIG_OFFSET_BOOL(field)                                                          \
+    if (std::strcmp(#field, field_name) == 0) {                                                    \
+        return offset;                                                                             \
+    }                                                                                              \
+    offset += static_cast<std::streamoff>(sizeof(std::uint8_t));
+    MINISOLVER_CONFIG_FIELDS(MS_TEST_CONFIG_OFFSET_ENUM, MS_TEST_CONFIG_OFFSET_INT,
+        MS_TEST_CONFIG_OFFSET_DOUBLE, MS_TEST_CONFIG_OFFSET_BOOL)
+#undef MS_TEST_CONFIG_OFFSET_ENUM
+#undef MS_TEST_CONFIG_OFFSET_INT
+#undef MS_TEST_CONFIG_OFFSET_DOUBLE
+#undef MS_TEST_CONFIG_OFFSET_BOOL
+    return -1;
 }
 
-constexpr std::streamoff SnapshotLineSearchTypeOffset()
+std::streamoff SnapshotConfigBytes()
 {
-    return SnapshotHeaderBytes() + 277;
+    std::streamoff bytes = 0;
+#define MS_TEST_CONFIG_SIZE_ENUM(field) bytes += static_cast<std::streamoff>(sizeof(std::int32_t));
+#define MS_TEST_CONFIG_SIZE_INT(field) bytes += static_cast<std::streamoff>(sizeof(std::int32_t));
+#define MS_TEST_CONFIG_SIZE_DOUBLE(field) bytes += static_cast<std::streamoff>(sizeof(double));
+#define MS_TEST_CONFIG_SIZE_BOOL(field) bytes += static_cast<std::streamoff>(sizeof(std::uint8_t));
+    MINISOLVER_CONFIG_FIELDS(MS_TEST_CONFIG_SIZE_ENUM, MS_TEST_CONFIG_SIZE_INT,
+        MS_TEST_CONFIG_SIZE_DOUBLE, MS_TEST_CONFIG_SIZE_BOOL)
+#undef MS_TEST_CONFIG_SIZE_ENUM
+#undef MS_TEST_CONFIG_SIZE_INT
+#undef MS_TEST_CONFIG_SIZE_DOUBLE
+#undef MS_TEST_CONFIG_SIZE_BOOL
+    return bytes;
 }
 
-constexpr std::streamoff SnapshotLineSearchMaxItersOffset()
+std::streamoff SnapshotStatusOffset()
 {
-    return SnapshotHeaderBytes() + 281;
+    return SnapshotHeaderBytes() + SnapshotConfigBytes();
 }
 
-constexpr std::streamoff SnapshotStatusOffset()
-{
-    return SnapshotHeaderBytes() + 449;
-}
+class SnapshotCorruptor {
+public:
+    explicit SnapshotCorruptor(std::string filename)
+        : filename_(std::move(filename))
+    {
+    }
+
+    bool set_config_int_raw(const char* field_name, std::int32_t value) const
+    {
+        const std::streamoff offset = SnapshotConfigFieldOffset(field_name);
+        return offset >= 0 && overwrite_int32(offset, value);
+    }
+
+    bool set_config_enum_raw(const char* field_name, std::int32_t value) const
+    {
+        return set_config_int_raw(field_name, value);
+    }
+
+    bool set_config_bool_raw(const char* field_name, std::uint8_t value) const
+    {
+        const std::streamoff offset = SnapshotConfigFieldOffset(field_name);
+        return offset >= 0 && overwrite_byte(offset, value);
+    }
+
+    bool set_status_raw(std::int32_t value) const
+    {
+        return overwrite_int32(SnapshotStatusOffset(), value);
+    }
+
+private:
+    bool overwrite_byte(std::streamoff offset, std::uint8_t value) const
+    {
+        std::fstream file(filename_, std::ios::in | std::ios::out | std::ios::binary);
+        if (!file.good()) {
+            return false;
+        }
+        file.seekp(offset);
+        file.put(static_cast<char>(value));
+        return file.good();
+    }
+
+    bool overwrite_int32(std::streamoff offset, std::int32_t value) const
+    {
+        std::fstream file(filename_, std::ios::in | std::ios::out | std::ios::binary);
+        if (!file.good()) {
+            return false;
+        }
+        file.seekp(offset);
+        file.write(
+            reinterpret_cast<const char*>(&value), static_cast<std::streamsize>(sizeof(value)));
+        return file.good();
+    }
+
+    std::string filename_;
+};
 
 SolverConfig MakeNonDefaultConfig()
 {
@@ -445,7 +510,7 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotConfigAtomically)
 
     std::string filename = MakeUniqueTestFilename("test_invalid_config_snapshot", ".bin");
     ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
-    ASSERT_TRUE(OverwriteInt32At(filename, SnapshotLineSearchMaxItersOffset(), 0));
+    ASSERT_TRUE(SnapshotCorruptor(filename).set_config_int_raw("line_search_max_iters", 0));
 
     SolverConfig preserved;
     preserved.mu_init = 0.321;
@@ -466,7 +531,7 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotConfigEnumAtomically)
 
     std::string filename = MakeUniqueTestFilename("test_invalid_enum_config_snapshot", ".bin");
     ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
-    ASSERT_TRUE(OverwriteInt32At(filename, SnapshotLineSearchTypeOffset(), 99));
+    ASSERT_TRUE(SnapshotCorruptor(filename).set_config_enum_raw("line_search_type", 99));
 
     SolverConfig preserved;
     preserved.mu_init = 0.321;
@@ -531,7 +596,7 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotStatusAtomically)
     using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
     std::string filename = MakeUniqueTestFilename("test_invalid_status_snapshot", ".bin");
     ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
-    ASSERT_TRUE(OverwriteInt32At(filename, SnapshotStatusOffset(), 12345));
+    ASSERT_TRUE(SnapshotCorruptor(filename).set_status_raw(12345));
 
     SolverConfig preserved;
     preserved.mu_init = 0.321;
@@ -550,7 +615,8 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidBooleanEncoding)
     using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
     std::string filename = MakeUniqueTestFilename("test_invalid_bool_snapshot", ".bin");
     ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
-    ASSERT_TRUE(OverwriteByteAt(filename, SnapshotFirstConfigBoolOffset(), 2u));
+    ASSERT_TRUE(SnapshotCorruptor(filename).set_config_bool_raw(
+        "enable_residual_stagnation_detection", 2u));
 
     SolverConfig preserved;
     preserved.mu_init = 0.321;

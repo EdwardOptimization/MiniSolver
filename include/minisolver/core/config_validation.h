@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include "minisolver/core/config_fields.h"
 #include "minisolver/core/model_traits.h"
 #include "minisolver/core/types.h"
 
@@ -152,23 +153,6 @@ namespace detail {
         return enum_is_one_of<DirectionRefinementMode, DirectionRefinementMode::NONE,
             DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT>(value);
     }
-
-#define MINISOLVER_CONFIG_ENUM_FIELDS(X)                                                           \
-    X(backend)                                                                                     \
-    X(initialization)                                                                              \
-    X(warm_start_barrier)                                                                          \
-    X(warm_start_regularization)                                                                   \
-    X(termination_profile)                                                                         \
-    X(constraint_scaling)                                                                          \
-    X(objective_scaling)                                                                           \
-    X(problem_scaling)                                                                             \
-    X(integrator)                                                                                  \
-    X(barrier_strategy)                                                                            \
-    X(inertia_strategy)                                                                            \
-    X(line_search_type)                                                                            \
-    X(print_level)                                                                                 \
-    X(hessian_approximation)                                                                       \
-    X(direction_refinement)
 
     inline ApiStatus validate_config_enums(const SolverConfig& conf)
     {
@@ -393,5 +377,3 @@ namespace detail {
 
 } // namespace detail
 } // namespace minisolver
-
-#undef MINISOLVER_CONFIG_ENUM_FIELDS

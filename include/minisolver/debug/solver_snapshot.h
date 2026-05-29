@@ -1,6 +1,7 @@
 #pragma once
 
 #include "minisolver/algorithms/model_evaluation.h"
+#include "minisolver/core/config_fields.h"
 #include "minisolver/core/config_validation.h"
 #include "minisolver/core/model_traits.h"
 #include "minisolver/core/types.h"
@@ -80,83 +81,6 @@ struct SnapshotLoadOptions {
     bool reject_trailing_bytes = true;
     bool reject_model_mismatch = true;
 };
-
-#define MINISOLVER_SNAPSHOT_CONFIG_FIELDS(X_ENUM, X_INT, X_DOUBLE, X_BOOL)                         \
-    X_ENUM(backend)                                                                                \
-    X_ENUM(initialization)                                                                         \
-    X_ENUM(warm_start_barrier)                                                                     \
-    X_ENUM(warm_start_regularization)                                                              \
-    X_ENUM(termination_profile)                                                                    \
-    X_ENUM(constraint_scaling)                                                                     \
-    X_ENUM(objective_scaling)                                                                      \
-    X_ENUM(problem_scaling)                                                                        \
-    X_DOUBLE(constraint_row_scale_min)                                                             \
-    X_DOUBLE(constraint_row_scale_max)                                                             \
-    X_DOUBLE(objective_scale_min)                                                                  \
-    X_DOUBLE(objective_scale_max)                                                                  \
-    X_ENUM(integrator)                                                                             \
-    X_DOUBLE(default_dt)                                                                           \
-    X_INT(newton_config.max_iters)                                                                 \
-    X_DOUBLE(newton_config.tol)                                                                    \
-    X_DOUBLE(newton_config.regularization)                                                         \
-    X_ENUM(barrier_strategy)                                                                       \
-    X_DOUBLE(mu_init)                                                                              \
-    X_DOUBLE(mu_final)                                                                             \
-    X_DOUBLE(mu_linear_decrease_factor)                                                            \
-    X_DOUBLE(barrier_tolerance_factor)                                                             \
-    X_DOUBLE(mu_safety_margin)                                                                     \
-    X_ENUM(inertia_strategy)                                                                       \
-    X_DOUBLE(reg_init)                                                                             \
-    X_DOUBLE(reg_min)                                                                              \
-    X_DOUBLE(reg_max)                                                                              \
-    X_DOUBLE(reg_scale_up)                                                                         \
-    X_DOUBLE(reg_scale_down)                                                                       \
-    X_DOUBLE(regularization_step)                                                                  \
-    X_DOUBLE(singular_threshold)                                                                   \
-    X_DOUBLE(huge_penalty)                                                                         \
-    X_INT(linear_solve_max_attempts)                                                               \
-    X_DOUBLE(tol_con)                                                                              \
-    X_DOUBLE(tol_dual)                                                                             \
-    X_DOUBLE(tol_mu)                                                                               \
-    X_DOUBLE(tol_cost)                                                                             \
-    X_DOUBLE(feasible_tol_scale)                                                                   \
-    X_BOOL(enable_residual_stagnation_detection)                                                   \
-    X_INT(residual_stagnation_min_iters)                                                           \
-    X_INT(residual_stagnation_window)                                                              \
-    X_DOUBLE(residual_stagnation_rel_tol)                                                          \
-    X_DOUBLE(residual_stagnation_abs_tol)                                                          \
-    X_ENUM(line_search_type)                                                                       \
-    X_INT(line_search_max_iters)                                                                   \
-    X_DOUBLE(line_search_tau)                                                                      \
-    X_DOUBLE(line_search_backtrack_factor)                                                         \
-    X_DOUBLE(filter_gamma_theta)                                                                   \
-    X_DOUBLE(filter_gamma_phi)                                                                     \
-    X_DOUBLE(filter_theta_max_factor)                                                              \
-    X_DOUBLE(armijo_c1)                                                                            \
-    X_DOUBLE(min_barrier_slack)                                                                    \
-    X_DOUBLE(barrier_inf_cost)                                                                     \
-    X_DOUBLE(slack_reset_trigger)                                                                  \
-    X_DOUBLE(warm_start_slack_init)                                                                \
-    X_DOUBLE(soc_trigger_alpha)                                                                    \
-    X_DOUBLE(merit_nu_init)                                                                        \
-    X_DOUBLE(eta_suff_descent)                                                                     \
-    X_INT(max_restoration_iters)                                                                   \
-    X_DOUBLE(restoration_mu)                                                                       \
-    X_DOUBLE(restoration_reg)                                                                      \
-    X_DOUBLE(restoration_alpha)                                                                    \
-    X_DOUBLE(restoration_sufficient_decrease_factor)                                               \
-    X_INT(max_iters)                                                                               \
-    X_ENUM(print_level)                                                                            \
-    X_BOOL(enable_profiling)                                                                       \
-    X_ENUM(hessian_approximation)                                                                  \
-    X_ENUM(direction_refinement)                                                                   \
-    X_BOOL(enable_line_search_rollout)                                                             \
-    X_BOOL(enable_defect_correction)                                                               \
-    X_BOOL(enable_corrector)                                                                       \
-    X_BOOL(enable_aggressive_barrier)                                                              \
-    X_BOOL(enable_slack_reset)                                                                     \
-    X_BOOL(enable_feasibility_restoration)                                                         \
-    X_BOOL(enable_soc)
 
 template <typename Model, int MAX_N> class SolverSnapshotIO {
 public:
@@ -290,7 +214,7 @@ private:
 #define MS_SNAPSHOT_WRITE_INT(field) ok = ok && write_int(out, cfg.field);
 #define MS_SNAPSHOT_WRITE_DOUBLE(field) ok = ok && write_pod(out, cfg.field);
 #define MS_SNAPSHOT_WRITE_BOOL(field) ok = ok && write_bool(out, cfg.field);
-        MINISOLVER_SNAPSHOT_CONFIG_FIELDS(MS_SNAPSHOT_WRITE_ENUM, MS_SNAPSHOT_WRITE_INT,
+        MINISOLVER_CONFIG_FIELDS(MS_SNAPSHOT_WRITE_ENUM, MS_SNAPSHOT_WRITE_INT,
             MS_SNAPSHOT_WRITE_DOUBLE, MS_SNAPSHOT_WRITE_BOOL)
 #undef MS_SNAPSHOT_WRITE_ENUM
 #undef MS_SNAPSHOT_WRITE_INT
@@ -306,7 +230,7 @@ private:
 #define MS_SNAPSHOT_READ_INT(field) ok = ok && read_int(in, cfg.field);
 #define MS_SNAPSHOT_READ_DOUBLE(field) ok = ok && read_pod(in, cfg.field);
 #define MS_SNAPSHOT_READ_BOOL(field) ok = ok && read_bool(in, cfg.field, invalid_bool_encoding);
-        MINISOLVER_SNAPSHOT_CONFIG_FIELDS(MS_SNAPSHOT_READ_ENUM, MS_SNAPSHOT_READ_INT,
+        MINISOLVER_CONFIG_FIELDS(MS_SNAPSHOT_READ_ENUM, MS_SNAPSHOT_READ_INT,
             MS_SNAPSHOT_READ_DOUBLE, MS_SNAPSHOT_READ_BOOL)
 #undef MS_SNAPSHOT_READ_ENUM
 #undef MS_SNAPSHOT_READ_INT
@@ -551,7 +475,7 @@ public:
 #define MS_SNAPSHOT_CONFIG_EQ_INT(field) equal = equal && (lhs.field == rhs.field);
 #define MS_SNAPSHOT_CONFIG_EQ_DOUBLE(field) equal = equal && (lhs.field == rhs.field);
 #define MS_SNAPSHOT_CONFIG_EQ_BOOL(field) equal = equal && (lhs.field == rhs.field);
-        MINISOLVER_SNAPSHOT_CONFIG_FIELDS(MS_SNAPSHOT_CONFIG_EQ_ENUM, MS_SNAPSHOT_CONFIG_EQ_INT,
+        MINISOLVER_CONFIG_FIELDS(MS_SNAPSHOT_CONFIG_EQ_ENUM, MS_SNAPSHOT_CONFIG_EQ_INT,
             MS_SNAPSHOT_CONFIG_EQ_DOUBLE, MS_SNAPSHOT_CONFIG_EQ_BOOL)
 #undef MS_SNAPSHOT_CONFIG_EQ_ENUM
 #undef MS_SNAPSHOT_CONFIG_EQ_INT
@@ -751,7 +675,5 @@ public:
         return result(SnapshotStatus::OK);
     }
 };
-
-#undef MINISOLVER_SNAPSHOT_CONFIG_FIELDS
 
 } // namespace minisolver
