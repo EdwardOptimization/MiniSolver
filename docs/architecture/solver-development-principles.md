@@ -50,3 +50,9 @@ triage checklist, and testing matrix.
     Controller timing, benchmark datasets, cross-solver fairness, and
     application geometry belong in the controller, benchmark, or model/codegen
     layer unless they are generic solver concepts.
+
+11. Do not over-preserve obsolete internal shapes.
+    During active development, update generated code and tests to the current
+    contract instead of adding compatibility inference. If MiniModel/codegen
+    owns a model-structure guarantee, solver core should trust that owner
+    boundary rather than duplicating checks.
