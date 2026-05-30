@@ -1432,11 +1432,11 @@ class OptimalControlModel:
         return code
 
     def _generate_soft_constraint_weights_body(self):
+        if not self.soft_constraints:
+            return "        (void)kp;\n"
+
         code = "        kp.l1_weight.setZero();\n"
         code += "        kp.l2_weight.setZero();\n"
-        if not self.soft_constraints:
-            return code
-
         weight_exprs = [sc['weight'] for sc in self.soft_constraints]
         code += self._generate_unpack_block(source_kp=True, expressions=weight_exprs)
         for sc in self.soft_constraints:
