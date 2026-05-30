@@ -990,7 +990,9 @@ private:
                         summary.max_complementarity_gap = std::abs(soft_gap);
                     }
 
-                    total_gap += soft_gap;
+                    const double avg_soft_dual = detail::positive_l1_soft_dual_gap(
+                        soft_dual, traj[k].l1_weight(i), config);
+                    total_gap += soft_s * avg_soft_dual;
                     total_gap_dim += 1;
                 }
             }

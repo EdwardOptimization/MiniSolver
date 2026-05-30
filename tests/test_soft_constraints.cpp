@@ -6,6 +6,7 @@
 #include "minisolver/algorithms/initialization.h"
 #include "minisolver/solver/riccati.h"
 #include "minisolver/solver/solver.h"
+#include "solver_internal_access.h"
 #include <array>
 #include <cmath>
 #include <gtest/gtest.h>
@@ -420,6 +421,34 @@ TEST(SoftConstraintTest, MixedL1L2DualRecoveryUsesBothWeights)
     EXPECT_NEAR(kp.dlam(0), expected_dlam, 1e-15);
     EXPECT_NEAR(kp.ds(0), expected_ds, 1e-15);
     EXPECT_NEAR(kp.dsoft_s(0), expected_dsoft_s, 1e-15);
+}
+
+TEST(SoftConstraintTest, L1NegativeSoftDualDoesNotReduceAverageComplementarity)
+{
+    SoftModel::set_l1(1.0);
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.min_barrier_slack = 1e-12;
+    config.mu_init = 1e-4;
+
+    MiniSolver<SoftModel, 5> solver(0, Backend::CPU_SERIAL, config);
+    solver.set_initial_state("x", 5.0);
+
+    using Access = minisolver::test::SolverInternalAccess<SoftModel, 5>;
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].s(0) = 1.0;
+    traj[0].lam(0) = 2.0;
+    traj[0].soft_s(0) = 3.0;
+
+    const StepResidualSummary residuals = Access::evaluate_step_model(solver, traj);
+    const double expected_floor_gap
+        = 3.0 * detail::l1_soft_dual_floor(SoftModel::l1_weights[0], config);
+
+    EXPECT_NEAR(residuals.max_complementarity_gap, 3.0, 1e-12)
+        << "Diagnostics should still expose the raw invalid soft dual box.";
+    EXPECT_NEAR(residuals.avg_complementarity_gap, (2.0 + expected_floor_gap) / 2.0, 1e-12)
+        << "The barrier-update average should not be reduced by negative L1 soft-dual gap.";
 }
 
 TEST(SoftConstraintTest, L2_Convergence)
