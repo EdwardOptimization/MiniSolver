@@ -452,6 +452,31 @@ TEST(SoftConstraintTest, L2_Convergence)
     EXPECT_NEAR(x_final, 8.333, 1.0e-3);
 }
 
+TEST(SoftConstraintTest, MixedL1L2_Convergence)
+{
+    SoftModel::set_l1_l2(1.0, 2.0);
+
+    SolverConfig config;
+    config.tol_con = 1e-4;
+    config.tol_dual = 1e-4;
+    config.max_iters = 80;
+
+    MiniSolver<SoftModel, 5> solver(1, Backend::CPU_SERIAL, config);
+    solver.set_dt(1.0);
+    solver.set_initial_state("x", 0.0);
+    solver.set_control_guess(0, "u", 10.0);
+    solver.rollout_dynamics();
+
+    const SolverStatus status = solver.solve();
+
+    const double x_final = solver.get_state(1, 0);
+    std::cout << "Mixed L1/L2 Final X: " << x_final << std::endl;
+
+    EXPECT_NE(status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_NEAR(x_final, 7.25, 1.0e-3) << "For x > 5, the same-row penalty has derivative "
+                                          "1 + 2 * (x - 5), not just the pure L1 term.";
+}
+
 TEST(SoftConstraintTest, ZeroL2WeightInitializesAsRegularizedSoftRow)
 {
     SoftModel::set_l2(0.0);
@@ -701,6 +726,14 @@ struct InterfaceModel {
         l2_weights[0] = weight;
     }
 
+    static void set_l1_l2(double l1_weight, double l2_weight)
+    {
+        constraint_has_l1[0] = true;
+        constraint_has_l2[0] = true;
+        l1_weights[0] = l1_weight;
+        l2_weights[0] = l2_weight;
+    }
+
     template <typename T>
     static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
     {
@@ -939,7 +972,96 @@ struct ManualL2Model {
 };
 
 // ==========================================
-// 4. Comparison Tests
+// 4. Manual Mixed L1+L2 Model
+// Uses w1 * slk + 0.5 * w2 * slk^2 to match Interface
+// ==========================================
+struct ManualMixedL1L2Model {
+    static const int NX = 1;
+    static const int NU = 2; // [u, slk]
+    static const int NC = 2; // [g-slk, -slk]
+    static const int NP = 0;
+
+    static constexpr std::array<double, NC> constraint_weights = { 0.0, 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0, 0 };
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u", "slk" };
+    static constexpr std::array<const char*, NP> param_names = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> x_next;
+        x_next(0) = x(0) + u(0) * dt;
+        return x_next;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+        kp.B(0, 1) = 0.0;
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        const T x = kp.x(0);
+        const T slk = kp.u(1);
+
+        kp.g_val(0) = x - 5.0 - slk;
+        kp.C(0, 0) = 1.0;
+        kp.D(0, 0) = 0.0;
+        kp.D(0, 1) = -1.0;
+
+        kp.g_val(1) = -slk;
+        kp.C(1, 0) = 0.0;
+        kp.D(1, 0) = 0.0;
+        kp.D(1, 1) = -1.0;
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        const T diff = kp.x(0) - 10.0;
+        const T slk = kp.u(1);
+        constexpr double w1 = 1.0;
+        constexpr double w2 = 2.0;
+
+        kp.cost = diff * diff + 1e-4 * kp.u(0) * kp.u(0) + w1 * slk + 0.5 * w2 * slk * slk;
+
+        kp.q(0) = 2 * diff;
+        kp.r(0) = 2e-4 * kp.u(0);
+        kp.r(1) = w1 + w2 * slk;
+
+        kp.Q(0, 0) = 2.0;
+        kp.R(0, 0) = 2e-4;
+        kp.R(1, 1) = w2;
+        kp.R(0, 1) = 0.0;
+        kp.R(1, 0) = 0.0;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_exact(kp);
+    }
+    template <typename T> static void compute_cost(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_exact(kp);
+    }
+    template <typename T>
+    static void compute(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType type, double dt)
+    {
+        compute_dynamics(kp, type, dt);
+        compute_constraints(kp);
+        compute_cost(kp);
+    }
+};
+
+// ==========================================
+// 5. Comparison Tests
 // ==========================================
 
 TEST(ComparisonTest, L1_SoftConstraint)
@@ -1057,4 +1179,61 @@ TEST(ComparisonTest, L2_SoftConstraint)
     // Theoretical Opt for L2: x = 25/3 = 8.333...
     EXPECT_NEAR(x_if, 8.333, 1e-3);
     EXPECT_NEAR(x_if, x_man, 1e-3);
+}
+
+TEST(ComparisonTest, MixedL1L2_SoftConstraint)
+{
+    SolverConfig config;
+    config.tol_con = 1e-4;
+    config.tol_dual = 1e-4;
+    config.max_iters = 100;
+    config.integrator = IntegratorType::EULER_EXPLICIT;
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
+
+    int N = 2;
+
+    InterfaceModel::set_l1_l2(1.0, 2.0);
+
+    MiniSolver<InterfaceModel, 5> solver_if(N, Backend::CPU_SERIAL, config);
+    solver_if.set_dt(1.0);
+    solver_if.set_initial_state("x", 0.0);
+    solver_if.set_control_guess(0, "u", 10.0);
+    solver_if.set_control_guess(1, "u", 0.0);
+    solver_if.rollout_dynamics();
+    const SolverStatus status_if = solver_if.solve();
+    const double x_if = solver_if.get_state(1, 0);
+    const double soft_s_if = solver_if.get_constraint_val(1, 0) + solver_if.get_slack(1, 0);
+
+    MiniSolver<ManualMixedL1L2Model, 5> solver_man(N, Backend::CPU_SERIAL, config);
+    solver_man.set_dt(1.0);
+    solver_man.set_initial_state("x", 0.0);
+    solver_man.set_control_guess(0, "u", 10.0);
+    solver_man.set_control_guess(1, "u", 0.0);
+
+    double slk_init = 5.0;
+    solver_man.set_control_guess(1, "slk", slk_init);
+    solver_man.rollout_dynamics();
+
+    solver_man.set_slack_guess(1, 0, 0.01);
+    solver_man.set_dual_guess(1, 0, 1.0 + 2.0 * slk_init);
+    solver_man.set_slack_guess(1, 1, slk_init);
+    solver_man.set_dual_guess(1, 1, 0.01);
+
+    SolverConfig cfg_mixed = solver_man.get_config();
+    cfg_mixed.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    solver_man.set_config(cfg_mixed);
+    const SolverStatus status_man = solver_man.solve();
+    const double x_man = solver_man.get_state(1, 0);
+    const double slk_man = solver_man.get_control(1, 1);
+
+    std::cout << "[Mixed L1/L2 Comparison N=2] Interface x1: " << x_if << " soft_s: " << soft_s_if
+              << " vs Manual x1: " << x_man << " slk: " << slk_man << std::endl;
+
+    EXPECT_NE(status_if, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_NE(status_man, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_NEAR(x_if, 7.25, 1e-3);
+    EXPECT_NEAR(x_if, x_man, 1e-3);
+    EXPECT_NEAR(soft_s_if, slk_man, 1e-3)
+        << "Mixed soft constraints must use one shared relaxation variable, "
+           "matching an explicit slk in w1*slk + 0.5*w2*slk^2.";
 }

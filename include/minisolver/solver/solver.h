@@ -2517,7 +2517,7 @@ private:
                     viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.soft_s(i) * inv_scale);
                 } else {
                     const double w = detail::effective_l2_soft_weight<Model>(kp, i, config);
-                    viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.lam(i) / w);
+                    viol = std::abs(g_raw + (kp.s(i) - kp.lam(i) / w) * inv_scale);
                 }
                 if (viol > max_viol) {
                     max_viol = viol;

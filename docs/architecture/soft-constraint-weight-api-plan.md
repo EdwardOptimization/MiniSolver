@@ -77,6 +77,32 @@ Internally, normalize to per-row metadata:
 Soft weight expressions may be numeric constants, parameters, or parameter-only
 expressions. They must not depend on state or control variables.
 
+## Zero And Tiny Weights
+
+The row structure still comes from MiniModel/codegen metadata. A runtime weight
+value of zero does not change a declared soft row into a hard row.
+
+The solver treats inactive soft rows as an extremely weak L2 relaxation:
+
+- hard rows are rows with no L1 or L2 soft metadata;
+- active L1 rows use the L1 or mixed L1+L2 KKT equations;
+- active L2 rows use the L2 KKT equation with an effective weight no smaller
+  than `detail::l2_soft_weight_floor(config)`;
+- rows declared soft but with no active L1 and no positive L2 weight use the
+  same regularized L2 equation.
+
+This is a barrier-friendly approximation of a free soft row, not exact row
+removal. Exact removal belongs in the model formulation or generated structure;
+runtime weights only change penalty strength.
+
+For same-row L1+L2, the solver keeps one `soft_s` and uses the mixed soft dual
+
+```text
+z = w_l1 + w_l2 * soft_s - lambda
+```
+
+so the L1 and L2 penalties act on the same relaxation variable.
+
 ## Solver Integration
 
 The solver reads structure and values separately:

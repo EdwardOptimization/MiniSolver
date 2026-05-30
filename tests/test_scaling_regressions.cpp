@@ -117,6 +117,66 @@ struct LargeObjectiveCurvatureModel {
     }
 };
 
+struct RowScaledL2SoftMetricModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+    static constexpr std::array<bool, NC> constraint_has_l1 = { false };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { true };
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(0);
+        kp.l2_weight(0) = T(2.0);
+    }
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, double, IntegratorType)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        const T scaled_physical_residual = static_cast<T>(1000.0) * (kp.x(0) - static_cast<T>(1.0));
+        kp.g_val(0) = scaled_physical_residual;
+        kp.C(0, 0) = static_cast<T>(1000.0);
+        kp.D.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setIdentity();
+        kp.R.setIdentity();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
 struct ScalingBaselineReport {
     SolverStatus status = SolverStatus::UNSOLVED;
     SolverInfo info;
@@ -191,6 +251,25 @@ TEST(ScalingRegressionTest, AutomaticRowScalingNormalizesInternalPrimalMetric)
            "manual model metadata.";
     EXPECT_NEAR(report.info.unscaled_primal_inf, 2000.0, 1e-2)
         << "Diagnostics should still expose the unscaled active IPM residual.";
+}
+
+TEST(ScalingRegressionTest, L2SoftUnscaledResidualScalesDualRelaxation)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 0;
+    config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+
+    const ScalingBaselineReport report
+        = run_initial_feasibility_snapshot<RowScaledL2SoftMetricModel>(2.0, config);
+
+    EXPECT_NE(report.status, SolverStatus::NUMERICAL_ERROR);
+    ASSERT_TRUE(report.info.constraint_scaling_active);
+    EXPECT_NEAR(report.info.primal_inf, 0.0, 1e-10)
+        << "L2 soft initialization satisfies the scaled residual g + s - lambda/w.";
+    EXPECT_NEAR(report.info.unscaled_primal_inf, 0.0, 1e-7)
+        << "The complete L2 relaxation term, s - lambda/w, must be transformed back "
+           "through the inverse row scale.";
 }
 
 TEST(ScalingRegressionTest, AutomaticScalingRejectsInvalidScaleBounds)
