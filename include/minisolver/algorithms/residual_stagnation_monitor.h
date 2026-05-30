@@ -40,8 +40,10 @@ class ResidualStagnationMonitor {
 public:
     void reset()
     {
-        best_norm_ = std::numeric_limits<double>::infinity();
-        progress_mu_ = std::numeric_limits<double>::infinity();
+        best_norm_ = 0.0;
+        progress_mu_ = 0.0;
+        has_best_norm_ = false;
+        has_progress_mu_ = false;
         stagnation_count_ = 0;
         feasible_mode_ = false;
     }
@@ -69,14 +71,16 @@ public:
         }
         const double kkt_norm = std::max(primal_norm, std::max(dual_norm, complementarity_norm));
 
-        if (feasible_mode && std::isfinite(progress_mu_) && sample.current_mu < progress_mu_) {
+        if (feasible_mode && has_progress_mu_ && sample.current_mu < progress_mu_) {
             reset();
         }
         progress_mu_ = sample.current_mu;
+        has_progress_mu_ = true;
 
-        if (std::isfinite(best_norm_) && feasible_mode != feasible_mode_) {
+        if (has_best_norm_ && feasible_mode != feasible_mode_) {
             reset();
             progress_mu_ = sample.current_mu;
+            has_progress_mu_ = true;
         }
         feasible_mode_ = feasible_mode;
 
@@ -84,13 +88,15 @@ public:
         // After that point, monitor normalized KKT cleanup progress.
         const double progress_norm = feasible_mode ? kkt_norm : primal_norm;
 
-        const bool monitor_uninitialized = !std::isfinite(best_norm_);
+        const bool monitor_uninitialized = !has_best_norm_;
+        const double reference_norm = monitor_uninitialized ? progress_norm : best_norm_;
         const double required_progress
-            = std::max(config.abs_tol, config.rel_tol * std::max(1.0, best_norm_));
+            = std::max(config.abs_tol, config.rel_tol * std::max(1.0, reference_norm));
         const bool improved
             = monitor_uninitialized || progress_norm + required_progress < best_norm_;
         if (improved) {
             best_norm_ = progress_norm;
+            has_best_norm_ = true;
             stagnation_count_ = 0;
             return result;
         }
@@ -108,13 +114,18 @@ public:
         return result;
     }
 
-    double best_norm() const { return best_norm_; }
+    double best_norm() const
+    {
+        return has_best_norm_ ? best_norm_ : std::numeric_limits<double>::infinity();
+    }
     int stagnation_count() const { return stagnation_count_; }
     bool feasible_mode() const { return feasible_mode_; }
 
 private:
-    double best_norm_ = std::numeric_limits<double>::infinity();
-    double progress_mu_ = std::numeric_limits<double>::infinity();
+    double best_norm_ = 0.0;
+    double progress_mu_ = 0.0;
+    bool has_best_norm_ = false;
+    bool has_progress_mu_ = false;
     int stagnation_count_ = 0;
     bool feasible_mode_ = false;
 };
