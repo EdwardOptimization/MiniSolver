@@ -141,8 +141,7 @@ bool active_l1_soft_constraint(const Knot& kp, int row, const SolverConfig& conf
         (void)config;
         return false;
     }
-    return constraint_has_l1<Model>(row) && std::isfinite(kp.l1_weight(row))
-        && kp.l1_weight(row) > 2.0 * barrier_floor(config);
+    return constraint_has_l1<Model>(row) && kp.l1_weight(row) > 2.0 * barrier_floor(config);
 }
 
 template <typename Model, typename Knot> bool active_l2_soft_constraint(const Knot& kp, int row)
@@ -152,8 +151,7 @@ template <typename Model, typename Knot> bool active_l2_soft_constraint(const Kn
         (void)row;
         return false;
     }
-    return constraint_has_l2<Model>(row) && std::isfinite(kp.l2_weight(row))
-        && kp.l2_weight(row) > 0.0;
+    return constraint_has_l2<Model>(row) && kp.l2_weight(row) > 0.0;
 }
 
 template <typename Model, typename Knot>
