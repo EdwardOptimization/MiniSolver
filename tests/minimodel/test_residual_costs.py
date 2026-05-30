@@ -287,6 +287,83 @@ def test_sparse_generated_packets_zero_first_then_assign_nonzero():
         )
 
 
+def test_full_generated_packets_skip_clear():
+    model = OptimalControlModel("FullPacketModel")
+    x0, x1 = model.state("x0", "x1")
+    u0, u1 = model.control("u0", "u1")
+    model.subject_to(Dot(x0) == u0)
+    model.subject_to(Dot(x1) == u1)
+    model.subject_to([x0 + 1.0 <= 0.0, x1 + u0 + 2.0 <= 0.0])
+    model.minimize(x0**2 + 2.0 * x1**2 + 3.0 * u0**2 + 4.0 * u1**2 + x0 * u0 + x1 * u1)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        with open(f"{tmpdir}/fullpacketmodel.h", "r", encoding="utf-8") as f:
+            text = f.read()
+
+        constraints_body = text.split("// --- 2. Compute QP/IPM Constraints")[1]
+        constraints_body = constraints_body.split("// --- 2.5 Compute True Constraints")[0]
+        cost_body = text.split("static void compute_cost_impl")[1]
+        cost_body = cost_body.split("// --- 3.5 Terminal Cost")[0]
+
+        reject(constraints_body, "kp.g_val.setZero();")
+        require(constraints_body, "kp.C.setZero();")
+        require(constraints_body, "kp.D.setZero();")
+        reject(cost_body, "kp.q.setZero();")
+        reject(cost_body, "kp.r.setZero();")
+        require(cost_body, "kp.Q.setZero();")
+        require(cost_body, "kp.R.setZero();")
+        require(cost_body, "kp.H.setZero();")
+
+        compile_and_run(
+            tmpdir,
+            "full_packet_check.cpp",
+            "full_packet_check",
+            """
+            #include "fullpacketmodel.h"
+            #include <cmath>
+            #include <cstdlib>
+
+            int main() {
+                using Model = minisolver::FullPacketModel;
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                kp.set_zero();
+                kp.x(0) = 0.25;
+                kp.x(1) = -0.5;
+                kp.u(0) = 0.1;
+                kp.u(1) = 0.2;
+
+                kp.g_val.fill(99.0);
+                kp.C.fill(99.0);
+                kp.D.fill(99.0);
+                Model::compute_constraints(kp);
+                if (std::abs(kp.g_val(0) - 1.25) > 1e-12) return 1;
+                if (std::abs(kp.g_val(1) - 1.6) > 1e-12) return 2;
+                if (std::abs(kp.C(0,0) - 1.0) > 1e-12) return 3;
+                if (std::abs(kp.C(0,1)) > 1e-12) return 4;
+                if (std::abs(kp.C(1,1) - 1.0) > 1e-12) return 5;
+                if (std::abs(kp.D(1,0) - 1.0) > 1e-12) return 6;
+                if (std::abs(kp.D(0,1)) > 1e-12) return 7;
+
+                kp.q.fill(99.0);
+                kp.r.fill(99.0);
+                kp.Q.fill(99.0);
+                kp.R.fill(99.0);
+                kp.H.fill(99.0);
+                Model::compute_cost_exact(kp);
+                if (std::abs(kp.q(0) - 0.6) > 1e-12) return 8;
+                if (std::abs(kp.q(1) + 1.8) > 1e-12) return 9;
+                if (std::abs(kp.r(0) - 0.85) > 1e-12) return 10;
+                if (std::abs(kp.r(1) - 1.1) > 1e-12) return 11;
+                if (std::abs(kp.Q(0,1)) > 1e-12) return 12;
+                if (std::abs(kp.R(0,1)) > 1e-12) return 13;
+                if (std::abs(kp.H(1,0)) > 1e-12) return 14;
+                return 0;
+            }
+            """,
+        )
+
+
 def test_add_residual_validates_weights():
     def negative_weight():
         model = OptimalControlModel("NegativeResidualWeightModel")
@@ -309,4 +386,5 @@ if __name__ == "__main__":
     test_add_residual_accepts_parameter_vector_weight()
     test_add_residual_accepts_parameter_reference()
     test_sparse_generated_packets_zero_first_then_assign_nonzero()
+    test_full_generated_packets_skip_clear()
     test_add_residual_validates_weights()

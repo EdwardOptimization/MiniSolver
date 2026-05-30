@@ -656,7 +656,11 @@ class OptimalControlModel:
 
     def _generate_assign_block(self, assignments, reduced):
         code = ""
-        clear_names = [name for name, idx, _, _ in assignments if idx < len(reduced)]
+        clear_names = [
+            name
+            for name, idx, rows, cols in assignments
+            if idx < len(reduced) and not self._packet_fully_assigned(reduced[idx], rows, cols)
+        ]
         if clear_names:
             code += self._emit_clear_block(
                 "kp",
@@ -679,6 +683,15 @@ class OptimalControlModel:
         if rows == 1 or cols == 1:
             return mat[r] if rows > 1 else mat[c]
         return mat[r, c]
+
+    def _packet_fully_assigned(self, mat, rows, cols):
+        if rows * cols == 0:
+            return False
+        for r in range(rows):
+            for c in range(cols):
+                if not self._is_nonzero_expr(self._matrix_entry(mat, rows, cols, r, c)):
+                    return False
+        return True
 
     def _emit_cse_assignments(self, replacements, indent="        "):
         code = ""
