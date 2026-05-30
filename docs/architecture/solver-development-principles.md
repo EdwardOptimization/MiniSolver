@@ -56,3 +56,10 @@ triage checklist, and testing matrix.
     contract instead of adding compatibility inference. If MiniModel/codegen
     owns a model-structure guarantee, solver core should trust that owner
     boundary rather than duplicating checks.
+
+12. Check non-finite values at semantic boundaries.
+    Reject invalid config/input at public boundaries and return
+    `NUMERICAL_ERROR` when non-finite residuals, directions, line-search
+    quantities, or postsolve summaries appear. Do not scatter finite checks
+    through hot predicates or use NaN/Inf sentinels for internal lifecycle
+    state.
