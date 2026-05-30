@@ -1444,17 +1444,50 @@ class OptimalControlModel:
         code += f"    static constexpr bool any_l2_constraints = {any_l2};\n"
         return code
 
-    def _generate_soft_constraint_weights_body(self):
-        if not self.soft_constraints:
-            return "        (void)kp;\n"
+    def _generate_soft_constraint_weight_updater(self, loss_type):
+        entries = [sc for sc in self.soft_constraints if sc['type'] == loss_type]
+        target = "l1_weight" if loss_type == "L1" else "l2_weight"
+        function_name = (
+            "update_l1_soft_constraint_weights"
+            if loss_type == "L1"
+            else "update_l2_soft_constraint_weights"
+        )
 
-        code = "        kp.l1_weight.setZero();\n"
-        code += "        kp.l2_weight.setZero();\n"
-        weight_exprs = [sc['weight'] for sc in self.soft_constraints]
+        code = "    template<typename T>\n"
+        code += f"    static void {function_name}(KnotPoint<T,NX,NU,NC,NP>& kp) {{\n"
+        code += f"        kp.{target}.setZero();\n"
+        weight_exprs = [sc['weight'] for sc in entries]
         code += self._generate_unpack_block(source_kp=True, expressions=weight_exprs)
-        for sc in self.soft_constraints:
-            target = "l1_weight" if sc['type'] == 'L1' else "l2_weight"
+        for sc in entries:
             code += f"        kp.{target}({sc['index']}) = {sp.ccode(sc['weight'])};\n"
+        code += "    }\n"
+        return code
+
+    def _generate_soft_constraint_weights_section(self):
+        code = "    // --- 1.5 Update Soft Constraint Weights ---\n"
+        if not self.soft_constraints:
+            code += "    template<typename T>\n"
+            code += "    static void update_soft_constraint_weights(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+            code += "        (void)kp;\n"
+            code += "    }\n"
+            return code
+
+        any_l1 = any(sc['type'] == 'L1' for sc in self.soft_constraints)
+        any_l2 = any(sc['type'] == 'L2' for sc in self.soft_constraints)
+        if any_l1:
+            code += self._generate_soft_constraint_weight_updater("L1")
+            code += "\n"
+        if any_l2:
+            code += self._generate_soft_constraint_weight_updater("L2")
+            code += "\n"
+
+        code += "    template<typename T>\n"
+        code += "    static void update_soft_constraint_weights(KnotPoint<T,NX,NU,NC,NP>& kp) {\n"
+        if any_l1:
+            code += "        update_l1_soft_constraint_weights<T>(kp);\n"
+        if any_l2:
+            code += "        update_l2_soft_constraint_weights<T>(kp);\n"
+        code += "    }\n"
         return code
 
     def _generate_name_arrays(self):
@@ -1864,7 +1897,7 @@ class OptimalControlModel:
         code_compute_terminal_con = self._generate_terminal_constraints_body(x_vec, u_vec)
         code_compute_terminal_true_con = self._generate_true_constraints_body(terminal=True)
         code_compute_soc_con = self._generate_soc_constraints_body()
-        code_update_soft_weights = self._generate_soft_constraint_weights_body()
+        code_update_soft_weights = self._generate_soft_constraint_weights_section()
 
         code_compute_terminal_cost = self._generate_terminal_cost_section(x_vec, u_vec)
         
@@ -1897,7 +1930,7 @@ class OptimalControlModel:
             "CONTINUOUS_DYNAMICS_SECTION": code_continuous_section,
             "INTEGRATE_BODY": code_integrate,
             "COMPUTE_DYNAMICS_BODY": code_compute_dyn,
-            "UPDATE_SOFT_CONSTRAINT_WEIGHTS_BODY": code_update_soft_weights,
+            "UPDATE_SOFT_CONSTRAINT_WEIGHTS_SECTION": code_update_soft_weights,
             "COMPUTE_CONSTRAINTS_BODY": code_compute_con,
             "COMPUTE_TRUE_CONSTRAINTS_BODY": code_compute_true_con,
             "COMPUTE_TERMINAL_CONSTRAINTS_BODY": code_compute_terminal_con,

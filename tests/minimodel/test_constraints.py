@@ -264,6 +264,11 @@ def test_soft_constraint_parameter_weight_packet_updates_knot():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        with open(f"{tmpdir}/softweightpacketmodel.h", "r", encoding="utf-8") as f:
+            text = f.read()
+
+        require(text, "update_l1_soft_constraint_weights")
+        require(text, "update_l2_soft_constraint_weights")
         compile_and_run(
             tmpdir,
             "soft_weight_packet_check.cpp",
@@ -294,6 +299,55 @@ def test_soft_constraint_parameter_weight_packet_updates_knot():
                 if (std::abs(kp.l2_weight(0) - 4.0) > 1e-12) return 2;
                 if (std::abs(kp.l1_weight(1)) > 1e-12) return 3;
                 if (std::abs(kp.l2_weight(1) - 5.0) > 1e-12) return 4;
+                return 0;
+            }
+            """,
+        )
+
+
+def test_l1_only_soft_weight_update_does_not_clear_l2_packet():
+    model = OptimalControlModel("L1OnlySoftWeightModel")
+    x = model.state("x")
+    u = model.control("u")
+    w = model.parameter("w")
+    model.subject_to(Dot(x) == u)
+    model.minimize(x**2 + u**2)
+    model.subject_to([x <= 1.0, u <= 2.0], weight=[w, 5.0], loss=["L1", "L1"])
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        with open(f"{tmpdir}/l1onlysoftweightmodel.h", "r", encoding="utf-8") as f:
+            text = f.read()
+
+        require(text, "update_l1_soft_constraint_weights")
+        require(text, "update_soft_constraint_weights")
+        reject(text, "update_l2_soft_constraint_weights")
+        reject(text, "kp.l2_weight.setZero();")
+
+        compile_and_run(
+            tmpdir,
+            "l1_only_soft_weight_check.cpp",
+            "l1_only_soft_weight_check",
+            """
+            #include "l1onlysoftweightmodel.h"
+            #include <cmath>
+
+            int main() {
+                using Model = minisolver::L1OnlySoftWeightModel;
+                static_assert(Model::any_l1_constraints, "model should have L1 rows");
+                static_assert(!Model::any_l2_constraints, "model should not have L2 rows");
+
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                kp.set_zero();
+                kp.p(0) = 3.0;
+                kp.l2_weight.fill(77.0);
+
+                Model::update_soft_constraint_weights(kp);
+
+                if (std::abs(kp.l1_weight(0) - 3.0) > 1e-12) return 1;
+                if (std::abs(kp.l1_weight(1) - 5.0) > 1e-12) return 2;
+                if (std::abs(kp.l2_weight(0) - 77.0) > 1e-12) return 3;
+                if (std::abs(kp.l2_weight(1) - 77.0) > 1e-12) return 4;
                 return 0;
             }
             """,
@@ -455,5 +509,6 @@ if __name__ == "__main__":
     test_quad_norm2_generates_exact_constraint_hessian()
     test_stage_only_constraint_zeros_terminal_row()
     test_soft_constraint_parameter_weight_packet_updates_knot()
+    test_l1_only_soft_weight_update_does_not_clear_l2_packet()
     test_quad_constraint_domain_guards()
     test_generated_model_uses_automatic_constraint_row_scaling()

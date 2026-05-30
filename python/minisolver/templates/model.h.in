@@ -38,11 +38,7 @@ struct {{MODEL_NAME}} {
 {{COMPUTE_DYNAMICS_BODY}}
     }
 
-    // --- 1.5 Update Soft Constraint Weights ---
-    template<typename T>
-    static void update_soft_constraint_weights(KnotPoint<T,NX,NU,NC,NP>& kp) {
-{{UPDATE_SOFT_CONSTRAINT_WEIGHTS_BODY}}
-    }
+{{UPDATE_SOFT_CONSTRAINT_WEIGHTS_SECTION}}
 
     // --- 2. Compute QP/IPM Constraints (g_val, C, D) ---
     template<typename T>
