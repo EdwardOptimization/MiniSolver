@@ -25,6 +25,8 @@ struct SoftModel {
     static std::array<bool, NC> constraint_has_l2;
     static std::array<double, NC> l1_weights;
     static std::array<double, NC> l2_weights;
+    static constexpr bool any_l1_constraints = true;
+    static constexpr bool any_l2_constraints = true;
 
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };
@@ -734,6 +736,8 @@ struct InterfaceModel {
     static std::array<bool, NC> constraint_has_l2;
     static std::array<double, NC> l1_weights;
     static std::array<double, NC> l2_weights;
+    static constexpr bool any_l1_constraints = true;
+    static constexpr bool any_l2_constraints = true;
 
     static constexpr std::array<const char*, NX> state_names = { "x" };
     static constexpr std::array<const char*, NU> control_names = { "u" };

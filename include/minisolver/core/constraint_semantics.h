@@ -50,6 +50,16 @@ template <typename Model>
 struct has_constraint_has_l2<Model, std::void_t<decltype(Model::constraint_has_l2)>>
     : std::true_type { };
 
+template <typename, typename = void> struct has_any_l1_constraints : std::false_type { };
+template <typename Model>
+struct has_any_l1_constraints<Model, std::void_t<decltype(Model::any_l1_constraints)>>
+    : std::true_type { };
+
+template <typename, typename = void> struct has_any_l2_constraints : std::false_type { };
+template <typename Model>
+struct has_any_l2_constraints<Model, std::void_t<decltype(Model::any_l2_constraints)>>
+    : std::true_type { };
+
 template <typename Model, typename Knot, typename = void>
 struct has_update_soft_constraint_weights : std::false_type { };
 template <typename Model, typename Knot>
@@ -57,8 +67,34 @@ struct has_update_soft_constraint_weights<Model, Knot,
     std::void_t<decltype(Model::template update_soft_constraint_weights<double>(
         std::declval<Knot&>()))>> : std::true_type { };
 
+template <typename Model> constexpr bool model_may_have_l1_constraints()
+{
+    static_assert(has_any_l1_constraints<Model>::value || !has_constraint_has_l1<Model>::value,
+        "models with constraint_has_l1 must also define any_l1_constraints");
+    if constexpr (has_any_l1_constraints<Model>::value) {
+        return Model::any_l1_constraints;
+    } else {
+        return false;
+    }
+}
+
+template <typename Model> constexpr bool model_may_have_l2_constraints()
+{
+    static_assert(has_any_l2_constraints<Model>::value || !has_constraint_has_l2<Model>::value,
+        "models with constraint_has_l2 must also define any_l2_constraints");
+    if constexpr (has_any_l2_constraints<Model>::value) {
+        return Model::any_l2_constraints;
+    } else {
+        return false;
+    }
+}
+
 template <typename Model> bool constraint_has_l1(int row)
 {
+    if constexpr (!model_may_have_l1_constraints<Model>()) {
+        (void)row;
+        return false;
+    }
     if constexpr (has_constraint_has_l1<Model>::value) {
         return row >= 0 && static_cast<std::size_t>(row) < Model::constraint_has_l1.size()
             && Model::constraint_has_l1[static_cast<std::size_t>(row)];
@@ -68,6 +104,10 @@ template <typename Model> bool constraint_has_l1(int row)
 
 template <typename Model> bool constraint_has_l2(int row)
 {
+    if constexpr (!model_may_have_l2_constraints<Model>()) {
+        (void)row;
+        return false;
+    }
     if constexpr (has_constraint_has_l2<Model>::value) {
         return row >= 0 && static_cast<std::size_t>(row) < Model::constraint_has_l2.size()
             && Model::constraint_has_l2[static_cast<std::size_t>(row)];
@@ -82,22 +122,38 @@ template <typename Model> bool hard_constraint_row(int row)
 
 template <typename Model, typename Knot> void update_soft_constraint_weights(Knot& kp)
 {
-    kp.l1_weight.setZero();
-    kp.l2_weight.setZero();
-    if constexpr (has_update_soft_constraint_weights<Model, Knot>::value) {
-        Model::template update_soft_constraint_weights<double>(kp);
+    if constexpr (model_may_have_l1_constraints<Model>()
+        || model_may_have_l2_constraints<Model>()) {
+        kp.l1_weight.setZero();
+        kp.l2_weight.setZero();
+        if constexpr (has_update_soft_constraint_weights<Model, Knot>::value) {
+            Model::template update_soft_constraint_weights<double>(kp);
+        }
+    } else {
+        (void)kp;
     }
 }
 
 template <typename Model, typename Knot>
 bool active_l1_soft_constraint(const Knot& kp, int row, const SolverConfig& config)
 {
+    if constexpr (!model_may_have_l1_constraints<Model>()) {
+        (void)kp;
+        (void)row;
+        (void)config;
+        return false;
+    }
     return constraint_has_l1<Model>(row) && std::isfinite(kp.l1_weight(row))
         && kp.l1_weight(row) > 2.0 * barrier_floor(config);
 }
 
 template <typename Model, typename Knot> bool active_l2_soft_constraint(const Knot& kp, int row)
 {
+    if constexpr (!model_may_have_l2_constraints<Model>()) {
+        (void)kp;
+        (void)row;
+        return false;
+    }
     return constraint_has_l2<Model>(row) && std::isfinite(kp.l2_weight(row))
         && kp.l2_weight(row) > 0.0;
 }

@@ -262,6 +262,8 @@ struct L1SoftModel {
     static constexpr double soft_weight = 1.0;
     static constexpr std::array<bool, NC> constraint_has_l1 = { true };
     static constexpr std::array<bool, NC> constraint_has_l2 = { false };
+    static constexpr bool any_l1_constraints = true;
+    static constexpr bool any_l2_constraints = false;
 
     template <typename T>
     static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)

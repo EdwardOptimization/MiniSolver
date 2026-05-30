@@ -347,6 +347,8 @@ struct L2ResidualFilterModel {
     static constexpr std::array<const char*, NP> param_names = {};
     static constexpr std::array<bool, NC> constraint_has_l1 = { false };
     static constexpr std::array<bool, NC> constraint_has_l2 = { true };
+    static constexpr bool any_l1_constraints = false;
+    static constexpr bool any_l2_constraints = true;
 
     template <typename T>
     static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
