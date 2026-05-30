@@ -124,8 +124,6 @@ template <typename Model, typename Knot> void update_soft_constraint_weights(Kno
 {
     if constexpr (model_may_have_l1_constraints<Model>()
         || model_may_have_l2_constraints<Model>()) {
-        kp.l1_weight.setZero();
-        kp.l2_weight.setZero();
         if constexpr (has_update_soft_constraint_weights<Model, Knot>::value) {
             Model::template update_soft_constraint_weights<double>(kp);
         }
