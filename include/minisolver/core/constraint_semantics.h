@@ -25,6 +25,11 @@ inline double l1_soft_dual_floor(double weight, const SolverConfig& config)
     return std::min(2.0 * barrier_floor(config), 0.5 * weight);
 }
 
+inline double l2_soft_weight_floor(const SolverConfig& config)
+{
+    return barrier_floor(config);
+}
+
 inline double positive_l1_soft_dual_gap(double soft_dual, double weight, const SolverConfig& config)
 {
     return std::max(soft_dual, l1_soft_dual_floor(weight, config));
@@ -70,6 +75,11 @@ template <typename Model> bool constraint_has_l2(int row)
     return false;
 }
 
+template <typename Model> bool hard_constraint_row(int row)
+{
+    return !constraint_has_l1<Model>(row) && !constraint_has_l2<Model>(row);
+}
+
 template <typename Model, typename Knot> void update_soft_constraint_weights(Knot& kp)
 {
     kp.l1_weight.setZero();
@@ -90,6 +100,13 @@ template <typename Model, typename Knot> bool active_l2_soft_constraint(const Kn
 {
     return constraint_has_l2<Model>(row) && std::isfinite(kp.l2_weight(row))
         && kp.l2_weight(row) > 0.0;
+}
+
+template <typename Model, typename Knot>
+double effective_l2_soft_weight(const Knot& kp, int row, const SolverConfig& config)
+{
+    const double raw_weight = active_l2_soft_constraint<Model>(kp, row) ? kp.l2_weight(row) : 0.0;
+    return std::max(raw_weight, l2_soft_weight_floor(config));
 }
 
 template <typename Model, typename Knot>

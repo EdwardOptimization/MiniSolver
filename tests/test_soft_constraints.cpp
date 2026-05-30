@@ -452,6 +452,220 @@ TEST(SoftConstraintTest, L2_Convergence)
     EXPECT_NEAR(x_final, 8.333, 1.0e-3);
 }
 
+TEST(SoftConstraintTest, ZeroL2WeightInitializesAsRegularizedSoftRow)
+{
+    SoftModel::set_l2(0.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    const double w_eff = detail::barrier_floor(config);
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.lam(0) / w_eff, 0.0, 1e-8)
+        << "A structurally soft L2 row with zero runtime weight should use the "
+           "regularized L2 path, not fall back to hard-constraint initialization.";
+}
+
+TEST(SoftConstraintTest, ZeroL1WeightInitializesAsRegularizedSoftRow)
+{
+    SoftModel::set_l1(0.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    const double w_eff = detail::barrier_floor(config);
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.lam(0) / w_eff, 0.0, 1e-8)
+        << "An inactive structural L1 row should use the same regularized "
+           "soft-row path as zero L2 weight.";
+}
+
+TEST(SoftConstraintTest, MixedL1L2WithZeroL1UsesL2Path)
+{
+    SoftModel::set_l1_l2(0.0, 3.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.lam(0) / SoftModel::l2_weights[0], 0.0, 1e-12);
+}
+
+TEST(SoftConstraintTest, MixedL1L2WithZeroL2UsesL1Path)
+{
+    SoftModel::set_l1_l2(2.0, 0.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    const double soft_dual = SoftModel::l1_weights[0] - kp.lam(0);
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_TRUE(std::isfinite(kp.soft_s(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_GT(kp.soft_s(0), 0.0);
+    EXPECT_GT(soft_dual, detail::l1_soft_dual_floor(SoftModel::l1_weights[0], config));
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.soft_s(0) * soft_dual, mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.soft_s(0), 0.0, 1e-12);
+}
+
+TEST(SoftConstraintTest, MixedL1L2WithBothZeroUsesRegularizedSoftRow)
+{
+    SoftModel::set_l1_l2(0.0, 0.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    const double w_eff = detail::barrier_floor(config);
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.lam(0) / w_eff, 0.0, 1e-8);
+}
+
+TEST(SoftConstraintTest, TinyInactiveL1WeightUsesRegularizedSoftRow)
+{
+    SolverConfig config;
+    SoftModel::set_l1(detail::barrier_floor(config));
+
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    const double w_eff = detail::barrier_floor(config);
+    EXPECT_FALSE(detail::active_l1_soft_constraint<SoftModel>(kp, 0, config));
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.lam(0) / w_eff, 0.0, 1e-8);
+}
+
+TEST(SoftConstraintTest, TinyL2WeightUsesEffectiveFloor)
+{
+    SolverConfig config;
+    SoftModel::set_l2(0.5 * detail::barrier_floor(config));
+
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    const double w_eff = detail::barrier_floor(config);
+    EXPECT_TRUE(detail::active_l2_soft_constraint<SoftModel>(kp, 0));
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.lam(0) / w_eff, 0.0, 1e-8);
+}
+
+TEST(SoftConstraintTest, MixedL1L2WithTinyInactiveL1UsesL2Path)
+{
+    SolverConfig config;
+    SoftModel::set_l1_l2(detail::barrier_floor(config), 3.0);
+
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    EXPECT_FALSE(detail::active_l1_soft_constraint<SoftModel>(kp, 0, config));
+    EXPECT_TRUE(detail::active_l2_soft_constraint<SoftModel>(kp, 0));
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.lam(0) / SoftModel::l2_weights[0], 0.0, 1e-12);
+}
+
+TEST(SoftConstraintTest, MixedL1L2WithTinyPositiveL2StillUsesMixedPath)
+{
+    SolverConfig config;
+    SoftModel::set_l1_l2(2.0, 0.5 * detail::barrier_floor(config));
+
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.5;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<SoftModel>(kp, 0, mu, config);
+
+    const double soft_dual
+        = SoftModel::l1_weights[0] + SoftModel::l2_weights[0] * kp.soft_s(0) - kp.lam(0);
+    EXPECT_TRUE(detail::active_mixed_l1_l2_soft_constraint<SoftModel>(kp, 0, config));
+    EXPECT_TRUE(std::isfinite(kp.s(0)));
+    EXPECT_TRUE(std::isfinite(kp.lam(0)));
+    EXPECT_TRUE(std::isfinite(kp.soft_s(0)));
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_GT(kp.soft_s(0), 0.0);
+    EXPECT_GT(soft_dual, detail::l1_soft_dual_floor(SoftModel::l1_weights[0], config));
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-12);
+    EXPECT_NEAR(kp.soft_s(0) * soft_dual, mu, 1e-12);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.soft_s(0), 0.0, 1e-12);
+}
+
 // ==========================================
 // 1. Interface Model (Benchmark)
 // Uses built-in L1/L2 soft constraint logic

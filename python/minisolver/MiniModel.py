@@ -394,8 +394,6 @@ class OptimalControlModel:
             seen_losses.add(loss_item)
 
             weight_expr = self._validate_soft_constraint_weight(weight_item)
-            if self._is_numeric_expr(weight_expr) and float(sp.N(weight_expr)) == 0.0:
-                continue
             entries.append({
                 'index': row_index,
                 'type': loss_item,

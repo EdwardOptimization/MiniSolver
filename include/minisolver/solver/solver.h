@@ -2469,13 +2469,13 @@ private:
                 double viol = 0.0;
 
                 const double g_true = detail::true_constraint_value<Model>(kp, i);
-                if (detail::active_l1_soft_constraint<Model>(kp, i, config)) { // L1
-                    viol = std::abs(g_true + kp.s(i) - kp.soft_s(i));
-                } else if (detail::active_l2_soft_constraint<Model>(kp, i)) { // L2
-                    const double w = kp.l2_weight(i);
-                    viol = std::abs(g_true + kp.s(i) - kp.lam(i) / w);
-                } else { // Hard
+                if (detail::hard_constraint_row<Model>(i)) { // Hard
                     viol = std::abs(g_true + kp.s(i));
+                } else if (detail::active_l1_soft_constraint<Model>(kp, i, config)) { // L1
+                    viol = std::abs(g_true + kp.s(i) - kp.soft_s(i));
+                } else { // L2
+                    const double w = detail::effective_l2_soft_weight<Model>(kp, i, config);
+                    viol = std::abs(g_true + kp.s(i) - kp.lam(i) / w);
                 }
                 if (viol > max_viol) {
                     max_viol = viol;
@@ -2511,13 +2511,13 @@ private:
 
                 const double g_raw = detail::unscaled_true_constraint_value<Model>(kp, i, config);
                 double viol = 0.0;
-                if (detail::active_l1_soft_constraint<Model>(kp, i, config)) {
-                    viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.soft_s(i) * inv_scale);
-                } else if (detail::active_l2_soft_constraint<Model>(kp, i)) {
-                    const double w = kp.l2_weight(i);
-                    viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.lam(i) / w);
-                } else {
+                if (detail::hard_constraint_row<Model>(i)) {
                     viol = std::abs(g_raw + kp.s(i) * inv_scale);
+                } else if (detail::active_l1_soft_constraint<Model>(kp, i, config)) {
+                    viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.soft_s(i) * inv_scale);
+                } else {
+                    const double w = detail::effective_l2_soft_weight<Model>(kp, i, config);
+                    viol = std::abs(g_raw + kp.s(i) * inv_scale - kp.lam(i) / w);
                 }
                 if (viol > max_viol) {
                     max_viol = viol;

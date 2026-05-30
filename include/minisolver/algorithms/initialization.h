@@ -71,7 +71,16 @@ struct InitializationKernel {
         update_soft_constraint_weights<Model>(kp);
         double g = kp.g_val(i);
 
-        if (active_mixed_l1_l2_soft_constraint<Model>(kp, i, config)) {
+        if (hard_constraint_row<Model>(i)) { // Hard Constraint
+            // If g <= 0, choose s ~= -g so the initial hard-constraint
+            // residual is small. If g > 0, no positive slack can satisfy
+            // g + s = 0; scale s with the violation magnitude instead of the
+            // tiny floor to keep lambda/s well-conditioned in the first IPM
+            // linear system.
+            double s_val = std::max(initial_slack_floor(config), std::abs(g));
+            kp.s(i) = s_val;
+            kp.lam(i) = mu / s_val;
+        } else if (active_mixed_l1_l2_soft_constraint<Model>(kp, i, config)) {
             initialize_mixed_l1_l2_constraint_primal_dual<Model>(kp, i, mu, config);
         } else if (active_l1_soft_constraint<Model>(kp, i, config)) {
             const double w = kp.l1_weight(i);
@@ -101,8 +110,8 @@ struct InitializationKernel {
             kp.lam(i) = lam_val;
             kp.s(i) = mu / lam_val;
             kp.soft_s(i) = mu / (w - lam_val);
-        } else if (active_l2_soft_constraint<Model>(kp, i)) {
-            const double w = kp.l2_weight(i);
+        } else {
+            const double w = effective_l2_soft_weight<Model>(kp, i, config);
             // Central Path:
             // 1) g + s - lam/w = 0
             // 2) s * lam = mu
@@ -114,15 +123,6 @@ struct InitializationKernel {
 
             kp.lam(i) = std::max(barrier_floor(config), lam_val);
             kp.s(i) = mu / kp.lam(i);
-        } else { // Hard Constraint
-            // If g <= 0, choose s ~= -g so the initial hard-constraint
-            // residual is small. If g > 0, no positive slack can satisfy
-            // g + s = 0; scale s with the violation magnitude instead of the
-            // tiny floor to keep lambda/s well-conditioned in the first IPM
-            // linear system.
-            double s_val = std::max(initial_slack_floor(config), std::abs(g));
-            kp.s(i) = s_val;
-            kp.lam(i) = mu / s_val;
         }
     }
 };
