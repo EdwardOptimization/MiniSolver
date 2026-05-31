@@ -10,6 +10,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -95,6 +96,13 @@ std::streamoff SnapshotStatusOffset()
     return SnapshotHeaderBytes() + SnapshotConfigBytes();
 }
 
+std::streamoff SnapshotTrajectoryOffset(int horizon)
+{
+    return SnapshotStatusOffset() + 2 * static_cast<std::streamoff>(sizeof(std::int32_t))
+        + 3 * static_cast<std::streamoff>(sizeof(double))
+        + static_cast<std::streamoff>(horizon) * static_cast<std::streamoff>(sizeof(double));
+}
+
 class SnapshotCorruptor {
 public:
     explicit SnapshotCorruptor(std::string filename)
@@ -124,6 +132,11 @@ public:
         return overwrite_int32(SnapshotStatusOffset(), value);
     }
 
+    bool set_first_state_raw(int horizon, double value) const
+    {
+        return overwrite_double(SnapshotTrajectoryOffset(horizon), value);
+    }
+
 private:
     bool overwrite_byte(std::streamoff offset, std::uint8_t value) const
     {
@@ -137,6 +150,18 @@ private:
     }
 
     bool overwrite_int32(std::streamoff offset, std::int32_t value) const
+    {
+        std::fstream file(filename_, std::ios::in | std::ios::out | std::ios::binary);
+        if (!file.good()) {
+            return false;
+        }
+        file.seekp(offset);
+        file.write(
+            reinterpret_cast<const char*>(&value), static_cast<std::streamsize>(sizeof(value)));
+        return file.good();
+    }
+
+    bool overwrite_double(std::streamoff offset, double value) const
     {
         std::fstream file(filename_, std::ios::in | std::ios::out | std::ios::binary);
         if (!file.good()) {
@@ -609,6 +634,27 @@ TEST(SolverSnapshotTest, LoadRejectsInvalidSnapshotStatusAtomically)
     MiniSolver<CarModel, 10> solverB(1, Backend::CPU_SERIAL, preserved);
     SnapshotResult load_result = SnapshotIO::load_case(filename, solverB);
     EXPECT_EQ(load_result.status, SnapshotStatus::InvalidSnapshot);
+    EXPECT_EQ(solverB.get_horizon(), 1);
+    EXPECT_DOUBLE_EQ(solverB.get_config().mu_init, 0.321);
+
+    std::remove(filename.c_str());
+}
+
+TEST(SolverSnapshotTest, LoadRejectsNonFiniteTrajectoryDataAtomically)
+{
+    constexpr int N = 2;
+    MiniSolver<CarModel, 10> solverA(N, Backend::CPU_SERIAL);
+    using SnapshotIO = minisolver::SolverSnapshotIO<CarModel, 10>;
+    std::string filename = MakeUniqueTestFilename("test_nonfinite_trajectory_snapshot", ".bin");
+    ASSERT_EQ(SnapshotIO::save_case(filename, solverA).status, SnapshotStatus::OK);
+    ASSERT_TRUE(SnapshotCorruptor(filename).set_first_state_raw(
+        N, std::numeric_limits<double>::quiet_NaN()));
+
+    SolverConfig preserved;
+    preserved.mu_init = 0.321;
+    MiniSolver<CarModel, 10> solverB(1, Backend::CPU_SERIAL, preserved);
+    SnapshotResult load_result = SnapshotIO::load_case(filename, solverB);
+    EXPECT_EQ(load_result.status, SnapshotStatus::NonFiniteData);
     EXPECT_EQ(solverB.get_horizon(), 1);
     EXPECT_DOUBLE_EQ(solverB.get_config().mu_init, 0.321);
 

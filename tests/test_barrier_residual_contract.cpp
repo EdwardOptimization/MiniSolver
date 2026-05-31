@@ -184,6 +184,52 @@ TEST(BarrierResidualContractTest, ConvergenceRejectsLargeTrueComplementarityAtMu
         << "small barrier centrality residual is not enough when true complementarity is large";
 }
 
+TEST(BarrierResidualContractTest, MonotoneBarrierDecreaseWaitsForCentralityReadiness)
+{
+    SolverConfig config;
+    config.barrier_strategy = BarrierStrategy::MONOTONE;
+    config.mu_final = 1e-6;
+    config.mu_linear_decrease_factor = 0.2;
+    config.barrier_tolerance_factor = 0.5;
+
+    EXPECT_DOUBLE_EQ(detail::BarrierUpdateKernel::update_mu(config, 1e-2, 6e-3, 0.0), 1e-2)
+        << "Monotone barrier update should hold mu until centrality residual is ready.";
+    EXPECT_DOUBLE_EQ(detail::BarrierUpdateKernel::update_mu(config, 1e-2, 4e-3, 0.0), 2e-3);
+}
+
+TEST(BarrierResidualContractTest, AdaptiveBarrierTargetsSafeAverageGapWithoutIncreasing)
+{
+    SolverConfig config;
+    config.barrier_strategy = BarrierStrategy::ADAPTIVE;
+    config.mu_final = 1e-6;
+    config.mu_safety_margin = 0.25;
+
+    EXPECT_DOUBLE_EQ(detail::BarrierUpdateKernel::update_mu(config, 1e-2, 0.0, 8e-3), 2e-3)
+        << "Adaptive update should target safety-scaled average complementarity.";
+    EXPECT_DOUBLE_EQ(detail::BarrierUpdateKernel::update_mu(config, 1e-2, 0.0, 8e-2), 1e-2)
+        << "Adaptive update should not increase the current barrier parameter.";
+}
+
+TEST(BarrierResidualContractTest, BarrierUpdateDoesNotDecreaseBelowMuFinal)
+{
+    SolverConfig monotone;
+    monotone.barrier_strategy = BarrierStrategy::MONOTONE;
+    monotone.mu_final = 1e-6;
+    monotone.mu_linear_decrease_factor = 0.1;
+    monotone.barrier_tolerance_factor = 1.0;
+
+    EXPECT_DOUBLE_EQ(
+        detail::BarrierUpdateKernel::update_mu(monotone, 2e-6, 0.0, 0.0), monotone.mu_final);
+
+    SolverConfig adaptive;
+    adaptive.barrier_strategy = BarrierStrategy::ADAPTIVE;
+    adaptive.mu_final = 1e-6;
+    adaptive.mu_safety_margin = 0.1;
+
+    EXPECT_DOUBLE_EQ(
+        detail::BarrierUpdateKernel::update_mu(adaptive, 2e-6, 0.0, 1e-8), adaptive.mu_final);
+}
+
 TEST(BarrierResidualContractTest, PostsolveResidualsRecordBarrierMuSnapshot)
 {
     constexpr int N = 1;
@@ -233,6 +279,48 @@ TEST(BarrierResidualContractTest, PostsolveRejectsInfConstraintResidual)
         << "postsolve must reject Inf model residuals instead of classifying them";
 }
 
+TEST(BarrierResidualContractTest, PostsolveProvesStrictOptimalWhenFreshKktResidualsPass)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = FixedDualResidualRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.tol_con = 1e-6;
+    config.tol_dual = 1e-6;
+    config.tol_mu = 1e-6;
+
+    constexpr double s = 1.0e-8;
+    constexpr double lam = 1.0e-8;
+    constexpr double u = 1.0 - s;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+    solver.set_state_guess(0, 0, 0.0);
+    solver.set_state_guess(1, 0, 0.1 * u);
+    solver.set_control_guess(0, 0, u);
+    for (int k = 0; k <= N; ++k) {
+        solver.set_slack_guess(k, 0, s);
+        solver.set_dual_guess(k, 0, lam);
+    }
+
+    auto& traj = Access::get_trajectory(solver);
+    traj[1].u(0) = u;
+    Access::set_linear_solver(solver, std::make_unique<FakeSolver>(0.0));
+
+    const SolverStatus status = Access::postsolve(solver, SolverStatus::OPTIMAL);
+
+    EXPECT_EQ(status, SolverStatus::OPTIMAL);
+    EXPECT_EQ(solver.get_info().status, SolverStatus::OPTIMAL);
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::OPTIMAL);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::CONVERGED);
+    EXPECT_LE(solver.get_info().primal_inf, config.tol_con);
+    EXPECT_LE(solver.get_info().dual_inf, config.tol_dual);
+    EXPECT_LE(solver.get_info().complementarity_inf, config.tol_mu);
+}
+
 TEST(BarrierResidualContractTest, PostsolveRechecksDualResidualAfterLoopOptimal)
 {
     constexpr int N = 1;
@@ -258,6 +346,40 @@ TEST(BarrierResidualContractTest, PostsolveRechecksDualResidualAfterLoopOptimal)
     const SolverStatus status = Access::postsolve(solver, SolverStatus::OPTIMAL);
     EXPECT_EQ(status, SolverStatus::FEASIBLE)
         << "postsolve must not trust an in-loop OPTIMAL verdict with stale dual residuals";
+    EXPECT_EQ(solver.get_info().status, SolverStatus::FEASIBLE);
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::OPTIMAL);
+    EXPECT_DOUBLE_EQ(solver.get_info().dual_inf, 1.0)
+        << "SolverInfo must report the fresh postsolve dual residual, not stale loop data.";
+}
+
+TEST(BarrierResidualContractTest, PostsolveRejectsNonFiniteDualResidual)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = FixedDualResidualRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+    for (int k = 0; k <= N; ++k) {
+        solver.set_state_guess(k, 0, 0.0);
+        solver.set_slack_guess(k, 0, 1.0);
+        solver.set_dual_guess(k, 0, 0.1);
+    }
+    solver.set_control_guess(0, 0, 0.0);
+
+    Access::set_linear_solver(
+        solver, std::make_unique<FakeSolver>(std::numeric_limits<double>::quiet_NaN()));
+
+    const SolverStatus status = Access::postsolve(solver, SolverStatus::OPTIMAL);
+    EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR)
+        << "postsolve must reject a non-finite fresh dual residual instead of downgrading "
+           "a stale loop OPTIMAL to FEASIBLE or INFEASIBLE.";
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::OPTIMAL);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::NUMERICAL_ERROR);
 }
 
 TEST(BarrierResidualContractTest, PostsolveRechecksPrimalResidualAfterLoopOptimal)
@@ -285,4 +407,9 @@ TEST(BarrierResidualContractTest, PostsolveRechecksPrimalResidualAfterLoopOptima
     const SolverStatus status = Access::postsolve(solver, SolverStatus::OPTIMAL);
     EXPECT_EQ(status, SolverStatus::INFEASIBLE)
         << "postsolve must not trust an in-loop OPTIMAL verdict with stale primal residuals";
+    EXPECT_EQ(solver.get_info().status, SolverStatus::INFEASIBLE);
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::OPTIMAL);
+    EXPECT_GT(solver.get_info().primal_inf, config.tol_con)
+        << "SolverInfo must report the fresh postsolve primal residual that caused downgrade.";
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::POSTSOLVE_INFEASIBLE);
 }

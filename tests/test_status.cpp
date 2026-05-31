@@ -1,6 +1,7 @@
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include "minisolver/solver/solver.h"
+#include "solver_internal_access.h"
 #include <array>
 #include <cmath>
 #include <gtest/gtest.h>
@@ -83,6 +84,14 @@ ApiStatus no_op_infeasible_model_callback(MiniSolver<InfeasibleModel, 10>& /*sol
     return ApiStatus::OK;
 }
 
+struct InfoResetCallbackState {
+    int calls = 0;
+    SolverStatus observed_status = SolverStatus::NUMERICAL_ERROR;
+    TerminationReason observed_reason = TerminationReason::NUMERICAL_ERROR;
+    int observed_iterations = -1;
+    int observed_soc_attempt_count = -1;
+};
+
 // Feasible problem, but an intentionally inconsistent initial trajectory.
 // With max_iters = 0, MiniSolver has only exhausted the iteration budget; it
 // has not proven that the OCP is mathematically infeasible.
@@ -144,6 +153,20 @@ struct FeasibleBudgetModel {
     }
 };
 
+ApiStatus observe_info_at_solve_entry(MiniSolver<FeasibleBudgetModel, 10>& solver, void* user)
+{
+    auto* state = static_cast<InfoResetCallbackState*>(user);
+    ++state->calls;
+    if (state->calls == 1) {
+        const SolverInfo& info = solver.get_info();
+        state->observed_status = info.status;
+        state->observed_reason = info.termination_reason;
+        state->observed_iterations = info.iterations;
+        state->observed_soc_attempt_count = info.soc_attempt_count;
+    }
+    return ApiStatus::OK;
+}
+
 struct DegradedRiccatiModel {
     static const int NX = 1;
     static const int NU = 2;
@@ -203,6 +226,50 @@ TEST(StatusTest, ApiStatusHelpersExposeStableNames)
     EXPECT_FALSE(api_status_ok(ApiStatus::UnknownName));
     EXPECT_STREQ(api_status_to_string(ApiStatus::TerminalControl), "TerminalControl");
     EXPECT_STREQ(api_status_to_string(ApiStatus::NonFiniteValue), "NonFiniteValue");
+}
+
+TEST(StatusTest, SolverStatusAndTerminationReasonStringsCoverKnownEnums)
+{
+    const std::array<std::pair<SolverStatus, const char*>, 11> statuses = { {
+        { SolverStatus::UNSOLVED, "UNSOLVED" },
+        { SolverStatus::OPTIMAL, "OPTIMAL" },
+        { SolverStatus::FEASIBLE, "FEASIBLE" },
+        { SolverStatus::INFEASIBLE, "INFEASIBLE" },
+        { SolverStatus::MAX_ITER, "MAX_ITER" },
+        { SolverStatus::STEP_TOO_SMALL, "STEP_TOO_SMALL" },
+        { SolverStatus::INSUFFICIENT_PROGRESS, "INSUFFICIENT_PROGRESS" },
+        { SolverStatus::LINEAR_SOLVE_FAILED, "LINEAR_SOLVE_FAILED" },
+        { SolverStatus::RESTORATION_FAILED, "RESTORATION_FAILED" },
+        { SolverStatus::INVALID_INPUT, "INVALID_INPUT" },
+        { SolverStatus::NUMERICAL_ERROR, "NUMERICAL_ERROR" },
+    } };
+    for (const auto& [status, name] : statuses) {
+        EXPECT_TRUE(valid_solver_status(status));
+        EXPECT_STREQ(status_to_string(status), name);
+    }
+    EXPECT_FALSE(valid_solver_status(static_cast<SolverStatus>(999)));
+    EXPECT_STREQ(status_to_string(static_cast<SolverStatus>(999)), "UNKNOWN");
+
+    const std::array<std::pair<TerminationReason, const char*>, 14> reasons = { {
+        { TerminationReason::NONE, "NONE" },
+        { TerminationReason::CONVERGED, "CONVERGED" },
+        { TerminationReason::PRIMAL_FEASIBLE, "PRIMAL_FEASIBLE" },
+        { TerminationReason::MAX_ITERATIONS, "MAX_ITERATIONS" },
+        { TerminationReason::FIXED_ITERATION, "FIXED_ITERATION" },
+        { TerminationReason::COST_STAGNATION, "COST_STAGNATION" },
+        { TerminationReason::LINE_SEARCH_FAILED, "LINE_SEARCH_FAILED" },
+        { TerminationReason::LINEAR_SOLVE_FAILED, "LINEAR_SOLVE_FAILED" },
+        { TerminationReason::RESTORATION_FAILED, "RESTORATION_FAILED" },
+        { TerminationReason::INVALID_INPUT, "INVALID_INPUT" },
+        { TerminationReason::NUMERICAL_ERROR, "NUMERICAL_ERROR" },
+        { TerminationReason::POSTSOLVE_INFEASIBLE, "POSTSOLVE_INFEASIBLE" },
+        { TerminationReason::RESIDUAL_STAGNATION, "RESIDUAL_STAGNATION" },
+        { TerminationReason::INSUFFICIENT_PROGRESS, "INSUFFICIENT_PROGRESS" },
+    } };
+    for (const auto& [reason, name] : reasons) {
+        EXPECT_STREQ(termination_reason_to_string(reason), name);
+    }
+    EXPECT_STREQ(termination_reason_to_string(static_cast<TerminationReason>(999)), "UNKNOWN");
 }
 
 TEST(StatusTest, IterationBudgetExhaustionIsNotInfeasibility)
@@ -308,6 +375,41 @@ TEST(StatusTest, RtiFixedIterationProfileStopsAfterOneIteration)
     EXPECT_TRUE(info.dual_inf >= 0.0);
     EXPECT_DOUBLE_EQ(
         info.alpha, solver.get_alpha_log().empty() ? 1.0 : solver.get_alpha_log().back());
+}
+
+TEST(StatusTest, SolverInfoResetsBeforeSolveEntryCallback)
+{
+    using Access = minisolver::test::SolverInternalAccess<FeasibleBudgetModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 0;
+
+    MiniSolver<FeasibleBudgetModel, 10> solver(1, Backend::CPU_SERIAL, config);
+    solver.set_dt(0.1);
+    solver.set_initial_state("x", 10.0);
+
+    ASSERT_EQ(solver.solve(), SolverStatus::MAX_ITER);
+    ASSERT_EQ(solver.get_info().status, SolverStatus::MAX_ITER);
+
+    LineSearchResult stale_soc;
+    stale_soc.soc_attempted = true;
+    Access::record_line_search_diagnostics(solver, stale_soc);
+    ASSERT_EQ(solver.get_info().soc_attempt_count, 1);
+
+    InfoResetCallbackState state;
+    ASSERT_EQ(solver.set_model_update_callback(observe_info_at_solve_entry, &state), ApiStatus::OK);
+
+    (void)solver.solve();
+
+    EXPECT_EQ(state.calls, 1);
+    EXPECT_EQ(state.observed_status, SolverStatus::UNSOLVED)
+        << "A pre-solve callback must not observe the previous solve's public status.";
+    EXPECT_EQ(state.observed_reason, TerminationReason::NONE);
+    EXPECT_EQ(state.observed_iterations, 0);
+    EXPECT_EQ(state.observed_soc_attempt_count, 0)
+        << "Per-solve diagnostic counters should be reset before callback entry.";
+    EXPECT_EQ(solver.get_info().soc_attempt_count, 0);
 }
 
 TEST(StatusTest, SolverInfoReportsDegradedRiccatiStep)

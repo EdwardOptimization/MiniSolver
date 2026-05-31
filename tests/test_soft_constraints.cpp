@@ -135,6 +135,13 @@ std::array<bool, SoftModel::NC> SoftModel::constraint_has_l2 = { false };
 std::array<double, SoftModel::NC> SoftModel::l1_weights = { 0.0 };
 std::array<double, SoftModel::NC> SoftModel::l2_weights = { 0.0 };
 
+struct HardInitializationModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+};
+
 // New-style soft metadata: Python/codegen fixes the L1/L2 structure, and a
 // generated updater fills per-knot runtime weights from parameters.
 struct ParameterWeightedL1Model {
@@ -314,6 +321,46 @@ TEST(SoftConstraintTest, L1TinyWeightInitializationStaysFinite)
     EXPECT_NEAR(kp.g_val(0) + kp.s(0) - kp.soft_s(0), 0.0, 1e-8);
 }
 
+TEST(InitializationTest, HardConstraintInitializesPositiveCentralPath)
+{
+    SolverConfig config;
+    using Knot = KnotPoint<double, HardInitializationModel::NX, HardInitializationModel::NU,
+        HardInitializationModel::NC, HardInitializationModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.g_val(0) = -0.25;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<HardInitializationModel>(
+        kp, 0, mu, config);
+
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_NEAR(kp.s(0) * kp.lam(0), mu, 1e-14);
+    EXPECT_NEAR(kp.g_val(0) + kp.s(0), 0.0, 1e-14);
+}
+
+TEST(InitializationTest, ConstraintInitializationRefreshesRuntimeSoftWeight)
+{
+    SolverConfig config;
+    using Knot = KnotPoint<double, ParameterWeightedL1Model::NX, ParameterWeightedL1Model::NU,
+        ParameterWeightedL1Model::NC, ParameterWeightedL1Model::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.p(0) = 0.75;
+    kp.g_val(0) = -0.25;
+    constexpr double mu = 1e-4;
+
+    detail::InitializationKernel::initialize_constraint_primal_dual<ParameterWeightedL1Model>(
+        kp, 0, mu, config);
+
+    EXPECT_DOUBLE_EQ(kp.l1_weight(0), 0.75);
+    EXPECT_DOUBLE_EQ(kp.l2_weight(0), 0.0);
+    EXPECT_GT(kp.s(0), 0.0);
+    EXPECT_GT(kp.lam(0), 0.0);
+    EXPECT_GT(kp.soft_s(0), 0.0);
+}
+
 TEST(SoftConstraintTest, L1BarrierDerivativeUsesSharedSoftDualFloor)
 {
     SoftModel::set_l1(1e-7);
@@ -339,6 +386,140 @@ TEST(SoftConstraintTest, L1BarrierDerivativeUsesSharedSoftDualFloor)
     EXPECT_NEAR(kp.Q_bar(0, 0) - kp.Q(0, 0), expected_sigma, 1e-15)
         << "Riccati barrier derivatives must use the same L1 soft-dual floor as "
            "initialization/restoration.";
+}
+
+TEST(SoftConstraintTest, HardBarrierDerivativeUsesLamOverS)
+{
+    SolverConfig config;
+    using Knot = KnotPoint<double, HardInitializationModel::NX, HardInitializationModel::NU,
+        HardInitializationModel::NC, HardInitializationModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.s(0) = 2.0;
+    kp.lam(0) = 0.5;
+    kp.C(0, 0) = 1.0;
+
+    RiccatiWorkspace<Knot> workspace;
+    compute_barrier_derivatives<Knot, HardInitializationModel>(kp, 1e-2, config, workspace);
+
+    EXPECT_NEAR(kp.Q_bar(0, 0) - kp.Q(0, 0), kp.lam(0) / kp.s(0), 1e-15)
+        << "Hard rows should assemble the standard diagonal sigma = lam / s.";
+}
+
+TEST(SoftConstraintTest, PureL2BarrierDerivativeUsesEffectiveWeight)
+{
+    SoftModel::set_l2(3.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.s(0) = 1.25;
+    kp.lam(0) = 0.7;
+    kp.C(0, 0) = 1.0;
+    SoftModel::update_soft_constraint_weights(kp);
+
+    RiccatiWorkspace<Knot> workspace;
+    compute_barrier_derivatives<Knot, SoftModel>(kp, 5e-2, config, workspace);
+
+    const double w = detail::effective_l2_soft_weight<SoftModel>(kp, 0, config);
+    const double expected_sigma = 1.0 / (kp.s(0) / kp.lam(0) + 1.0 / w);
+
+    EXPECT_NEAR(kp.Q_bar(0, 0) - kp.Q(0, 0), expected_sigma, 1e-15);
+}
+
+TEST(SoftConstraintTest, HardDualRecoveryMatchesBarrierDerivativeFormula)
+{
+    SolverConfig config;
+    using Knot = KnotPoint<double, HardInitializationModel::NX, HardInitializationModel::NU,
+        HardInitializationModel::NC, HardInitializationModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.s(0) = 1.25;
+    kp.lam(0) = 0.7;
+    kp.g_val(0) = -0.4;
+    kp.C(0, 0) = 1.0;
+    kp.D(0, 0) = 0.0;
+    kp.dx(0) = 0.2;
+    constexpr double mu = 5e-2;
+
+    const double r_y = kp.s(0) * kp.lam(0) - mu;
+    const double r_prim = kp.g_val(0) + kp.s(0);
+    const double constraint_step = kp.C(0, 0) * kp.dx(0);
+    const double expected_dlam = (-r_y + kp.lam(0) * (r_prim + constraint_step)) / kp.s(0);
+    const double expected_ds = -r_prim - constraint_step;
+
+    recover_dual_search_directions<Knot, HardInitializationModel>(kp, mu, config);
+
+    EXPECT_NEAR(kp.dlam(0), expected_dlam, 1e-15);
+    EXPECT_NEAR(kp.ds(0), expected_ds, 1e-15);
+}
+
+TEST(SoftConstraintTest, PureL1DualRecoveryUsesImplicitSoftDual)
+{
+    SoftModel::set_l1(2.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.s(0) = 1.25;
+    kp.lam(0) = 0.7;
+    kp.soft_s(0) = 0.4;
+    kp.g_val(0) = -0.85;
+    kp.C(0, 0) = 1.0;
+    kp.D(0, 0) = 0.0;
+    kp.dx(0) = 0.2;
+    SoftModel::update_soft_constraint_weights(kp);
+
+    constexpr double mu = 5e-2;
+    const double soft_dual = SoftModel::l1_weights[0] - kp.lam(0);
+    const double r_y = kp.s(0) * kp.lam(0) - mu;
+    const double r_eq = kp.g_val(0) + kp.s(0) - kp.soft_s(0);
+    const double r_z = kp.soft_s(0) * soft_dual - mu;
+    const double sigma = 1.0 / (kp.s(0) / kp.lam(0) + kp.soft_s(0) / soft_dual);
+    const double constraint_step = kp.C(0, 0) * kp.dx(0);
+    const double expected_dlam
+        = sigma * (constraint_step + r_eq - r_y / kp.lam(0) + r_z / soft_dual);
+    const double expected_ds = (-r_y - kp.s(0) * expected_dlam) / kp.lam(0);
+    const double expected_dsoft_s = -(r_z - kp.soft_s(0) * expected_dlam) / soft_dual;
+
+    recover_dual_search_directions<Knot, SoftModel>(kp, mu, config);
+
+    EXPECT_NEAR(kp.dlam(0), expected_dlam, 1e-15);
+    EXPECT_NEAR(kp.ds(0), expected_ds, 1e-15);
+    EXPECT_NEAR(kp.dsoft_s(0), expected_dsoft_s, 1e-15);
+}
+
+TEST(SoftConstraintTest, PureL2DualRecoveryUsesEffectiveWeight)
+{
+    SoftModel::set_l2(3.0);
+
+    SolverConfig config;
+    using Knot = KnotPoint<double, SoftModel::NX, SoftModel::NU, SoftModel::NC, SoftModel::NP>;
+    Knot kp;
+    kp.set_zero();
+    kp.s(0) = 1.25;
+    kp.lam(0) = 0.7;
+    kp.g_val(0) = -0.5;
+    kp.C(0, 0) = 1.0;
+    kp.D(0, 0) = 0.0;
+    kp.dx(0) = 0.2;
+    SoftModel::update_soft_constraint_weights(kp);
+
+    constexpr double mu = 5e-2;
+    const double w = detail::effective_l2_soft_weight<SoftModel>(kp, 0, config);
+    const double r_y = kp.s(0) * kp.lam(0) - mu;
+    const double r_prim_l2 = kp.g_val(0) + kp.s(0) - kp.lam(0) / w;
+    const double constraint_step = kp.C(0, 0) * kp.dx(0);
+    const double expected_dlam
+        = (-r_y + kp.lam(0) * (r_prim_l2 + constraint_step)) / (kp.s(0) + kp.lam(0) / w);
+    const double expected_ds = -r_prim_l2 - constraint_step + expected_dlam / w;
+
+    recover_dual_search_directions<Knot, SoftModel>(kp, mu, config);
+
+    EXPECT_NEAR(kp.dlam(0), expected_dlam, 1e-15);
+    EXPECT_NEAR(kp.ds(0), expected_ds, 1e-15);
 }
 
 TEST(SoftConstraintTest, MixedL1L2InitializationUsesCombinedSoftDual)
@@ -1269,4 +1450,64 @@ TEST(ComparisonTest, MixedL1L2_SoftConstraint)
     EXPECT_NEAR(soft_s_if, slk_man, 1e-3)
         << "Mixed soft constraints must use one shared relaxation variable, "
            "matching an explicit slk in w1*slk + 0.5*w2*slk^2.";
+}
+
+TEST(ComparisonTest, MixedL1L2SoftConstraintWithMeritLineSearch)
+{
+    SolverConfig config;
+    config.tol_con = 1e-4;
+    config.tol_dual = 1e-4;
+    config.max_iters = 120;
+    config.integrator = IntegratorType::EULER_EXPLICIT;
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
+    config.line_search_type = LineSearchType::MERIT;
+    config.print_level = PrintLevel::NONE;
+
+    constexpr int N = 2;
+    InterfaceModel::set_l1_l2(1.0, 2.0);
+
+    MiniSolver<InterfaceModel, 5> solver_if(N, Backend::CPU_SERIAL, config);
+    solver_if.set_dt(1.0);
+    solver_if.set_initial_state("x", 0.0);
+    solver_if.set_control_guess(0, "u", 10.0);
+    solver_if.set_control_guess(1, "u", 0.0);
+    solver_if.rollout_dynamics();
+
+    const SolverStatus status = solver_if.solve();
+    const double x_if = solver_if.get_state(1, 0);
+    const double soft_s_if = solver_if.get_constraint_val(1, 0) + solver_if.get_slack(1, 0);
+
+    EXPECT_NE(status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_NEAR(x_if, 7.25, 1e-3)
+        << "Merit line search must use the same mixed L1+L2 soft semantics as filter.";
+    EXPECT_NEAR(soft_s_if, 2.25, 1e-3);
+}
+
+TEST(ComparisonTest, L2SoftConstraintWithMeritLineSearch)
+{
+    SolverConfig config;
+    config.tol_con = 1e-4;
+    config.tol_dual = 1e-4;
+    config.max_iters = 120;
+    config.integrator = IntegratorType::EULER_EXPLICIT;
+    config.barrier_strategy = BarrierStrategy::MEHROTRA;
+    config.line_search_type = LineSearchType::MERIT;
+    config.print_level = PrintLevel::NONE;
+
+    constexpr int N = 2;
+    InterfaceModel::set_l2(1.0);
+
+    MiniSolver<InterfaceModel, 5> solver_if(N, Backend::CPU_SERIAL, config);
+    solver_if.set_dt(1.0);
+    solver_if.set_initial_state("x", 0.0);
+    solver_if.set_control_guess(0, "u", 10.0);
+    solver_if.set_control_guess(1, "u", 0.0);
+    solver_if.rollout_dynamics();
+
+    const SolverStatus status = solver_if.solve();
+    const double x_if = solver_if.get_state(1, 0);
+
+    EXPECT_NE(status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_NEAR(x_if, 8.333, 1e-3)
+        << "Merit line search must use the L2 soft-row penalty semantics.";
 }

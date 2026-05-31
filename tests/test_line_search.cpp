@@ -7,6 +7,7 @@
 #include "minisolver/algorithms/riccati_solver.h"
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
+#include "minisolver/solver/line_search_utils.h"
 #include "minisolver/solver/solver.h"
 #include "solver_internal_access.h"
 #include <array>
@@ -36,6 +37,18 @@ public:
         }
         return true;
     }
+};
+
+struct MixedBoundaryModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { true };
+    static constexpr bool any_l1_constraints = true;
+    static constexpr bool any_l2_constraints = true;
 };
 
 // =============================================================================
@@ -72,6 +85,37 @@ TEST(LineSearchTest, FilterAcceptance)
     EXPECT_GT(alpha, 0.0);
     EXPECT_LE(alpha, 1.0);
     EXPECT_LT(trajectory.active()[0].x(0), 10.0);
+    EXPECT_NEAR(trajectory.active()[0].x(0), 10.0 - alpha, 1e-12);
+}
+
+TEST(LineSearchTest, FractionToBoundaryProtectsMixedSoftInterior)
+{
+    using Knot = KnotPoint<double, MixedBoundaryModel::NX, MixedBoundaryModel::NU,
+        MixedBoundaryModel::NC, MixedBoundaryModel::NP>;
+    std::array<Knot, 1> traj;
+    SolverConfig config;
+    config.min_barrier_slack = 1e-12;
+    constexpr double tau = 0.995;
+
+    traj[0].set_zero();
+    traj[0].s(0) = 1.0;
+    traj[0].lam(0) = 0.5;
+    traj[0].soft_s(0) = 0.4;
+    traj[0].l1_weight(0) = 2.0;
+    traj[0].l2_weight(0) = 3.0;
+    traj[0].dsoft_s(0) = -10.0;
+
+    double alpha
+        = fraction_to_boundary_rule<decltype(traj), MixedBoundaryModel>(traj, 0, tau, config);
+    EXPECT_NEAR(alpha, tau * 0.4 / 10.0, 1e-15);
+
+    traj[0].dsoft_s(0) = 0.0;
+    traj[0].dlam(0) = 10.0;
+    const double soft_dual = detail::l1_soft_dual_gap<MixedBoundaryModel>(traj[0], 0)
+        - detail::l1_soft_dual_floor(traj[0].l1_weight(0), config);
+
+    alpha = fraction_to_boundary_rule<decltype(traj), MixedBoundaryModel>(traj, 0, tau, config);
+    EXPECT_NEAR(alpha, tau * soft_dual / 10.0, 1e-15);
 }
 
 // =============================================================================
@@ -271,6 +315,54 @@ struct MeritOverflowDphiModel {
     {
         kp.cost = T(0);
         kp.q(0) = std::numeric_limits<T>::max();
+        kp.r.setZero();
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>&) { }
+};
+
+struct MeritOverflowPhiModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> out;
+        out(0) = x(0) + u(0) * dt;
+        return out;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = T(1);
+        kp.B(0, 0) = T(dt);
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = (kp.x(0) > T(0.5)) ? std::numeric_limits<T>::infinity() : kp.x(0) * kp.x(0);
+        kp.q(0) = T(0);
         kp.r.setZero();
         kp.Q.setZero();
         kp.R.setZero();
@@ -857,6 +949,7 @@ TEST(LineSearchTest, FilterAcceptanceUsesTrueResidualNotQpResidual)
     EXPECT_GT(alpha, 0.0)
         << "Filter globalization should evaluate true nonlinear residuals, not the QP/IPM "
            "linearization residual packet.";
+    EXPECT_NEAR(trajectory.active()[0].g_true(0), trajectory.active()[0].x(0), 1e-12);
 }
 
 TEST(LineSearchTest, FilterRejectsTrialAboveThetaMax)
@@ -998,6 +1091,7 @@ TEST(LineSearchTest, MeritAcceptanceUsesTrueResidualNotQpResidual)
     EXPECT_GT(alpha, 0.0)
         << "Merit globalization should evaluate true nonlinear residuals, not the QP/IPM "
            "linearization residual packet.";
+    EXPECT_NEAR(trajectory.active()[0].g_true(0), trajectory.active()[0].x(0), 1e-12);
 }
 
 TEST(LineSearchTest, MeritArmijoDoesNotBuildFiniteDifferenceProbe)
@@ -1030,6 +1124,7 @@ TEST(LineSearchTest, MeritArmijoDoesNotBuildFiniteDifferenceProbe)
     const double alpha = result.alpha;
 
     EXPECT_GT(alpha, 0.0);
+    EXPECT_NEAR(trajectory.active()[0].x(0), 1.0 - 0.5 * alpha, 1e-12);
     EXPECT_EQ(Model::cost_evaluations, 1)
         << "Merit Armijo should use analytic dphi instead of building an extra finite-difference "
            "trial point before the first backtracking evaluation.";
@@ -1062,6 +1157,63 @@ TEST(LineSearchTest, MeritNonFiniteDphiReturnsNumericalError)
     EXPECT_EQ(result.status, SolverStatus::NUMERICAL_ERROR)
         << "Finite but huge model gradients can overflow the merit directional derivative; "
            "line search should surface that numerical failure instead of coercing dphi to 0.";
+}
+
+TEST(LineSearchTest, MeritNonFiniteInitialPhiReturnsNumericalError)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::MERIT;
+    config.line_search_max_iters = 1;
+    config.armijo_c1 = 0.0;
+
+    using Model = MeritOverflowPhiModel;
+    MeritLineSearch<Model, 2> ls;
+    RolloutStubLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2> trajectory(N);
+    std::array<double, 2> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 1.0;
+    active[0].dx(0) = -1.0;
+    Model::compute_cost_gn(active[0]);
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_EQ(result.status, SolverStatus::NUMERICAL_ERROR)
+        << "A non-finite initial merit value is not a valid Armijo baseline.";
+}
+
+TEST(LineSearchTest, MeritNonFiniteTrialPhiReturnsNumericalError)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::MERIT;
+    config.line_search_max_iters = 1;
+    config.armijo_c1 = 0.0;
+
+    using Model = MeritOverflowPhiModel;
+    MeritLineSearch<Model, 2> ls;
+    RolloutStubLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2> trajectory(N);
+    std::array<double, 2> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 0.0;
+    active[0].dx(0) = 1.0;
+    Model::compute_cost_gn(active[0]);
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_EQ(result.status, SolverStatus::NUMERICAL_ERROR)
+        << "A non-finite trial merit value must surface as numerical failure, not backtracking "
+           "noise.";
 }
 
 TEST(LineSearchTest, MeritNonFiniteDphiPropagatesToSolverStatus)
@@ -1318,6 +1470,61 @@ TEST(LineSearchTest, NoLineSearchRefreshesAcceptedPointEvaluations)
     EXPECT_NEAR(after[0].u(0), 1.0, 1e-12);
     EXPECT_NEAR(after[0].cost, 82.0, 1e-12); // 9^2 + 1^2
     EXPECT_NEAR(after[0].f_resid(0), 9.1, 1e-12); // x + u*dt
+}
+
+TEST(LineSearchTest, NoLineSearchAppliesFractionToBoundary)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::NONE;
+    config.line_search_tau = 0.5;
+
+    using Model = SocHardResidualModel;
+    NoLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    active[0].ds(0) = -2.0;
+    active[0].dlam(0) = 0.0;
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+
+    EXPECT_NEAR(result.alpha, 0.25, 1e-15);
+    EXPECT_NEAR(trajectory.active()[0].s(0), 0.5, 1e-15);
+}
+
+TEST(LineSearchTest, NoLineSearchTinyAlphaReturnsZeroStepResult)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::NONE;
+    config.line_search_tau = 0.995;
+
+    using Model = SocHardResidualModel;
+    NoLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    active[0].ds(0) = -1.0e12;
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+
+    EXPECT_DOUBLE_EQ(result.alpha, 0.0);
+    EXPECT_EQ(result.status, SolverStatus::UNSOLVED);
 }
 
 TEST(LineSearchTest, NoLineSearchDoesNotUpdateTerminalControl)

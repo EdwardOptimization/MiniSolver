@@ -916,6 +916,31 @@ ApiStatus recursive_solve_once_inside_callback(CallbackSolver& solver, void* use
     return ApiStatus::OK;
 }
 
+ApiStatus replacement_model_update_callback(CallbackSolver& /*solver*/, void* user)
+{
+    auto* state = static_cast<CallbackUpdateState*>(user);
+    ++state->calls;
+    return ApiStatus::OK;
+}
+
+ApiStatus set_callback_inside_callback_rejected(CallbackSolver& solver, void* user)
+{
+    auto* state = static_cast<CallbackUpdateState*>(user);
+    ++state->calls;
+
+    state->api_status = solver.set_model_update_callback(replacement_model_update_callback, state);
+    return ApiStatus::OK;
+}
+
+ApiStatus clear_callback_inside_callback_rejected(CallbackSolver& solver, void* user)
+{
+    auto* state = static_cast<CallbackUpdateState*>(user);
+    ++state->calls;
+
+    state->api_status = solver.clear_model_update_callback();
+    return ApiStatus::OK;
+}
+
 TEST(ConfigRegressionTest, ModelUpdateCallbackFailureDuringIterationStopsBeforeEvaluation)
 {
     CallbackUpdateModel::reset_observations();
@@ -1051,6 +1076,52 @@ TEST(ConfigRegressionTest, ModelUpdateCallbackRecursiveSolveIsRejected)
 
     EXPECT_EQ(state.nested_status, SolverStatus::INVALID_INPUT);
     EXPECT_EQ(status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::INVALID_INPUT);
+}
+
+TEST(ConfigRegressionTest, ModelUpdateCallbackSetCallbackIsRejectedWithoutMutation)
+{
+    CallbackUpdateModel::reset_observations();
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 3;
+
+    CallbackSolver solver(2, Backend::CPU_SERIAL, config);
+    CallbackUpdateState state;
+
+    ASSERT_EQ(solver.set_model_update_callback(set_callback_inside_callback_rejected, &state),
+        ApiStatus::OK);
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(state.calls, 1);
+    EXPECT_EQ(state.api_status, ApiStatus::InvalidArgument);
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::INVALID_INPUT);
+}
+
+TEST(ConfigRegressionTest, ModelUpdateCallbackClearCallbackIsRejectedWithoutMutation)
+{
+    CallbackUpdateModel::reset_observations();
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 3;
+
+    CallbackSolver solver(2, Backend::CPU_SERIAL, config);
+    CallbackUpdateState state;
+
+    ASSERT_EQ(solver.set_model_update_callback(clear_callback_inside_callback_rejected, &state),
+        ApiStatus::OK);
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::INVALID_INPUT);
+    EXPECT_EQ(state.calls, 1);
+    EXPECT_EQ(state.api_status, ApiStatus::InvalidArgument);
     EXPECT_EQ(solver.get_info().loop_status, SolverStatus::INVALID_INPUT);
     EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::INVALID_INPUT);
 }

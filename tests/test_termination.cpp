@@ -38,6 +38,79 @@ public:
     }
 };
 
+struct AcceptedStepFeasibilityModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, double, IntegratorType)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = kp.x(0);
+        kp.C(0, 0) = T(1);
+        kp.D.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setZero();
+        kp.R.setIdentity();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+template <typename TrajArray>
+class AcceptedStepFeasibilityRiccatiSolver
+    : public RiccatiSolver<TrajArray, AcceptedStepFeasibilityModel> {
+public:
+    int calls = 0;
+
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        ++calls;
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx(0) = -2.0;
+            traj[k].du.setZero();
+            traj[k].ds(0) = 1.0 - traj[k].s(0);
+            traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
+            traj[k].r_bar.setZero();
+        }
+        return true;
+    }
+};
+
 ApiStatus no_op_bug_model_callback(MiniSolver<BugTestModel, 10>& /*solver*/, void* user)
 {
     if (user != nullptr) {
@@ -252,6 +325,68 @@ TEST(TerminationTest, RtiFixedIterationDoesNotMaskLinearSolveFailure)
     EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::LINEAR_SOLVE_FAILED);
 }
 
+TEST(TerminationTest, LinearSolveRetriesEscalateRegularizationWithinBounds)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = AlwaysFailRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.barrier_strategy = BarrierStrategy::MONOTONE;
+    config.max_iters = 1;
+    config.linear_solve_max_attempts = 3;
+    config.reg_init = 1e-4;
+    config.reg_min = 1e-5;
+    config.reg_max = 5e-3;
+    config.reg_scale_up = 10.0;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::LINEAR_SOLVE_FAILED);
+    EXPECT_EQ(fake_solver_ptr->calls, config.linear_solve_max_attempts);
+    EXPECT_EQ(
+        solver.get_info().regularization_escalation_count, config.linear_solve_max_attempts - 1);
+    EXPECT_DOUBLE_EQ(Access::reg(solver), config.reg_max)
+        << "Failed retries should scale regularization up and clamp at reg_max.";
+}
+
+TEST(TerminationTest, SuccessfulLinearSolveDecaysRegularizationWhenAlphaIsHealthy)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+    using FakeSolver = StalledDualRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.barrier_strategy = BarrierStrategy::MONOTONE;
+    config.line_search_type = LineSearchType::NONE;
+    config.max_iters = 1;
+    config.linear_solve_max_attempts = 1;
+    config.reg_init = 1e-2;
+    config.reg_min = 1e-6;
+    config.reg_scale_down = 10.0;
+    config.enable_residual_stagnation_detection = false;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    (void)solver.solve();
+
+    EXPECT_EQ(fake_solver_ptr->calls, 1);
+    EXPECT_DOUBLE_EQ(Access::reg(solver), 1e-3)
+        << "A successful linear solve with the default healthy alpha should cool reg.";
+}
+
 TEST(TerminationTest, AcceptableNmpcPrimalFeasibleSkipsDirectionFailure)
 {
     constexpr int N = 1;
@@ -360,6 +495,47 @@ TEST(TerminationTest, AcceptableNmpcInvalidReuseGuessDoesNotSkipDirectionSolve)
         << "An effectively cold REUSE_PRIMAL_DUAL solve should still attempt a direction "
            "solve even if the primal trajectory is already feasible.";
     EXPECT_GT(fake_solver_ptr->calls, 0);
+}
+
+TEST(TerminationTest, AcceptableNmpcAcceptedStepRefreshesPrimalResidual)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<AcceptedStepFeasibilityModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<AcceptedStepFeasibilityModel, 10>;
+    using FakeSolver = AcceptedStepFeasibilityRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.termination_profile = TerminationProfile::ACCEPTABLE_NMPC;
+    config.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    config.line_search_type = LineSearchType::NONE;
+    config.max_iters = 10;
+    config.tol_con = 1e-9;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(0.1), ApiStatus::OK);
+    for (int k = 0; k <= N; ++k) {
+        ASSERT_EQ(solver.set_state_guess(k, 0, 1.0), ApiStatus::OK);
+        ASSERT_EQ(solver.set_slack_guess(k, 0, 0.1), ApiStatus::OK);
+        ASSERT_EQ(solver.set_dual_guess(k, 0, 0.1), ApiStatus::OK);
+    }
+    ASSERT_EQ(solver.set_control_guess(0, 0, 0.0), ApiStatus::OK);
+
+    auto fake_solver = std::make_unique<FakeSolver>();
+    FakeSolver* fake_solver_ptr = fake_solver.get();
+    Access::set_linear_solver(solver, std::move(fake_solver));
+
+    const SolverStatus status = solver.solve();
+    const SolverInfo& info = solver.get_info();
+
+    EXPECT_EQ(status, SolverStatus::FEASIBLE)
+        << "ACCEPTABLE_NMPC should stop only after the accepted trajectory has fresh primal "
+           "residuals within tolerance.";
+    EXPECT_EQ(info.loop_status, SolverStatus::FEASIBLE);
+    EXPECT_EQ(info.termination_reason, TerminationReason::PRIMAL_FEASIBLE);
+    EXPECT_EQ(info.iterations, 1);
+    EXPECT_EQ(fake_solver_ptr->calls, 1);
+    EXPECT_LE(info.primal_inf, config.tol_con);
 }
 
 TEST(TerminationTest, ResidualStagnationLoopStatusWaitsForPostsolveFeasibleQuality)

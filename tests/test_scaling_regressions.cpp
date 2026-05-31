@@ -265,6 +265,26 @@ struct NaNConstraintScaleModel {
     }
 };
 
+struct RowScaledSocConstraintModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static void compute_soc_constraints(
+        const KnotPoint<T, NX, NU, NC, NP>&, KnotPoint<T, NX, NU, NC, NP>& trial)
+    {
+        trial.g_val(0) = T(8.0);
+    }
+};
+
 struct RowScaledL2SoftMetricModel {
     static const int NX = 1;
     static const int NU = 1;
@@ -286,6 +306,130 @@ struct RowScaledL2SoftMetricModel {
     {
         kp.l1_weight(0) = T(0);
         kp.l2_weight(0) = T(2.0);
+    }
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, double, IntegratorType)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        const T scaled_physical_residual = static_cast<T>(1000.0) * (kp.x(0) - static_cast<T>(1.0));
+        kp.g_val(0) = scaled_physical_residual;
+        kp.C(0, 0) = static_cast<T>(1000.0);
+        kp.D.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setIdentity();
+        kp.R.setIdentity();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+struct RowScaledL1SoftMetricModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { false };
+    static constexpr bool any_l1_constraints = true;
+    static constexpr bool any_l2_constraints = false;
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(2.0);
+        kp.l2_weight(0) = T(0.0);
+    }
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, double, IntegratorType)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        const T scaled_physical_residual = static_cast<T>(1000.0) * (kp.x(0) - static_cast<T>(1.0));
+        kp.g_val(0) = scaled_physical_residual;
+        kp.C(0, 0) = static_cast<T>(1000.0);
+        kp.D.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setIdentity();
+        kp.R.setIdentity();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+struct RowScaledMixedSoftMetricModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+    static constexpr std::array<bool, NC> constraint_has_l1 = { true };
+    static constexpr std::array<bool, NC> constraint_has_l2 = { true };
+    static constexpr bool any_l1_constraints = true;
+    static constexpr bool any_l2_constraints = true;
+
+    template <typename T>
+    static void update_soft_constraint_weights(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.l1_weight(0) = T(2.0);
+        kp.l2_weight(0) = T(3.0);
     }
 
     template <typename T>
@@ -403,6 +547,83 @@ TEST(ScalingRegressionTest, AutomaticRowScalingNormalizesInternalPrimalMetric)
         << "Diagnostics should still expose the unscaled active IPM residual.";
 }
 
+TEST(ScalingRegressionTest, AutomaticRowScalingScalesConstraintPacketsOnly)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+
+    KnotPoint<double, BadlyScaledEquivalentModel::NX, BadlyScaledEquivalentModel::NU,
+        BadlyScaledEquivalentModel::NC, BadlyScaledEquivalentModel::NP>
+        kp;
+    kp.set_zero();
+    kp.x(0) = 2.0;
+
+    detail::evaluate_model_stage<BadlyScaledEquivalentModel>(kp, config, 0.1, false, true);
+
+    EXPECT_DOUBLE_EQ(kp.x(0), 2.0);
+    EXPECT_NEAR(kp.constraint_row_scale(0), 1.0, 1e-12);
+    EXPECT_NEAR(kp.constraint_row_scale(1), 1.0e-3, 1e-12);
+    EXPECT_NEAR(kp.g_unscaled(0), 1.0, 1e-12);
+    EXPECT_NEAR(kp.g_unscaled(1), 1000.0, 1e-12);
+    EXPECT_NEAR(kp.g_val(0), 1.0, 1e-12);
+    EXPECT_NEAR(kp.g_val(1), 1.0, 1e-12);
+    EXPECT_NEAR(kp.g_true(0), 1.0, 1e-12);
+    EXPECT_NEAR(kp.g_true(1), 1.0, 1e-12);
+    EXPECT_NEAR(kp.C(0, 0), 1.0, 1e-12);
+    EXPECT_NEAR(kp.C(1, 0), 1.0, 1e-12);
+}
+
+TEST(ScalingRegressionTest, RowScalingReusesExistingScaleWhenRefreshDisabled)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+
+    KnotPoint<double, BadlyScaledEquivalentModel::NX, BadlyScaledEquivalentModel::NU,
+        BadlyScaledEquivalentModel::NC, BadlyScaledEquivalentModel::NP>
+        kp;
+    kp.set_zero();
+    kp.x(0) = 2.0;
+    kp.constraint_row_scale(0) = 0.5;
+    kp.constraint_row_scale(1) = 0.25;
+
+    detail::evaluate_model_stage<BadlyScaledEquivalentModel>(kp, config, 0.1, false, false);
+
+    EXPECT_NEAR(kp.constraint_row_scale(0), 0.5, 1e-12);
+    EXPECT_NEAR(kp.constraint_row_scale(1), 0.25, 1e-12);
+    EXPECT_NEAR(kp.g_unscaled(0), 1.0, 1e-12);
+    EXPECT_NEAR(kp.g_unscaled(1), 1000.0, 1e-12);
+    EXPECT_NEAR(kp.g_val(0), 0.5, 1e-12);
+    EXPECT_NEAR(kp.g_val(1), 250.0, 1e-12);
+    EXPECT_NEAR(kp.g_true(0), 0.5, 1e-12);
+    EXPECT_NEAR(kp.g_true(1), 250.0, 1e-12);
+    EXPECT_NEAR(kp.C(0, 0), 0.5, 1e-12);
+    EXPECT_NEAR(kp.C(1, 0), 250.0, 1e-12);
+}
+
+TEST(ScalingRegressionTest, SocConstraintRowScalingReusesCandidateScale)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+
+    KnotPoint<double, RowScaledSocConstraintModel::NX, RowScaledSocConstraintModel::NU,
+        RowScaledSocConstraintModel::NC, RowScaledSocConstraintModel::NP>
+        active;
+    KnotPoint<double, RowScaledSocConstraintModel::NX, RowScaledSocConstraintModel::NU,
+        RowScaledSocConstraintModel::NC, RowScaledSocConstraintModel::NP>
+        trial;
+    active.set_zero();
+    trial.set_zero();
+    trial.constraint_row_scale(0) = 0.25;
+
+    detail::evaluate_soc_constraints<RowScaledSocConstraintModel>(active, trial, config);
+
+    EXPECT_NEAR(trial.constraint_row_scale(0), 0.25, 1e-12);
+    EXPECT_NEAR(trial.g_val(0), 2.0, 1e-12);
+}
+
 TEST(ScalingRegressionTest, L2SoftUnscaledResidualScalesDualRelaxation)
 {
     SolverConfig config;
@@ -419,6 +640,44 @@ TEST(ScalingRegressionTest, L2SoftUnscaledResidualScalesDualRelaxation)
         << "L2 soft initialization satisfies the scaled residual g + s - lambda/w.";
     EXPECT_NEAR(report.info.unscaled_primal_inf, 0.0, 1e-7)
         << "The complete L2 relaxation term, s - lambda/w, must be transformed back "
+           "through the inverse row scale.";
+}
+
+TEST(ScalingRegressionTest, L1SoftUnscaledResidualScalesSharedRelaxation)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 0;
+    config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+
+    const ScalingBaselineReport report
+        = run_initial_feasibility_snapshot<RowScaledL1SoftMetricModel>(2.0, config);
+
+    EXPECT_NE(report.status, SolverStatus::NUMERICAL_ERROR);
+    ASSERT_TRUE(report.info.constraint_scaling_active);
+    EXPECT_NEAR(report.info.primal_inf, 0.0, 1e-10)
+        << "L1 soft initialization satisfies the scaled residual g + s - soft_s.";
+    EXPECT_NEAR(report.info.unscaled_primal_inf, 0.0, 1e-7)
+        << "The L1 relaxation term, s - soft_s, must be transformed back through "
+           "the inverse row scale.";
+}
+
+TEST(ScalingRegressionTest, MixedSoftUnscaledResidualScalesSharedRelaxation)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 0;
+    config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+
+    const ScalingBaselineReport report
+        = run_initial_feasibility_snapshot<RowScaledMixedSoftMetricModel>(2.0, config);
+
+    EXPECT_NE(report.status, SolverStatus::NUMERICAL_ERROR);
+    ASSERT_TRUE(report.info.constraint_scaling_active);
+    EXPECT_NEAR(report.info.primal_inf, 0.0, 1e-10)
+        << "Mixed soft initialization satisfies the scaled residual g + s - soft_s.";
+    EXPECT_NEAR(report.info.unscaled_primal_inf, 0.0, 1e-7)
+        << "The shared mixed relaxation term, s - soft_s, must be transformed back "
            "through the inverse row scale.";
 }
 
