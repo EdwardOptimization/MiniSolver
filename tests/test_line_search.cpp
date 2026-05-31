@@ -51,6 +51,71 @@ struct MixedBoundaryModel {
     static constexpr bool any_l2_constraints = true;
 };
 
+struct BasicFilterAcceptanceModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> out;
+        out(0) = x(0) + u(0) * dt;
+        return out;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = 1.0;
+        kp.B(0, 0) = dt;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = kp.x(0) * kp.x(0);
+        kp.q(0) = 2.0 * kp.x(0);
+        kp.r.setZero();
+        kp.Q(0, 0) = 2.0;
+        kp.R.setZero();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>&) { }
+};
+
+class BasicFilterLinearSolver
+    : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2>::TrajArray> {
+public:
+    using TrajArray = Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2>::TrajArray;
+
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx = -0.1 * traj[k].x;
+            traj[k].du.setZero();
+        }
+        return true;
+    }
+};
+
 // =============================================================================
 // Filter Line Search
 // =============================================================================
@@ -59,22 +124,23 @@ TEST(LineSearchTest, FilterAcceptance)
     SolverConfig config;
     config.line_search_type = LineSearchType::FILTER;
 
-    constexpr int N = 10;
-    using Model = CarModel;
-    using Strategy = FilterLineSearch<Model, N>;
+    constexpr int N = 0;
+    constexpr int MAX_N = 2;
+    using Model = BasicFilterAcceptanceModel;
+    using Strategy = FilterLineSearch<Model, MAX_N>;
 
     Strategy ls;
-    MockLinearSolver linear_solver;
+    BasicFilterLinearSolver linear_solver;
 
-    Trajectory<KnotPoint<double, 4, 2, 5, 13>, N> trajectory(N);
-    std::array<double, N> dts;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, MAX_N> trajectory(N);
+    std::array<double, MAX_N> dts;
     dts.fill(0.1);
 
     for (int k = 0; k <= N; ++k) {
         trajectory.active()[k].set_zero();
         trajectory.active()[k].x.fill(10.0);
-        trajectory.active()[k].cost = 1000.0;
-        trajectory.active()[k].g_val.fill(0.0);
+        Model::compute_dynamics(trajectory.active()[k], config.integrator, 0.0);
+        Model::compute_cost_gn(trajectory.active()[k]);
     }
 
     linear_solver.solve(trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
@@ -598,6 +664,23 @@ struct SocOverrideResidualModel : public SocHardResidualModel {
     }
 };
 
+struct FilterSocNonFiniteMetricsModel : public SocHardResidualModel {
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = (kp.s(0) < T(1.0)) ? std::numeric_limits<T>::infinity() : T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setZero();
+        kp.R.setIdentity();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
 struct TrueResidualLineSearchModel {
     static const int NX = 1;
     static const int NU = 1;
@@ -1055,6 +1138,127 @@ TEST(LineSearchTest, FilterHTypeAcceptanceStillAugmentsFilter)
 
     EXPECT_GT(result.alpha, 0.0);
     EXPECT_EQ(ls.filter_size(), 1u) << "Accepted h-type steps should still augment the filter.";
+}
+
+TEST(LineSearchTest, FilterNonFiniteInitialMetricsReturnsNumericalError)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = false;
+
+    using Model = MeritOverflowPhiModel;
+    FilterLineSearch<Model, 2> ls;
+    RolloutStubLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2> trajectory(N);
+    std::array<double, 2> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 1.0;
+    active[0].dx(0) = -1.0;
+    Model::compute_cost_gn(active[0]);
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_EQ(result.status, SolverStatus::NUMERICAL_ERROR)
+        << "A non-finite initial filter theta/phi pair is not a valid acceptance baseline.";
+}
+
+TEST(LineSearchTest, FilterNonFiniteDphiReturnsNumericalError)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = false;
+
+    using Model = MeritOverflowDphiModel;
+    FilterLineSearch<Model, 2> ls;
+    RolloutStubLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2> trajectory(N);
+    std::array<double, 2> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].dx(0) = 2.0;
+    Model::compute_cost_gn(active[0]);
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_EQ(result.status, SolverStatus::NUMERICAL_ERROR)
+        << "A non-finite filter directional derivative must surface as numerical failure.";
+}
+
+TEST(LineSearchTest, FilterNonFiniteTrialMetricsReturnsNumericalError)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = false;
+
+    using Model = MeritOverflowPhiModel;
+    FilterLineSearch<Model, 2> ls;
+    RolloutStubLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2> trajectory(N);
+    std::array<double, 2> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].x(0) = 0.0;
+    active[0].dx(0) = 1.0;
+    Model::compute_cost_gn(active[0]);
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_EQ(result.status, SolverStatus::NUMERICAL_ERROR)
+        << "A non-finite trial filter theta/phi pair must surface as numerical failure, not "
+           "ordinary backtracking or h-type acceptance.";
+}
+
+TEST(LineSearchTest, FilterSocNonFiniteMetricsReturnsNumericalError)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = true;
+    config.soc_trigger_alpha = 0.1;
+    config.line_search_tau = 0.5;
+
+    using Model = FilterSocNonFiniteMetricsModel;
+    FilterLineSearch<Model, 1> ls;
+    SocCaptureLinearSolver linear_solver;
+    linear_solver.correction_ds = -2.4; // SOC damps candidate slack from 1.2 to 0.6.
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].s(0) = 1.0;
+    active[0].lam(0) = 1.0;
+    active[0].ds(0) = 0.2; // trial slack = 1.2, filter rejects before SOC.
+    active[0].dlam(0) = 0.0;
+    Model::compute_dynamics(active[0], config.integrator, 0.0);
+    Model::compute_constraints(active[0]);
+    Model::compute_cost_gn(active[0]);
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_TRUE(result.soc_attempted);
+    EXPECT_EQ(result.status, SolverStatus::NUMERICAL_ERROR)
+        << "SOC candidate metrics are filter acceptance scalars too; non-finite SOC metrics "
+           "must not be accepted as h-type progress.";
 }
 
 TEST(LineSearchTest, MeritAcceptanceUsesTrueResidualNotQpResidual)
