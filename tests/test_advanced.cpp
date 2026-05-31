@@ -218,11 +218,63 @@ TEST(AdvancedFeaturesTest, SQP_RTI)
 
 using namespace minisolver;
 
-// Mock LinearSolver that fails first step but returns success on SOC step
+struct SocLogicHardModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& /*u*/,
+        const MSVec<T, NP>& /*p*/, double /*dt*/, IntegratorType /*type*/)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double /*dt*/)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = 0.0;
+        kp.C.setZero();
+        kp.D.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = 0.0;
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setZero();
+        kp.R.setZero();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_exact(kp);
+    }
+};
+
+// Mock LinearSolver that makes the first filter trial fail but returns a
+// slack correction in the SOC step.
 class SocMockLinearSolver
-    : public LinearSolver<Trajectory<KnotPoint<double, 4, 2, 5, 13>, 5>::TrajArray> {
+    : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 1, 0>, 5>::TrajArray> {
 public:
-    using TrajArray = Trajectory<KnotPoint<double, 4, 2, 5, 13>, 5>::TrajArray;
+    using TrajArray = Trajectory<KnotPoint<double, 1, 1, 1, 0>, 5>::TrajArray;
     int solve_count = 0;
 
     LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
@@ -230,14 +282,12 @@ public:
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
         solve_count++;
-        // Standard solve: produce a step that gets rejected (e.g. too aggressive)
-        // dx = -10.0 (if x=10, goes to 0)
-        // But let's pretend this step causes constraint violation or cost increase
         for (int k = 0; k <= N; ++k) {
-            traj[k].dx.fill(-10.0);
+            traj[k].dx.setZero();
             traj[k].du.setZero();
-            traj[k].ds.setZero();
+            traj[k].ds(0) = 0.2;
             traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
         }
         return true;
     }
@@ -247,13 +297,12 @@ public:
         const SolverConfig& /*config*/) override
     {
         solve_count++;
-        // SOC solve: produce a correction step
-        // dx = 1.0 (corrects back slightly)
         for (int k = 0; k <= N; ++k) {
-            traj[k].dx.fill(1.0);
+            traj[k].dx.setZero();
             traj[k].du.setZero();
-            traj[k].ds.setZero();
+            traj[k].ds(0) = -2.4;
             traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
         }
         return true;
     }
@@ -265,8 +314,8 @@ public:
 
 TEST(AdvancedFeaturesTest, SOCLogic)
 {
-    constexpr int N = 5;
-    using Model = CarModel; // Reuse CarModel dimensions
+    constexpr int N = 0;
+    using Model = SocLogicHardModel;
 
     SolverConfig config;
     config.line_search_type = LineSearchType::FILTER;
@@ -276,63 +325,34 @@ TEST(AdvancedFeaturesTest, SOCLogic)
     // We want first step (alpha=1.0) to fail.
 
     SocMockLinearSolver linear_solver;
-    FilterLineSearch<Model, N> ls;
+    FilterLineSearch<Model, 5> ls;
 
-    Trajectory<KnotPoint<double, 4, 2, 5, 13>, N> trajectory(N);
-    std::array<double, N> dts;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 5> trajectory(N);
+    std::array<double, 5> dts;
     dts.fill(0.1);
 
     // Setup initial state
     auto& active = trajectory.active();
     for (int k = 0; k <= N; ++k) {
         active[k].set_zero();
-        active[k].x.fill(10.0);
-        active[k].cost = 0.0;
-        active[k].g_val.fill(-1.0); // Feasible
+        active[k].s(0) = 1.0;
+        active[k].lam(0) = 1.0;
+        Model::compute_dynamics(active[k], config.integrator, 0.0);
+        Model::compute_constraints(active[k]);
+        Model::compute_cost_exact(active[k]);
     }
 
     // First solve (outside LineSearch)
-    linear_solver.solve(active, N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
-    // dx = -10. Candidate x = 0.
-
-    // We need to make Candidate (x=0) UNACCEPTABLE.
-    // Filter accepts if phi decreases or theta decreases.
-    // Active: phi=0, theta=0.
-    // Candidate (x=0): we need to make cost/viol high.
-    // But `Model::compute` is called on candidate.
-    // CarModel with 0 parameters -> cost 0.
-    // So candidate will have cost 0.
-    // Filter accepts equality.
-
-    // We need to inject logic to make candidate fail?
-    // We can't easily mock Model::compute inside template.
-    // But we can set up CarModel parameters such that x=0 has HIGH cost.
-    // E.g. x_ref = 10. w_pos = 100.
-    // Active x=10 -> Cost 0.
-    // Candidate x=0 -> Cost 10000.
-    // So Phi increases.
-
-    for (int k = 0; k <= N; ++k) {
-        active[k].p(1) = 10.0; // x_ref
-        active[k].p(8) = 100.0; // w_pos
-    }
-    // Recompute active metrics (cost=0)
-    // Actually search computes m_0.
+    linear_solver.solve(active, N, 0.0, 1e-6, InertiaStrategy::REGULARIZATION, config);
 
     // Run search
-    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1e-6, config);
     (void)result; // Unused variable
 
     // Expectations:
-    // 1. First step (alpha=1, dx=-10 -> x=0) rejected because cost increases (0 -> 10000).
+    // 1. First step (alpha=1, ds=0.2) is rejected because theta increases.
     // 2. SOC triggered (alpha > 0.5).
-    // 3. solve_soc called. returns dx=1.
-    // 4. New candidate x = 0 + 1 = 1.
-    // 5. Cost at x=1: 100 * (1-10)^2 = 8100.
-    // 6. Still > 0. Rejected?
-    // 7. Backtrack alpha=0.5. dx=-5. x=5. Cost 2500. Rejected.
-    // ...
-    // Eventually alpha small enough?
+    // 3. solve_soc called and returns a slack correction.
 
     // We just want to verify solve_soc was called.
     // solve_count should be 1 (initial) + 1 (soc) + ... wait, search doesn't call solve().

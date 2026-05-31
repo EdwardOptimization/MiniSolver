@@ -593,6 +593,26 @@ public:
         return true;
     }
 };
+
+class FilterBarrierHookMockSolver
+    : public LinearSolver<Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1>::TrajArray> {
+public:
+    using TrajArray = Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1>::TrajArray;
+
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx.setZero();
+            traj[k].du.setZero();
+            traj[k].ds(0) = -0.5;
+            traj[k].dlam.setZero();
+            traj[k].dsoft_s.setZero();
+        }
+        return true;
+    }
+};
 } // namespace
 
 TEST(BugfixTest, FilterLineSearchClearsFilterOnBarrierUpdate)
@@ -602,19 +622,21 @@ TEST(BugfixTest, FilterLineSearchClearsFilterOnBarrierUpdate)
     SolverConfig config;
     config.line_search_type = LineSearchType::FILTER;
 
-    constexpr int N = 10;
-    using Model = CarModel;
-    FilterLineSearch<Model, N> ls;
-    BarrierHookMockSolver linear_solver;
+    constexpr int N = 0;
+    using Model = BugTestModel;
+    FilterLineSearch<Model, 1> ls;
+    FilterBarrierHookMockSolver linear_solver;
 
-    Trajectory<KnotPoint<double, 4, 2, 5, 13>, N> trajectory(N);
-    std::array<double, N> dts;
+    Trajectory<KnotPoint<double, 1, 1, 1, 0>, 1> trajectory(N);
+    std::array<double, 1> dts;
     dts.fill(0.1);
 
     for (int k = 0; k <= N; ++k) {
         trajectory.active()[k].set_zero();
-        trajectory.active()[k].x.fill(10.0);
-        trajectory.active()[k].cost = 1000.0;
+        trajectory.active()[k].s(0) = 2.0;
+        Model::compute_dynamics(trajectory.active()[k], config.integrator, 0.0);
+        Model::compute_constraints(trajectory.active()[k]);
+        Model::compute_cost_gn(trajectory.active()[k]);
     }
 
     linear_solver.solve(trajectory.active(), N, 0.1, 1e-6, InertiaStrategy::REGULARIZATION, config);
