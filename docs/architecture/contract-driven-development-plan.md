@@ -10,6 +10,25 @@ This plan defines the full rollout. It is intentionally broader than a minimal
 documentation patch, but it should still be implemented in small docs/test
 commits.
 
+## Rollout Status
+
+Status: initial rollout complete as of the first contract coverage closure pass.
+
+Authoritative evidence:
+
+- Module inventory exists and every module row links to a module document.
+- Contract files exist for every behavior domain listed in this plan.
+- Every contract ID appears in
+  [`../testing/contract-coverage-matrix.md`](../testing/contract-coverage-matrix.md).
+- Current `P0` coverage matrix rows are `covered`.
+- Remaining `partial` rows are `P1/P2` with owner modules and explicit deferred
+  evidence paths.
+- The completion audit is tracked in
+  [`../testing/contract-rollout-completion-audit.md`](../testing/contract-rollout-completion-audit.md).
+
+Future contract work should update the relevant contract file and coverage
+matrix row in the same change as the behavior or test evidence.
+
 ## Goals
 
 1. Move from ad-hoc review findings to contract-driven development.

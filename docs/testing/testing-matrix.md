@@ -70,6 +70,14 @@ Out of scope for this matrix:
 | Residual costs | True Gauss-Newton Hessian and parameter weights | `tests/minimodel/test_residual_costs.py` |
 | Implicit integrators | BE, midpoint, Gauss-Legendre accuracy and A/B Jacobians | `test_integrator`, `test_implicit_sparse_riccati` |
 
+### Broad Regression Suites
+
+| Suite | Must Cover | Current Tests |
+| --- | --- | --- |
+| Basic generated car smoke | Generated bicycle/car model compiles and solves through the public API | `tests/test_car_model_basic.cpp` |
+| Advanced solver feature mix | Combined solver options and representative NMPC feature interactions | `tests/test_advanced.cpp` |
+| Property regressions | Small invariant-style regressions that do not own a separate contract row | `tests/test_property_regressions.cpp` |
+
 ### Memory And Diagnostics
 
 | Claim | Required Coverage |

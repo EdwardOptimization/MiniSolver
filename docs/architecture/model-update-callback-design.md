@@ -26,7 +26,7 @@ Each `MiniSolver<Model, MAX_N>` specialization exposes:
 using ModelUpdateCallback = ApiStatus (*)(MiniSolver& solver, void* user);
 
 ApiStatus set_model_update_callback(ModelUpdateCallback callback, void* user = nullptr);
-void clear_model_update_callback();
+ApiStatus clear_model_update_callback();
 ```
 
 The callback receives the solver reference because the intended use is to call
