@@ -395,6 +395,11 @@ public:
 
         // 2. Initial Merit
         double phi_0 = compute_merit(active, N, mu, config);
+        if (!std::isfinite(phi_0)) {
+            LineSearchResult result(0.0);
+            result.status = SolverStatus::NUMERICAL_ERROR;
+            return result;
+        }
 
         // 3. Calc max alpha
         double alpha = fraction_to_boundary_rule<TrajArray, Model>(
@@ -427,6 +432,11 @@ public:
             build_trial(candidate, active, dt_traj, N, alpha, config);
 
             double phi_alpha = compute_merit(candidate, N, mu, config);
+            if (!std::isfinite(phi_alpha)) {
+                LineSearchResult result(0.0);
+                result.status = SolverStatus::NUMERICAL_ERROR;
+                return result;
+            }
 
             // Standard Armijo sufficient decrease:
             //   phi(alpha) <= phi(0) + c1 * alpha * dphi

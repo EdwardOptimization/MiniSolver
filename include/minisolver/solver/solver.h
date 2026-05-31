@@ -260,15 +260,22 @@ public:
     // changing solver configuration or recursively calling solve().
     ApiStatus set_model_update_callback(ModelUpdateCallback callback, void* user = nullptr)
     {
+        if (reject_callback_structural_mutation_()) {
+            return ApiStatus::InvalidArgument;
+        }
         model_update_callback_ = callback;
         model_update_callback_user_ = user;
         return ApiStatus::OK;
     }
 
-    void clear_model_update_callback()
+    ApiStatus clear_model_update_callback()
     {
+        if (reject_callback_structural_mutation_()) {
+            return ApiStatus::InvalidArgument;
+        }
         model_update_callback_ = nullptr;
         model_update_callback_user_ = nullptr;
+        return ApiStatus::OK;
     }
 
     double get_profile_time_ms(const std::string& name) const
@@ -1896,7 +1903,8 @@ private:
         // configured max iteration count so the hot-path push_back stays
         // pointer-bump only.
         alpha_log_.clear();
-        context_.metrics.reset_solve();
+        context_.reset_solve();
+        context_.solve.current_iter = 0;
 
         if (!build_state_.plan.constraint_scaling_plan_valid
             || !build_state_.plan.objective_scaling_plan_valid
@@ -1908,7 +1916,6 @@ private:
 
         // Give model-update callbacks a chance to refresh references/parameters before
         // presolve initializes slack and dual variables from model evaluations.
-        context_.solve.current_iter = 0;
         const ApiStatus callback_status = invoke_model_update_callback_();
         if (callback_status != ApiStatus::OK) {
             context_.info.reset();
@@ -2325,6 +2332,16 @@ private:
         }
     }
 
+    bool postsolve_residual_metrics_finite_(const PostsolveResiduals& residuals) const
+    {
+        return MatOps::is_finite_scalar(residuals.barrier_mu)
+            && MatOps::is_finite_scalar(residuals.max_primal_inf)
+            && MatOps::is_finite_scalar(residuals.max_unscaled_primal_inf)
+            && MatOps::is_finite_scalar(residuals.max_dual_inf)
+            && MatOps::is_finite_scalar(residuals.max_barrier_complementarity_residual)
+            && MatOps::is_finite_scalar(residuals.max_complementarity_gap);
+    }
+
     SolverStatus classify_postsolve_solution_quality_(const PostsolveResiduals& residuals)
     {
         detail::TerminationSnapshot snapshot;
@@ -2406,6 +2423,11 @@ private:
         }
 
         evaluate_postsolve_dual_residual_(residuals);
+        if (!postsolve_residual_metrics_finite_(residuals)) {
+            record_postsolve_info_(SolverStatus::NUMERICAL_ERROR, loop_status,
+                TerminationReason::NUMERICAL_ERROR, residuals);
+            return SolverStatus::NUMERICAL_ERROR;
+        }
 
         SolverStatus quality_status = classify_postsolve_solution_quality_(residuals);
         if (quality_status == SolverStatus::OPTIMAL || quality_status == SolverStatus::FEASIBLE) {
