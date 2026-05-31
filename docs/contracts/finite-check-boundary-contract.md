@@ -72,7 +72,7 @@ No owned state.
 | --- | --- | --- |
 | Non-finite config | `ApiStatus::NonFiniteValue` | Public/config boundary. |
 | Non-finite residual | `NUMERICAL_ERROR` / `NUMERICAL_ERROR` | Solve/postsolve boundary. |
-| Non-finite merit value or derivative | `NUMERICAL_ERROR` / `NUMERICAL_ERROR` | Line-search boundary. |
+| Non-finite line-search scalar | `NUMERICAL_ERROR` / `NUMERICAL_ERROR` | Merit/filter boundary. |
 | Non-finite snapshot data | `SnapshotStatus::NonFiniteData` | Debug/replay boundary. |
 
 ## Numeric And Performance Constraints
@@ -90,7 +90,7 @@ No owned state.
 | `NUM-002` | `docs/architecture/solver-development-principles.md`, `tests/test_line_search.cpp`, `tests/test_barrier_residual_contract.cpp`, `tests/test_solver_snapshot.cpp` | `covered` |
 | `NUM-003` | `tests/test_bugfixes.cpp::BugfixTest.MaxViolationPropagatesNaNConstraintResidual`, `tests/test_bugfixes.cpp::BugfixTest.UnscaledMaxViolationPropagatesNaNConstraintResidual`, `tests/test_barrier_residual_contract.cpp::BarrierResidualContractTest.PostsolveRejectsInfConstraintResidual` | `covered` |
 | `NUM-004` | `tests/test_scaling_regressions.cpp::ScalingRegressionTest.HessianGershgorinPropagatesNaNObjectiveScale`, `tests/test_scaling_regressions.cpp::ScalingRegressionTest.AutomaticRowScalingPropagatesNaNRowScale`, `tests/test_scaling_regressions.cpp::ScalingRegressionTest.HessianGershgorinOverflowUsesMinimumObjectiveScale` | `covered` |
-| `NUM-005` | `tests/test_line_search.cpp::LineSearchTest.MeritNonFiniteDphiReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.MeritNonFiniteInitialPhiReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.MeritNonFiniteTrialPhiReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.MeritNonFiniteDphiPropagatesToSolverStatus` | `covered` |
+| `NUM-005` | `tests/test_line_search.cpp::LineSearchTest.MeritNonFiniteDphiReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.MeritNonFiniteInitialPhiReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.MeritNonFiniteTrialPhiReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.MeritNonFiniteDphiPropagatesToSolverStatus`, `tests/test_line_search.cpp::LineSearchTest.FilterNonFiniteInitialMetricsReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.FilterNonFiniteDphiReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.FilterNonFiniteTrialMetricsReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.FilterSocNonFiniteMetricsReturnsNumericalError` | `covered` |
 | `NUM-006` | `tests/test_barrier_residual_contract.cpp::BarrierResidualContractTest.PostsolveRejectsInfConstraintResidual`, `tests/test_barrier_residual_contract.cpp::BarrierResidualContractTest.PostsolveRejectsNonFiniteDualResidual` | `covered` |
 | `NUM-007` | `tests/test_solver_snapshot.cpp::SolverSnapshotTest.LoadRejectsNonFiniteTrajectoryDataAtomically` | `covered` |
 
