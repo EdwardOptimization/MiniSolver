@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace minisolver;
 
@@ -109,6 +110,55 @@ struct LargeObjectiveCurvatureModel {
         kp.Q(0, 0) = 100.0;
         kp.R(0, 0) = 25.0;
         kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+struct OverflowObjectiveCurvatureModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, double, IntegratorType)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        (void)kp;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        const T huge = std::numeric_limits<T>::max();
+        kp.cost = T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q(0, 0) = huge;
+        kp.R(0, 0) = T(1);
+        kp.H(0, 0) = huge;
     }
 
     template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
@@ -307,6 +357,28 @@ TEST(ScalingRegressionTest, HessianGershgorinScalesObjectivePacketOnly)
     EXPECT_NEAR(kp.r(0), 0.75, 1e-12);
     EXPECT_NEAR(kp.Q(0, 0), 1.0, 1e-12);
     EXPECT_NEAR(kp.R(0, 0), 0.25, 1e-12);
+}
+
+TEST(ScalingRegressionTest, HessianGershgorinOverflowUsesMinimumObjectiveScale)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.objective_scaling = ObjectiveScalingMethod::HESSIAN_GERSHGORIN;
+    config.objective_scale_min = 1e-4;
+    config.objective_scale_max = 1.0;
+
+    KnotPoint<double, OverflowObjectiveCurvatureModel::NX, OverflowObjectiveCurvatureModel::NU,
+        OverflowObjectiveCurvatureModel::NC, OverflowObjectiveCurvatureModel::NP>
+        kp;
+    kp.set_zero();
+
+    detail::evaluate_model_stage<OverflowObjectiveCurvatureModel>(kp, config, 0.1, false);
+
+    EXPECT_DOUBLE_EQ(kp.objective_scale, config.objective_scale_min)
+        << "Finite huge curvature can overflow the row-sum estimate; that should clamp to "
+           "the minimum configured scale instead of falling back to neutral scaling.";
+    EXPECT_TRUE(std::isfinite(kp.Q(0, 0)));
+    EXPECT_TRUE(std::isfinite(kp.H(0, 0)));
 }
 
 TEST(ScalingRegressionTest, ProblemScalingActivatesBoundedConstraintAndObjectiveScaling)

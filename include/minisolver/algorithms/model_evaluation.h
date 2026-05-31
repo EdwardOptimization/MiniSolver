@@ -151,8 +151,11 @@ namespace detail {
             max_row_sum = std::max(max_row_sum, row_sum);
         }
 
-        if (!std::isfinite(max_row_sum)) {
-            return 1.0;
+        if (std::isinf(max_row_sum)) {
+            return config.objective_scale_min;
+        }
+        if (std::isnan(max_row_sum)) {
+            return max_row_sum;
         }
 
         max_row_sum = std::max(max_row_sum, 1.0);
@@ -191,8 +194,11 @@ namespace detail {
         for (int j = 0; j < Knot::NU; ++j) {
             row_norm = std::max(row_norm, std::abs(kp.D(row, j)));
         }
-        if (!std::isfinite(row_norm)) {
-            return 1.0;
+        if (std::isinf(row_norm)) {
+            return config.constraint_row_scale_min;
+        }
+        if (std::isnan(row_norm)) {
+            return row_norm;
         }
 
         // First automatic profile only down-scales large rows. Scaling up tiny rows is useful,
