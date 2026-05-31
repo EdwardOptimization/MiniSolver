@@ -8,9 +8,11 @@
 #include "minisolver/core/solver_options.h"
 #include "minisolver/core/types.h"
 #include "minisolver/solver/solver.h"
+#include "solver_internal_access.h"
 #include <array>
 #include <cmath>
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace minisolver;
 
@@ -223,6 +225,54 @@ struct MeritAnalyticDphiModel {
         kp.q(0) = 2.0 * kp.x(0);
         kp.r.setZero();
         kp.Q(0, 0) = 2.0;
+        kp.R.setZero();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>&) { }
+};
+
+struct MeritOverflowDphiModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
+        const MSVec<T, NP>& /*p*/, double dt, IntegratorType /*type*/)
+    {
+        MSVec<T, NX> out;
+        out(0) = x(0) + u(0) * dt;
+        return out;
+    }
+
+    template <typename T>
+    static void compute_dynamics(
+        KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType /*type*/, double dt)
+    {
+        kp.f_resid(0) = kp.x(0) + kp.u(0) * dt;
+        kp.A(0, 0) = T(1);
+        kp.B(0, 0) = T(dt);
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = T(0);
+        kp.q(0) = std::numeric_limits<T>::max();
+        kp.r.setZero();
+        kp.Q.setZero();
         kp.R.setZero();
         kp.H.setZero();
     }
@@ -519,6 +569,24 @@ public:
         InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
         const TrajArray* /*affine_traj*/ = nullptr) override
     {
+        return true;
+    }
+};
+
+template <typename TrajArray>
+class OverflowDphiRiccatiSolver : public RiccatiSolver<TrajArray, MeritOverflowDphiModel> {
+public:
+    LinearSolveResult solve(TrajArray& traj, int N, double /*mu*/, double /*reg*/,
+        InertiaStrategy /*strategy*/, const SolverConfig& /*config*/,
+        const TrajArray* /*affine_traj*/ = nullptr) override
+    {
+        for (int k = 0; k <= N; ++k) {
+            traj[k].dx(0) = 2.0;
+            if (k < N) {
+                traj[k].du.setZero();
+            }
+            traj[k].r_bar.setOnes();
+        }
         return true;
     }
 };
@@ -965,6 +1033,60 @@ TEST(LineSearchTest, MeritArmijoDoesNotBuildFiniteDifferenceProbe)
     EXPECT_EQ(Model::cost_evaluations, 1)
         << "Merit Armijo should use analytic dphi instead of building an extra finite-difference "
            "trial point before the first backtracking evaluation.";
+}
+
+TEST(LineSearchTest, MeritNonFiniteDphiReturnsNumericalError)
+{
+    constexpr int N = 0;
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::MERIT;
+    config.line_search_max_iters = 1;
+    config.armijo_c1 = 1.0e-4;
+    config.enable_line_search_rollout = false;
+
+    using Model = MeritOverflowDphiModel;
+    MeritLineSearch<Model, 2> ls;
+    RolloutStubLinearSolver linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, 2> trajectory(N);
+    std::array<double, 2> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    active[0].set_zero();
+    active[0].dx(0) = 2.0;
+    Model::compute_cost_gn(active[0]);
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.0, 1.0e-6, config);
+
+    EXPECT_EQ(result.status, SolverStatus::NUMERICAL_ERROR)
+        << "Finite but huge model gradients can overflow the merit directional derivative; "
+           "line search should surface that numerical failure instead of coercing dphi to 0.";
+}
+
+TEST(LineSearchTest, MeritNonFiniteDphiPropagatesToSolverStatus)
+{
+    constexpr int N = 0;
+    using Model = MeritOverflowDphiModel;
+    using Solver = MiniSolver<Model, 2>;
+    using Access = minisolver::test::SolverInternalAccess<Model, 2>;
+    using FakeSolver = OverflowDphiRiccatiSolver<Solver::TrajArray>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.max_iters = 1;
+    config.line_search_type = LineSearchType::MERIT;
+    config.armijo_c1 = 1.0e-4;
+    config.enable_line_search_rollout = false;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    Access::set_linear_solver(solver, std::make_unique<FakeSolver>());
+
+    const SolverStatus status = solver.solve();
+
+    EXPECT_EQ(status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_EQ(solver.get_info().loop_status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_EQ(solver.get_info().termination_reason, TerminationReason::NUMERICAL_ERROR);
 }
 
 TEST(LineSearchTest, FilterSocSkippedInRolloutMode)

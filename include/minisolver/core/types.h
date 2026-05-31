@@ -235,6 +235,7 @@ struct SolverInfo {
 
 struct LineSearchResult {
     double alpha = 0.0;
+    SolverStatus status = SolverStatus::UNSOLVED;
     bool soc_attempted = false;
     bool soc_accepted = false;
     bool soc_rejected = false;

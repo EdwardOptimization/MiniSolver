@@ -417,7 +417,9 @@ public:
                 dphi = (phi_eps - phi_0) / eps_alpha;
             }
             if (!std::isfinite(dphi)) {
-                dphi = 0.0;
+                LineSearchResult result(0.0);
+                result.status = SolverStatus::NUMERICAL_ERROR;
+                return result;
             }
         }
 

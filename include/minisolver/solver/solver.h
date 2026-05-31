@@ -1295,6 +1295,12 @@ private:
         result.alpha = line_search_result.alpha;
         alpha_log_.push_back(result.alpha);
         context_.metrics.last_alpha = result.alpha;
+        if (line_search_result.status != SolverStatus::UNSOLVED) {
+            timer.stop();
+            print_iteration_log(result.alpha);
+            result.status = line_search_result.status;
+            return result;
+        }
         // IMPORTANT: line_search may swap trajectory buffers.
         // Do not use references to trajectory.active() taken before this call.
         auto& traj_after_ls = trajectory.active();
