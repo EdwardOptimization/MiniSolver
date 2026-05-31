@@ -495,6 +495,23 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         AcceptedStepType type = AcceptedStepType::HType;
     };
 
+    struct SocCorrectionDecision {
+        bool accepted = false;
+        SolverStatus status = SolverStatus::UNSOLVED;
+    };
+
+    static bool finite_metrics(const std::pair<double, double>& metrics)
+    {
+        return std::isfinite(metrics.first) && std::isfinite(metrics.second);
+    }
+
+    static LineSearchResult numerical_error_result()
+    {
+        LineSearchResult result(0.0);
+        result.status = SolverStatus::NUMERICAL_ERROR;
+        return result;
+    }
+
     std::array<std::pair<double, double>, FILTER_CAPACITY> filter {};
     size_t filter_size_ = 0;
     size_t filter_next_ = 0;
@@ -716,12 +733,13 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         return result;
     }
 
-    bool try_soc_correction(const TrajArray& active, TrajArray& candidate,
+    SocCorrectionDecision try_soc_correction(const TrajArray& active, TrajArray& candidate,
         LinearSolver<TrajArray>& linear_solver, const std::array<double, MAX_N>& dt_traj, int N,
         double mu, double reg, double theta_0, double phi_0, const SolverConfig& config)
     {
+        SocCorrectionDecision decision;
         if (config.enable_line_search_rollout) {
-            return false;
+            return decision;
         }
 
         if (config.print_level >= PrintLevel::DEBUG) {
@@ -753,13 +771,13 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         const LinearSolveResult soc_result = linear_solver.solve_soc(
             soc_data, candidate, N, mu, reg, config.inertia_strategy, config);
         if (!soc_result.ok) {
-            return false;
+            return decision;
         }
 
         const double beta_soc = fraction_to_boundary_rule<TrajArray, Model>(
             soc_data, N, config.line_search_tau, config);
         if (beta_soc <= 1e-8) {
-            return false;
+            return decision;
         }
 
         for (int k = 0; k <= N; ++k) {
@@ -778,12 +796,15 @@ class FilterLineSearch : public LineSearchStrategy<Model, MAX_N> {
         }
 
         const auto m_soc = compute_metrics(candidate, N, mu, config);
-        const bool accepted
-            = is_h_type_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config);
-        if (accepted && config.print_level >= PrintLevel::DEBUG) {
+        if (!finite_metrics(m_soc)) {
+            decision.status = SolverStatus::NUMERICAL_ERROR;
+            return decision;
+        }
+        decision.accepted = is_h_type_acceptable(m_soc.first, m_soc.second, theta_0, phi_0, config);
+        if (decision.accepted && config.print_level >= PrintLevel::DEBUG) {
             MLOG_DEBUG("SOC Accepted.");
         }
-        return accepted;
+        return decision;
     }
 
 public:
@@ -814,10 +835,16 @@ public:
         auto& active = trajectory.active();
 
         auto m_0 = compute_metrics(active, N, mu, config);
+        if (!finite_metrics(m_0)) {
+            return numerical_error_result();
+        }
         double theta_0 = m_0.first;
         double phi_0 = m_0.second;
         initialize_filter_bounds(theta_0, config);
         const double dphi = compute_phi_directional_derivative(active, N, mu, config);
+        if (!std::isfinite(dphi)) {
+            return numerical_error_result();
+        }
 
         // Fraction to Boundary
         double alpha = fraction_to_boundary_rule<TrajArray, Model>(
@@ -878,6 +905,9 @@ public:
             }
 
             auto m_alpha = compute_metrics(candidate, N, mu, config);
+            if (!finite_metrics(m_alpha)) {
+                return numerical_error_result();
+            }
             const FilterAcceptance acceptance = check_acceptance(
                 m_alpha.first, m_alpha.second, theta_0, phi_0, alpha, dphi, config);
             if (acceptance.accepted) {
@@ -891,13 +921,18 @@ public:
             // variant is implemented.
             if (!accepted && config.enable_soc && !soc_attempted && ls_iter == 0
                 && alpha > config.soc_trigger_alpha && !config.enable_line_search_rollout) {
-                const bool soc_accepted = try_soc_correction(
+                const SocCorrectionDecision soc_decision = try_soc_correction(
                     active, candidate, linear_solver, dt_traj, N, mu, reg, theta_0, phi_0, config);
                 soc_attempted = true;
-                accepted = soc_accepted;
+                accepted = soc_decision.accepted;
                 result.soc_attempted = true;
-                result.soc_accepted = soc_accepted;
-                result.soc_rejected = !soc_accepted;
+                result.soc_accepted = soc_decision.accepted;
+                result.soc_rejected = !soc_decision.accepted;
+                if (soc_decision.status != SolverStatus::UNSOLVED) {
+                    result.status = soc_decision.status;
+                    result.alpha = 0.0;
+                    return result;
+                }
                 if (accepted) {
                     accepted_type = AcceptedStepType::HType;
                     break;
