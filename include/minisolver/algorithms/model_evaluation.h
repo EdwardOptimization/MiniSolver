@@ -124,6 +124,17 @@ namespace detail {
         return kp.constraint_row_scale(row);
     }
 
+    inline double accumulate_scale_norm(double current, double candidate)
+    {
+        if (std::isnan(current)) {
+            return current;
+        }
+        if (std::isnan(candidate)) {
+            return candidate;
+        }
+        return std::max(current, candidate);
+    }
+
     template <typename Knot>
     double compute_hessian_gershgorin_objective_scale(const Knot& kp, const SolverConfig& config)
     {
@@ -137,7 +148,7 @@ namespace detail {
             for (int col = 0; col < Knot::NU; ++col) {
                 row_sum += std::abs(kp.H(col, row));
             }
-            max_row_sum = std::max(max_row_sum, row_sum);
+            max_row_sum = accumulate_scale_norm(max_row_sum, row_sum);
         }
 
         for (int row = 0; row < Knot::NU; ++row) {
@@ -148,7 +159,7 @@ namespace detail {
             for (int col = 0; col < Knot::NU; ++col) {
                 row_sum += std::abs(kp.R(row, col));
             }
-            max_row_sum = std::max(max_row_sum, row_sum);
+            max_row_sum = accumulate_scale_norm(max_row_sum, row_sum);
         }
 
         if (std::isinf(max_row_sum)) {
@@ -189,10 +200,10 @@ namespace detail {
     {
         double row_norm = std::abs(kp.g_unscaled(row));
         for (int j = 0; j < Knot::NX; ++j) {
-            row_norm = std::max(row_norm, std::abs(kp.C(row, j)));
+            row_norm = accumulate_scale_norm(row_norm, std::abs(kp.C(row, j)));
         }
         for (int j = 0; j < Knot::NU; ++j) {
-            row_norm = std::max(row_norm, std::abs(kp.D(row, j)));
+            row_norm = accumulate_scale_norm(row_norm, std::abs(kp.D(row, j)));
         }
         if (std::isinf(row_norm)) {
             return config.constraint_row_scale_min;

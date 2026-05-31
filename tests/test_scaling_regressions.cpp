@@ -167,6 +167,104 @@ struct OverflowObjectiveCurvatureModel {
     }
 };
 
+struct NaNObjectiveCurvatureModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 0;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = {};
+    static constexpr std::array<int, NC> constraint_types = {};
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, double, IntegratorType)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        (void)kp;
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q(0, 0) = std::numeric_limits<T>::quiet_NaN();
+        kp.R(0, 0) = T(1);
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
+struct NaNConstraintScaleModel {
+    static const int NX = 1;
+    static const int NU = 1;
+    static const int NC = 1;
+    static const int NP = 0;
+
+    static constexpr std::array<const char*, NX> state_names = { "x" };
+    static constexpr std::array<const char*, NU> control_names = { "u" };
+    static constexpr std::array<const char*, NP> param_names = {};
+    static constexpr std::array<double, NC> constraint_weights = { 0.0 };
+    static constexpr std::array<int, NC> constraint_types = { 0 };
+
+    template <typename T>
+    static MSVec<T, NX> integrate(
+        const MSVec<T, NX>& x, const MSVec<T, NU>&, const MSVec<T, NP>&, double, IntegratorType)
+    {
+        return x;
+    }
+
+    template <typename T>
+    static void compute_dynamics(KnotPoint<T, NX, NU, NC, NP>& kp, IntegratorType, double)
+    {
+        kp.f_resid = kp.x;
+        kp.A.setIdentity();
+        kp.B.setZero();
+    }
+
+    template <typename T> static void compute_constraints(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.g_val(0) = T(0);
+        kp.C(0, 0) = std::numeric_limits<T>::quiet_NaN();
+        kp.D.setZero();
+    }
+
+    template <typename T> static void compute_cost_gn(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        kp.cost = T(0);
+        kp.q.setZero();
+        kp.r.setZero();
+        kp.Q.setIdentity();
+        kp.R.setIdentity();
+        kp.H.setZero();
+    }
+
+    template <typename T> static void compute_cost_exact(KnotPoint<T, NX, NU, NC, NP>& kp)
+    {
+        compute_cost_gn(kp);
+    }
+};
+
 struct RowScaledL2SoftMetricModel {
     static const int NX = 1;
     static const int NU = 1;
@@ -379,6 +477,40 @@ TEST(ScalingRegressionTest, HessianGershgorinOverflowUsesMinimumObjectiveScale)
            "the minimum configured scale instead of falling back to neutral scaling.";
     EXPECT_TRUE(std::isfinite(kp.Q(0, 0)));
     EXPECT_TRUE(std::isfinite(kp.H(0, 0)));
+}
+
+TEST(ScalingRegressionTest, HessianGershgorinPropagatesNaNObjectiveScale)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.objective_scaling = ObjectiveScalingMethod::HESSIAN_GERSHGORIN;
+
+    KnotPoint<double, NaNObjectiveCurvatureModel::NX, NaNObjectiveCurvatureModel::NU,
+        NaNObjectiveCurvatureModel::NC, NaNObjectiveCurvatureModel::NP>
+        kp;
+    kp.set_zero();
+
+    detail::evaluate_model_stage<NaNObjectiveCurvatureModel>(kp, config, 0.1, false);
+
+    EXPECT_TRUE(std::isnan(kp.objective_scale))
+        << "NaN curvature must not be swallowed by the Gershgorin max-reduction.";
+}
+
+TEST(ScalingRegressionTest, AutomaticRowScalingPropagatesNaNRowScale)
+{
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+
+    KnotPoint<double, NaNConstraintScaleModel::NX, NaNConstraintScaleModel::NU,
+        NaNConstraintScaleModel::NC, NaNConstraintScaleModel::NP>
+        kp;
+    kp.set_zero();
+
+    detail::evaluate_model_stage<NaNConstraintScaleModel>(kp, config, 0.1, false, true);
+
+    EXPECT_TRUE(std::isnan(kp.constraint_row_scale(0)))
+        << "NaN constraint packets must not be swallowed by the row-scale max-reduction.";
 }
 
 TEST(ScalingRegressionTest, ProblemScalingActivatesBoundedConstraintAndObjectiveScaling)
