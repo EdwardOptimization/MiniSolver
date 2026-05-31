@@ -503,6 +503,55 @@ TEST(ReplayCorpusTest, WarmStartTwoFrameSolveReachesAcceptableQualityInTwoIterat
     std::remove(filename.c_str());
 }
 
+TEST(ReplayCorpusTest, WarmStartSoftConstraintNeighboringFrameSurvivesActiveSetChange)
+{
+    constexpr int N = 3;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.enable_profiling = false;
+    config.max_iters = 100;
+    config.tol_con = 1e-5;
+    config.tol_dual = 1e-5;
+    config.mu_final = 1e-7;
+
+    MiniSolver<CorpusL1SoftModel, 10> solver(N, Backend::CPU_SERIAL, config);
+    ASSERT_EQ(solver.set_dt(1.0), ApiStatus::OK);
+    ASSERT_EQ(solver.set_initial_state("x", 0.0), ApiStatus::OK);
+    for (int k = 0; k < solver.get_horizon(); ++k) {
+        ASSERT_EQ(solver.set_control_guess(k, "u", 0.5), ApiStatus::OK);
+    }
+    solver.rollout_dynamics();
+
+    const SolverStatus first_status = solver.solve();
+    ASSERT_TRUE(acceptable_status(first_status));
+    expect_finite_info(solver.get_info());
+
+    shift_solution_guess_one_step(solver);
+    ASSERT_EQ(solver.set_initial_state("x", 1.25), ApiStatus::OK)
+        << "Neighboring frame starts on the other side of the soft constraint boundary.";
+
+    SolverConfig warm_config = solver.get_config();
+    warm_config.initialization = InitializationMode::REUSE_PRIMAL_DUAL;
+    warm_config.warm_start_barrier = WarmStartBarrierMode::FROM_COMPLEMENTARITY_GAP;
+    warm_config.warm_start_regularization = WarmStartRegularizationMode::DECAY_PREVIOUS_REG;
+    warm_config.max_iters = 30;
+    ASSERT_EQ(solver.set_config(warm_config), ApiStatus::OK);
+
+    const SolverStatus second_status = solver.solve();
+    const SolverInfo& second_info = solver.get_info();
+    EXPECT_NE(second_status, SolverStatus::NUMERICAL_ERROR);
+    EXPECT_NE(second_status, SolverStatus::INVALID_INPUT);
+    EXPECT_NE(second_status, SolverStatus::LINEAR_SOLVE_FAILED);
+    EXPECT_NE(second_status, SolverStatus::RESTORATION_FAILED);
+    expect_finite_info(second_info);
+    for (int k = 0; k <= solver.get_horizon(); ++k) {
+        EXPECT_GT(solver.get_slack(k, 0), 0.0);
+        EXPECT_GT(solver.get_dual(k, 0), 0.0);
+        EXPECT_LT(solver.get_dual(k, 0), CorpusL1SoftModel::soft_weight);
+    }
+}
+
 TEST(ReplayCorpusTest, L1SoftConstraintConvergesWithFiniteInteriorMetrics)
 {
     constexpr int N = 3;

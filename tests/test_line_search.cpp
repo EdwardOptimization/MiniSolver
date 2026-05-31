@@ -1067,6 +1067,8 @@ TEST(LineSearchTest, FilterRejectsTrialAboveThetaMax)
 
     EXPECT_EQ(alpha, 0.0)
         << "Filter must reject trials whose violation exceeds theta_max even if phi decreases.";
+    EXPECT_NEAR(trajectory.active()[0].x(0), -1.0, 1e-12)
+        << "Rejected filter candidates must not swap into the active trajectory.";
 }
 
 TEST(LineSearchTest, FilterFTypeUsesArmijoAndDoesNotAugmentFilter)

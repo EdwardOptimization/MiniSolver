@@ -305,6 +305,67 @@ def test_soft_constraint_parameter_weight_packet_updates_knot():
         )
 
 
+def test_generated_soc_refreshes_parameterized_soft_weights():
+    model = OptimalControlModel("SocSoftWeightRefreshModel")
+    x0, x1 = model.state("x0", "x1")
+    u0 = model.control("u0")
+    l1_w, l2_w = model.parameter("l1_w", "l2_w")
+    model.subject_to(Dot(x0) == u0)
+    model.subject_to(Dot(x1) == 0)
+    model.subject_to_quad(
+        [[1, 0], [0, 1]], [x0, x1], center=[0, 0], rhs=1.0,
+        type="outside", linearize_at_boundary=True)
+    model.subject_to(x0 <= 10.0, weight=[l1_w, l2_w], loss=["L1", "L2"])
+    model.minimize(x0**2 + x1**2 + u0**2)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="EULER_EXPLICIT")
+        compile_and_run(
+            tmpdir,
+            "soc_soft_weight_refresh_check.cpp",
+            "soc_soft_weight_refresh_check",
+            """
+            #include "socsoftweightrefreshmodel.h"
+            #include "minisolver/algorithms/model_evaluation.h"
+            #include "minisolver/core/solver_options.h"
+            #include <cmath>
+
+            int main() {
+                using Model = minisolver::SocSoftWeightRefreshModel;
+                static_assert(Model::NC == 2, "expected SOC row plus one soft row");
+                static_assert(!Model::constraint_has_l1[0], "SOC row is hard");
+                static_assert(!Model::constraint_has_l2[0], "SOC row is hard");
+                static_assert(Model::constraint_has_l1[1], "row 1 should have L1");
+                static_assert(Model::constraint_has_l2[1], "row 1 should have L2");
+
+                minisolver::SolverConfig config;
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> active;
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> trial;
+                active.set_zero();
+                trial.set_zero();
+
+                active.x(0) = 2.0;
+                active.x(1) = 0.0;
+                trial.x(0) = 0.0;
+                trial.x(1) = 2.0;
+                trial.p(0) = 3.0;
+                trial.p(1) = 4.0;
+                trial.l1_weight.fill(99.0);
+                trial.l2_weight.fill(99.0);
+
+                minisolver::detail::evaluate_soc_constraints<Model>(active, trial, config);
+
+                if (std::abs(trial.g_val(0) - 2.0) > 1e-8) return 1;
+                if (std::abs(trial.l1_weight(0)) > 1e-12) return 2;
+                if (std::abs(trial.l2_weight(0)) > 1e-12) return 3;
+                if (std::abs(trial.l1_weight(1) - 3.0) > 1e-12) return 4;
+                if (std::abs(trial.l2_weight(1) - 4.0) > 1e-12) return 5;
+                return 0;
+            }
+            """,
+        )
+
+
 def test_l1_only_soft_weight_update_does_not_clear_l2_packet():
     model = OptimalControlModel("L1OnlySoftWeightModel")
     x = model.state("x")
@@ -507,8 +568,12 @@ if __name__ == "__main__":
     test_quad_boundary_projection_generates_soc_override()
     test_quad_boundary_projection_splits_qp_and_true_residuals()
     test_quad_norm2_generates_exact_constraint_hessian()
+    test_quad_norm2_allows_symbolic_rhs_and_q_contract()
     test_stage_only_constraint_zeros_terminal_row()
     test_soft_constraint_parameter_weight_packet_updates_knot()
+    test_generated_soc_refreshes_parameterized_soft_weights()
     test_l1_only_soft_weight_update_does_not_clear_l2_packet()
+    test_numeric_zero_soft_weight_keeps_soft_structure()
+    test_numeric_zero_mixed_soft_weight_keeps_same_row_structure()
     test_quad_constraint_domain_guards()
     test_generated_model_uses_automatic_constraint_row_scaling()

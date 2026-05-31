@@ -345,6 +345,11 @@ def test_full_generated_packets_skip_clear():
                 if (std::abs(kp.D(1,0) - 1.0) > 1e-12) return 6;
                 if (std::abs(kp.D(0,1)) > 1e-12) return 7;
 
+                kp.g_true.fill(99.0);
+                Model::compute_true_constraints(kp);
+                if (std::abs(kp.g_true(0) - 1.25) > 1e-12) return 15;
+                if (std::abs(kp.g_true(1) - 1.6) > 1e-12) return 16;
+
                 kp.q.fill(99.0);
                 kp.r.fill(99.0);
                 kp.Q.fill(99.0);
