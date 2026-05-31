@@ -48,6 +48,16 @@ template <typename Model, int MAX_N> struct SolverInternalAccess {
 
     static bool has_nans(Solver& s, const typename Solver::TrajArray& t) { return s.has_nans(t); }
 
+    static double compute_max_violation(Solver& s, const typename Solver::TrajArray& t)
+    {
+        return s.compute_max_violation(t);
+    }
+
+    static double compute_unscaled_max_violation(Solver& s, const typename Solver::TrajArray& t)
+    {
+        return s.compute_unscaled_max_violation(t);
+    }
+
     static bool has_valid_primal_dual_guess(Solver& s, const typename Solver::TrajArray& t)
     {
         return s.has_valid_primal_dual_guess(t);

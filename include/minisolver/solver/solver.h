@@ -2464,6 +2464,17 @@ private:
         }
     }
 
+    static void accumulate_max_violation_(double value, double& max_viol)
+    {
+        if (!std::isfinite(value)) {
+            max_viol = std::numeric_limits<double>::infinity();
+            return;
+        }
+        if (value > max_viol) {
+            max_viol = value;
+        }
+    }
+
     // helper function: calculate the maximum constraint violation of the current trajectory
     // Includes both inequality constraint residuals AND dynamics defects (multiple shooting).
     double compute_max_violation(const TrajArray& traj) const
@@ -2485,18 +2496,14 @@ private:
                     const double w = detail::effective_l2_soft_weight<Model>(kp, i, config);
                     viol = std::abs(g_true + kp.s(i) - kp.lam(i) / w);
                 }
-                if (viol > max_viol) {
-                    max_viol = viol;
-                }
+                accumulate_max_violation_(viol, max_viol);
             }
 
             // 2. Dynamics defect (multiple shooting): x_{k+1} - f(x_k, u_k)
             if (k < N) {
                 for (int j = 0; j < NX; ++j) {
                     double defect = std::abs(traj[k + 1].x(j) - kp.f_resid(j));
-                    if (defect > max_viol) {
-                        max_viol = defect;
-                    }
+                    accumulate_max_violation_(defect, max_viol);
                 }
             }
         }
@@ -2527,17 +2534,13 @@ private:
                     const double w = detail::effective_l2_soft_weight<Model>(kp, i, config);
                     viol = std::abs(g_raw + (kp.s(i) - kp.lam(i) / w) * inv_scale);
                 }
-                if (viol > max_viol) {
-                    max_viol = viol;
-                }
+                accumulate_max_violation_(viol, max_viol);
             }
 
             if (k < N) {
                 for (int j = 0; j < NX; ++j) {
                     double defect = std::abs(traj[k + 1].x(j) - kp.f_resid(j));
-                    if (defect > max_viol) {
-                        max_viol = defect;
-                    }
+                    accumulate_max_violation_(defect, max_viol);
                 }
             }
         }

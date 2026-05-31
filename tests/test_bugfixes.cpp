@@ -1540,6 +1540,48 @@ TEST(BugfixTest, HasNansRejectsInfDynamicsJacobian)
         << "model-output validation must reject Inf in dynamics Jacobians";
 }
 
+TEST(BugfixTest, MaxViolationPropagatesNaNConstraintResidual)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].g_val(0) = std::numeric_limits<double>::quiet_NaN();
+    traj[0].s(0) = 0.0;
+
+    const double max_violation = Access::compute_max_violation(solver, traj);
+
+    EXPECT_FALSE(std::isfinite(max_violation))
+        << "NaN residuals must not be swallowed by max-reduction";
+}
+
+TEST(BugfixTest, UnscaledMaxViolationPropagatesNaNConstraintResidual)
+{
+    constexpr int N = 1;
+    using Solver = MiniSolver<BugTestModel, 10>;
+    using Access = minisolver::test::SolverInternalAccess<BugTestModel, 10>;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.constraint_scaling = ConstraintScalingMethod::ROW_INF_NORM;
+
+    Solver solver(N, Backend::CPU_SERIAL, config);
+    auto& traj = Access::get_trajectory(solver);
+    traj[0].g_unscaled(0) = std::numeric_limits<double>::quiet_NaN();
+    traj[0].constraint_row_scale(0) = 1.0;
+    traj[0].s(0) = 0.0;
+
+    const double max_violation = Access::compute_unscaled_max_violation(solver, traj);
+
+    EXPECT_FALSE(std::isfinite(max_violation))
+        << "NaN unscaled residuals must not be swallowed by max-reduction";
+}
+
 TEST(BugfixTest, L1BarrierDerivativesClampSoftDualGapAtWeightBoundary)
 {
     using Knot = KnotPoint<double, 1, 1, 1, 0>;
