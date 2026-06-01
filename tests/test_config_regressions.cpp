@@ -122,7 +122,12 @@ TEST(ConfigRegressionTest, ApiSettersReturnExplicitStatusAndDoNotMutate)
     EXPECT_EQ(solver.set_parameter(3, 0, 1.0), ApiStatus::InvalidStage);
     EXPECT_EQ(solver.set_parameter(0, 2, 1.0), ApiStatus::InvalidIndex);
     EXPECT_EQ(solver.set_parameter(0, "missing", 1.0), ApiStatus::UnknownName);
+    EXPECT_EQ(solver.set_parameter(0, 0, std::numeric_limits<double>::infinity()),
+        ApiStatus::NonFiniteValue);
+    EXPECT_EQ(solver.set_global_parameter("p", std::numeric_limits<double>::quiet_NaN()),
+        ApiStatus::NonFiniteValue);
     EXPECT_DOUBLE_EQ(solver.get_parameter(0, 0), 0.0);
+    EXPECT_DOUBLE_EQ(solver.get_parameter(1, 0), 0.0);
 
     EXPECT_EQ(solver.set_state_guess(-1, 0, 2.0), ApiStatus::InvalidStage);
     EXPECT_EQ(solver.set_state_guess(0, 2, 2.0), ApiStatus::InvalidIndex);

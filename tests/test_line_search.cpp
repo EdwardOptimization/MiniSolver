@@ -1637,6 +1637,49 @@ TEST(LineSearchTest, FilterHistoryWrapsAtFixedCapacity)
     EXPECT_EQ(ls.filter_size(), 1024u);
 }
 
+TEST(LineSearchTest, FilterBarrierUpdateClearsHistory)
+{
+    constexpr int N = 1;
+
+    SolverConfig config;
+    config.print_level = PrintLevel::NONE;
+    config.line_search_type = LineSearchType::FILTER;
+    config.line_search_max_iters = 1;
+    config.enable_soc = false;
+
+    using Model = NoLineSearchEvalModel;
+    FilterLineSearch<Model, N> ls;
+    NoLineSearchStubLinearSolver<N> linear_solver;
+    Trajectory<KnotPoint<double, 1, 1, 0, 0>, N> trajectory(N);
+
+    std::array<double, N> dts;
+    dts.fill(0.1);
+
+    auto& active = trajectory.active();
+    for (int k = 0; k <= N; ++k) {
+        active[k].set_zero();
+    }
+
+    active[0].x(0) = 0.0;
+    active[0].u(0) = 0.0;
+    active[1].x(0) = 10.0;
+    active[1].dx(0) = -1.0;
+
+    for (int k = 0; k <= N; ++k) {
+        const double current_dt = (k < N) ? dts[static_cast<size_t>(k)] : 0.0;
+        detail::evaluate_model_stage<Model>(active[k], config, current_dt, k == N);
+    }
+
+    const LineSearchResult result = ls.search(trajectory, linear_solver, dts, 0.1, 1e-6, config);
+    ASSERT_GT(result.alpha, 0.0);
+    ASSERT_EQ(ls.filter_size(), 1u);
+
+    ls.on_barrier_update();
+
+    EXPECT_EQ(ls.filter_size(), 0u)
+        << "Filter entries recorded under the old barrier parameter are not comparable.";
+}
+
 TEST(LineSearchTest, NoLineSearchRefreshesAcceptedPointEvaluations)
 {
     constexpr int N = 1;
