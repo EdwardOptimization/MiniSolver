@@ -273,6 +273,58 @@ For any bug, review finding, numerical change, or high-risk refactor:
 5. run neighboring tests;
 6. commit behavior and evidence together.
 
+### Docs Freshness Gate
+
+Documentation is part of the solver contract. Do not let plans, module docs, or
+README claims drift behind code.
+
+For routine commits, keep the gate small:
+
+1. classify the docs decision as `updated`, `not-needed`, or `deferred`;
+2. record the decision in the commit trailer for `solver-core`, `codegen`,
+   `benchmark`, or `mixed` scope changes:
+
+```text
+Docs: updated|not-needed|deferred
+```
+
+Use `Docs: not-needed` only with a `Docs rationale:` line. Use
+`Docs: deferred` only with a `Deferred path:` line. This keeps "no doc update"
+as an explicit engineering decision rather than an omission.
+
+Run only the lightweight freshness checks before commit:
+
+- `python3 tools/check_docs_freshness.py`;
+- `git diff --check`.
+
+Escalate to the full docs owner review only for large or high-risk changes:
+
+- public API, config, status, `SolverInfo`, snapshot, or generated-model
+  structure changes;
+- solver behavior contracts such as termination, scaling, line search, Riccati,
+  constraints, callback, memory, or backend semantics;
+- changes spanning three or more owning modules;
+- README, benchmark, embedded, zero-malloc, or release claims;
+- any commit using `Docs: not-needed` or `Docs: deferred` for a high-risk
+  scope.
+
+Full docs owner review means identify the affected owner before commit:
+
+- user-facing claim: `README.md`;
+- behavior contract: `docs/contracts/**` and
+  `docs/testing/contract-coverage-matrix.md`;
+- module ownership or inputs/outputs: `docs/modules/**`;
+- design rationale or rollout plan: `docs/architecture/**`;
+- evidence inventory: `docs/testing/**`;
+- review disposition: `docs/reviews/**`.
+
+If contracts change, also run the contract ID consistency check and use the
+contract maintainer flow.
+
+The hook catches mechanical drift. The harness still owns semantic judgement:
+it must decide whether a behavior change requires a contract, module, roadmap,
+README, or review-ledger update.
+
 ### Overdesign Gate
 
 Use this gate before implementing review suggestions, safer-looking
@@ -348,7 +400,9 @@ In these cases, write the narrowest internal contract first.
   `ctest`.
 - MiniModel/codegen: generated-code tests and compile target.
 - Matrix kernels: microbenchmark before/after plus correctness tests.
-- Docs-only: `git diff --check` and stale-claim inspection.
+- Docs-only: `python3 tools/check_docs_freshness.py`, `git diff --check`, and
+  targeted stale-claim inspection when the edit touches release or benchmark
+  claims.
 
 ## Current Local Skills
 
