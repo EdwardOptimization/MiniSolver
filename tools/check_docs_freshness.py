@@ -54,10 +54,17 @@ def contract_id_errors(root: Path) -> list[str]:
         line for line in matrix_text.splitlines()
         if line.startswith("| `") or line.startswith("| [`")
     ]
+    contract_rows = [line for line in rows if "| [`../contracts/" in line]
 
     missing = sorted(set(contract_ids) - set(matrix_ids))
     extra = sorted(set(matrix_ids) - set(contract_ids))
-    p0_partial = sum(1 for line in rows if "`P0`" in line and "`partial`" in line)
+    p0_partial = sum(1 for line in contract_rows if "`P0`" in line and "`partial`" in line)
+    p1_partial = sum(1 for line in contract_rows if "`P1`" in line and "`partial`" in line)
+    p1_covered_without_primary = [
+        line.split("|", 2)[1].strip()
+        for line in contract_rows
+        if "`P1`" in line and "`covered`" in line and "Primary" not in line
+    ]
 
     errors: list[str] = []
     if missing:
@@ -66,6 +73,13 @@ def contract_id_errors(root: Path) -> list[str]:
         errors.append(f"matrix IDs without contract definition: {extra}")
     if p0_partial:
         errors.append(f"P0 partial rows remain in contract matrix: {p0_partial}")
+    if p1_partial:
+        errors.append(f"P1 partial rows remain in contract matrix: {p1_partial}")
+    if p1_covered_without_primary:
+        errors.append(
+            "P1 covered rows must tag primary focused/static evidence: "
+            f"{p1_covered_without_primary}"
+        )
     return errors
 
 
