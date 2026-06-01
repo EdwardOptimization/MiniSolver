@@ -24,11 +24,11 @@ RK2 explicit midpoint, classic RK4, and direct discrete dynamics.
 
 | ID | Requirement | Evidence status |
 | --- | --- | --- |
-| `INT-001` | Explicit integrator choice determines generated/evaluated discrete dynamics packet. | `partial` |
-| `INT-002` | Generated explicit dynamics writes `f_resid`, `A`, and `B` consistently. | `partial` |
-| `INT-003` | Direct discrete dynamics bypasses continuous integration formulas. | `partial` |
-| `INT-004` | Generated integrator metadata records the integrator used for generated packets. | `partial` |
-| `INT-005` | Explicit integrator packet behavior must be covered by generated asset or MiniModel tests. | `partial` |
+| `INT-001` | Explicit integrator choice determines generated/evaluated discrete dynamics packet. | `covered` |
+| `INT-002` | Generated explicit dynamics writes `f_resid`, `A`, and `B` consistently. | `covered` |
+| `INT-003` | Direct discrete dynamics bypasses continuous integration formulas. | `covered` |
+| `INT-004` | Generated integrator metadata records the integrator used for generated packets. | `covered` |
+| `INT-005` | Explicit integrator packet behavior must be covered by generated asset or MiniModel tests. | `covered` |
 
 ## Failure Semantics
 
@@ -41,12 +41,13 @@ RK2 explicit midpoint, classic RK4, and direct discrete dynamics.
 
 | Contract ID | Evidence | Status |
 | --- | --- | --- |
-| `INT-001` | `tests/minimodel/test_dynamics_dsl.py`, `tests/test_integrator.cpp` | `partial` |
-| `INT-002` | generated asset tests | `partial` |
-| `INT-003` | `tests/minimodel/test_dynamics_dsl.py` | `partial` |
-| `INT-004` | `tests/test_implicit_sparse_riccati.cpp`, generated header tests | `partial` |
-| `INT-005` | `tests/test_asset_regressions.cpp` | `partial` |
+| `INT-001` | `tests/minimodel/test_dynamics_dsl.py`, `tests/test_integrator.cpp::IntegratorTest.AccuracyComparison` | `covered` |
+| `INT-002` | `tests/minimodel/test_dynamics_dsl.py::test_dot_subject_to_generates_continuous_dynamics`, `tests/test_asset_regressions.cpp` | `covered` |
+| `INT-003` | `tests/minimodel/test_dynamics_dsl.py::test_next_subject_to_generates_discrete_dynamics_map`, `tests/minimodel/test_dynamics_dsl.py::test_next_model_rejects_non_discrete_runtime_integrators` | `covered` |
+| `INT-004` | `tests/minimodel/test_dynamics_dsl.py::test_generate_rejects_integrator_mode_mismatch`, `tests/minimodel/test_dynamics_dsl.py::test_model_fingerprint_changes_between_dot_and_next_modes`, `tests/test_implicit_sparse_riccati.cpp` | `covered` |
+| `INT-005` | `tests/test_asset_regressions.cpp`, `tests/minimodel/test_dynamics_dsl.py` | `covered` |
 
 ## Open Gaps
 
-- Need explicit docs for generated explicit integrator formulas.
+- No open P1 evidence gaps. Formula-level documentation can still be expanded
+  before release-critical integrator claims.

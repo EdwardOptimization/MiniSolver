@@ -85,4 +85,4 @@ test-only friend boundaries and must not grow public solver API.
 - The initial contract rollout is complete:
   [`../testing/contract-rollout-completion-audit.md`](../testing/contract-rollout-completion-audit.md).
   Remaining `partial` rows in the coverage matrix are intentionally deferred
-  `P1/P2` evidence paths, not unassigned contract coverage.
+  `P2` evidence paths, not unassigned contract coverage.

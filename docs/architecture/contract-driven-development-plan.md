@@ -20,9 +20,9 @@ Authoritative evidence:
 - Contract files exist for every behavior domain listed in this plan.
 - Every contract ID appears in
   [`../testing/contract-coverage-matrix.md`](../testing/contract-coverage-matrix.md).
-- Current `P0` coverage matrix rows are `covered`.
-- Remaining `partial` rows are `P1/P2` with owner modules and explicit deferred
-  evidence paths.
+- Current `P0` and `P1` coverage matrix rows are `covered`.
+- Remaining `partial` or `deferred` rows are `P2` with owner modules and
+  explicit deferred evidence paths.
 - The completion audit is tracked in
   [`../testing/contract-rollout-completion-audit.md`](../testing/contract-rollout-completion-audit.md).
 
@@ -506,11 +506,11 @@ git diff --check
 Run custom MiniMatrix build too before push when the touched contract affects
 matrix/Riccati/backend behavior.
 
-### Phase 6: P1/P2 Replay, Benchmark, And Nightly Closure
+### Phase 6: Replay, Benchmark, And Nightly Closure
 
 Commit shape: tests/assets/bench harness updates split from solver behavior.
 
-P1 examples:
+Closed P1 examples:
 
 - Callback plus `ACCEPTABLE_NMPC` behavior.
 - RTI fixed-iteration precedence.
@@ -519,7 +519,7 @@ P1 examples:
 - MiniMatrix parity.
 - Generated packet overwrite/clear coverage.
 
-P2 examples:
+Remaining P2 examples:
 
 - nmpc-bench smoke.
 - Badly scaled replay corpus.

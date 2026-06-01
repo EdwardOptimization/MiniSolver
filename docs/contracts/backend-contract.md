@@ -26,11 +26,11 @@ preservation across config mutation.
 
 | ID | Requirement | Evidence status |
 | --- | --- | --- |
-| `BACKEND-001` | `CPU_SERIAL` is the implemented default backend. | `partial` |
-| `BACKEND-002` | `GPU_MPX` and `GPU_PCR` are reserved and must fail explicitly until implemented. | `partial` |
-| `BACKEND-003` | `set_config()` preserves the constructor backend. | `partial` |
-| `BACKEND-004` | CUDA build support is opt-in and incomplete GPU code must not compile silently as a supported backend. | `partial` |
-| `BACKEND-005` | Backend benchmark comparisons must state the selected backend and matrix backend. | `partial` |
+| `BACKEND-001` | `CPU_SERIAL` is the implemented default backend. | `covered` |
+| `BACKEND-002` | `GPU_MPX` and `GPU_PCR` are reserved and must fail explicitly until implemented. | `covered` |
+| `BACKEND-003` | `set_config()` preserves the constructor backend. | `covered` |
+| `BACKEND-004` | CUDA build support is opt-in and incomplete GPU code must not compile silently as a supported backend. | `covered` |
+| `BACKEND-005` | Backend benchmark comparisons must state the selected backend and matrix backend. | `deferred` |
 
 ## Failure Semantics
 
@@ -43,12 +43,13 @@ preservation across config mutation.
 
 | Contract ID | Evidence | Status |
 | --- | --- | --- |
-| `BACKEND-001` | default solver tests | `partial` |
-| `BACKEND-002` | backend/config tests | `partial` |
-| `BACKEND-003` | `tests/test_config_regressions.cpp` | `partial` |
-| `BACKEND-004` | CMake/build inspection | `partial` |
-| `BACKEND-005` | benchmark process docs | `partial` |
+| `BACKEND-001` | default solver tests, `tests/test_features.cpp` | `covered` |
+| `BACKEND-002` | `tests/test_features.cpp::FeaturesTest.GPUBackendUnsupportedFailsExplicitly`, `docs/contracts/solve-loop-contract.md::SOLVE-007` | `covered` |
+| `BACKEND-003` | `tests/test_config_regressions.cpp::ConfigRegressionTest.SetConfigPreservesBackendInvariant`, `tests/test_solver_snapshot.cpp` backend-policy tests | `covered` |
+| `BACKEND-004` | CMake inspection: CUDA is behind `MINISOLVER_USE_CUDA=OFF` by default and incomplete CUDA code is opt-in only. | `covered` |
+| `BACKEND-005` | Deferred to `nmpc-bench` backend-comparison reports when functional backend comparisons are added. | `deferred` |
 
 ## Open Gaps
 
-- Need direct unsupported-backend regression if not already present.
+- No open P1 evidence gaps. `BACKEND-005` remains deferred because there is no
+  functional alternative backend comparison to report yet.

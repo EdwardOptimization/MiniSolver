@@ -25,11 +25,11 @@ trajectory handling, and failure precedence.
 
 | ID | Requirement | Evidence status |
 | --- | --- | --- |
-| `REST-001` | Restoration is entered only from configured recovery paths, not as a default replacement for failed semantics. | `partial` |
-| `REST-002` | Restoration must show configured sufficient primal improvement before success. | `partial` |
-| `REST-003` | Restoration success updates diagnostics and returns to normal final classification. | `partial` |
-| `REST-004` | Restoration exhaustion produces `RESTORATION_FAILED` and must not be hidden by budget exits. | `partial` |
-| `REST-005` | Restoration counters in `SolverInfo` reflect attempts and successes. | `partial` |
+| `REST-001` | Restoration is entered only from configured recovery paths, not as a default replacement for failed semantics. | `covered` |
+| `REST-002` | Restoration must show configured sufficient primal improvement before success. | `covered` |
+| `REST-003` | Restoration success updates diagnostics and returns to normal final classification. | `covered` |
+| `REST-004` | Restoration exhaustion produces `RESTORATION_FAILED` and must not be hidden by budget exits. | `covered` |
+| `REST-005` | Restoration counters in `SolverInfo` reflect attempts and successes. | `covered` |
 
 ## Inputs And Outputs
 
@@ -49,12 +49,14 @@ trajectory handling, and failure precedence.
 
 | Contract ID | Evidence | Status |
 | --- | --- | --- |
-| `REST-001` | `tests/test_robustness.cpp`, `tests/test_solver_quality.cpp` | `partial` |
-| `REST-002` | `tests/test_robustness.cpp` | `partial` |
-| `REST-003` | `tests/test_status.cpp` | `partial` |
-| `REST-004` | `tests/test_termination.cpp`, `tests/test_robustness.cpp` | `partial` |
-| `REST-005` | `tests/test_status.cpp` | `partial` |
+| `REST-001` | `tests/test_bugfixes.cpp::BugfixTest.TinyStepRecoveryFailureReturnsRestorationFailed`, `tests/test_line_search.cpp` | `covered` |
+| `REST-002` | `tests/test_bugfixes.cpp::BugfixTest.FeasibilityRestorationRequiresViolationImprovement`, `tests/test_bugfixes.cpp::BugfixTest.FeasibilityRestorationRejectsTinyRelativeImprovement` | `covered` |
+| `REST-003` | `tests/test_bugfixes.cpp::BugfixTest.FeasibilityRestorationSuccessUpdatesCounters` | `covered` |
+| `REST-004` | `tests/test_bugfixes.cpp::BugfixTest.TinyStepRecoveryFailureReturnsRestorationFailed` | `covered` |
+| `REST-005` | `tests/test_bugfixes.cpp::BugfixTest.FeasibilityRestorationRequiresViolationImprovement`, `tests/test_bugfixes.cpp::BugfixTest.FeasibilityRestorationRejectsTinyRelativeImprovement`, `tests/test_bugfixes.cpp::BugfixTest.FeasibilityRestorationSuccessUpdatesCounters` | `covered` |
 
 ## Open Gaps
 
-- Need a focused restoration contract test file if restoration grows.
+- No open P1 evidence gaps. If restoration grows into a larger subsystem, move
+  the focused tests out of `test_bugfixes.cpp` into a dedicated restoration
+  contract test file.

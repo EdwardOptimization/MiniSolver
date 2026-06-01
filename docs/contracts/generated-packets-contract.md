@@ -25,12 +25,12 @@ ownership, including clear vs full-overwrite rules.
 
 | ID | Requirement | Evidence status |
 | --- | --- | --- |
-| `CODEGEN-020` | Generated functions own the packets they write and must leave them internally consistent. | `partial` |
-| `CODEGEN-021` | A packet that is provably fully overwritten should not emit redundant clears. | `partial` |
-| `CODEGEN-022` | A packet that is not fully overwritten must be cleared or initialized before sparse assignments. | `partial` |
-| `CODEGEN-023` | L1 and L2 soft weight updates may be emitted separately when that avoids redundant zero/reset work. | `partial` |
-| `CODEGEN-024` | Generated terminal packets must not rely on terminal control values unless explicitly projected. | `partial` |
-| `CODEGEN-025` | Generated fused Riccati packets must be guarded by integrator compatibility metadata. | `partial` |
+| `CODEGEN-020` | Generated functions own the packets they write and must leave them internally consistent. | `covered` |
+| `CODEGEN-021` | A packet that is provably fully overwritten should not emit redundant clears. | `covered` |
+| `CODEGEN-022` | A packet that is not fully overwritten must be cleared or initialized before sparse assignments. | `covered` |
+| `CODEGEN-023` | L1 and L2 soft weight updates may be emitted separately when that avoids redundant zero/reset work. | `covered` |
+| `CODEGEN-024` | Generated terminal packets must not rely on terminal control values unless explicitly projected. | `covered` |
+| `CODEGEN-025` | Generated fused Riccati packets must be guarded by integrator compatibility metadata. | `covered` |
 
 ## Inputs And Outputs
 
@@ -51,13 +51,13 @@ ownership, including clear vs full-overwrite rules.
 
 | Contract ID | Evidence | Status |
 | --- | --- | --- |
-| `CODEGEN-020` | `tests/test_asset_regressions.cpp` | `partial` |
-| `CODEGEN-021` | `tests/minimodel/*.py`, benchmark codegen inspections | `partial` |
-| `CODEGEN-022` | `tests/minimodel/*.py` | `partial` |
-| `CODEGEN-023` | `tests/minimodel/test_constraints.py`, benchmark generated models | `partial` |
-| `CODEGEN-024` | `tests/minimodel/test_terminal.py` | `partial` |
-| `CODEGEN-025` | `tests/test_implicit_sparse_riccati.cpp` | `partial` |
+| `CODEGEN-020` | `tests/test_asset_regressions.cpp`, generated C++ compile/run checks in `tests/minimodel/*.py` | `covered` |
+| `CODEGEN-021` | `tests/minimodel/test_residual_costs.py::test_full_generated_packets_skip_clear` | `covered` |
+| `CODEGEN-022` | `tests/minimodel/test_residual_costs.py::test_sparse_generated_packets_zero_first_then_assign_nonzero` | `covered` |
+| `CODEGEN-023` | `tests/minimodel/test_constraints.py::test_l1_only_soft_weight_update_does_not_clear_l2_packet`, `tests/minimodel/test_constraints.py::test_soft_constraint_parameter_weight_packet_updates_knot` | `covered` |
+| `CODEGEN-024` | `tests/minimodel/test_terminal.py::test_generated_terminal_stage_uses_x_only_projection` | `covered` |
+| `CODEGEN-025` | `tests/test_implicit_sparse_riccati.cpp`, `tests/minimodel/test_implicit_patterns.py` | `covered` |
 
 ## Open Gaps
 
-- Need explicit generated header diff/shape tests for clear elision.
+- No open P1 evidence gaps.

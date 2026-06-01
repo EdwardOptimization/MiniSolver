@@ -24,12 +24,12 @@ reset, acceptance/rejection, and numerical failure handling.
 
 | ID | Requirement | Evidence status |
 | --- | --- | --- |
-| `FILTER-001` | Filter entries store comparable infeasibility/objective measures for the current barrier regime. | `partial` |
-| `FILTER-002` | Barrier decreases reset filter history when old entries are no longer comparable. | `partial` |
-| `FILTER-003` | Switching condition decides whether filter or Armijo-like objective decrease is required. | `partial` |
+| `FILTER-001` | Filter entries store comparable infeasibility/objective measures for the current barrier regime. | `covered` |
+| `FILTER-002` | Barrier decreases reset filter history when old entries are no longer comparable. | `covered` |
+| `FILTER-003` | Switching condition decides whether filter or Armijo-like objective decrease is required. | `covered` |
 | `FILTER-004` | `theta`, `phi`, and switching directional derivative values must be finite before filter acceptance uses them. | `covered` |
-| `FILTER-005` | Accepted filter candidates must refresh model packets before trajectory swap. | `partial` |
-| `FILTER-006` | Exhausted filter backtracking returns a structured failure for solver classification. | `partial` |
+| `FILTER-005` | Accepted filter candidates must refresh model packets before trajectory swap. | `covered` |
+| `FILTER-006` | Exhausted filter backtracking returns a structured failure for solver classification. | `covered` |
 
 ## Inputs And Outputs
 
@@ -49,14 +49,15 @@ reset, acceptance/rejection, and numerical failure handling.
 
 | Contract ID | Evidence | Status |
 | --- | --- | --- |
-| `FILTER-001` | `tests/test_line_search.cpp` | `partial` |
-| `FILTER-002` | `tests/test_line_search.cpp` | `partial` |
-| `FILTER-003` | `tests/test_line_search.cpp` | `partial` |
+| `FILTER-001` | `tests/test_line_search.cpp::LineSearchTest.FilterHistoryWrapsAtFixedCapacity`, `tests/test_line_search.cpp::LineSearchTest.FilterHTypeAcceptanceStillAugmentsFilter` | `covered` |
+| `FILTER-002` | `tests/test_line_search.cpp::LineSearchTest.FilterBarrierUpdateClearsHistory` | `covered` |
+| `FILTER-003` | `tests/test_line_search.cpp::LineSearchTest.FilterFTypeUsesArmijoAndDoesNotAugmentFilter`, `tests/test_line_search.cpp::LineSearchTest.FilterHTypeAcceptanceStillAugmentsFilter` | `covered` |
 | `FILTER-004` | `tests/test_line_search.cpp::LineSearchTest.FilterNonFiniteInitialMetricsReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.FilterNonFiniteDphiReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.FilterNonFiniteTrialMetricsReturnsNumericalError`, `tests/test_line_search.cpp::LineSearchTest.FilterSocNonFiniteMetricsReturnsNumericalError` | `covered` |
-| `FILTER-005` | `tests/test_line_search.cpp` | `partial` |
-| `FILTER-006` | `tests/test_line_search.cpp` | `partial` |
+| `FILTER-005` | `tests/test_line_search.cpp::LineSearchTest.FilterAcceptanceUsesTrueResidualNotQpResidual`, `tests/test_line_search.cpp::LineSearchTest.FilterRejectsTrialAboveThetaMax` | `covered` |
+| `FILTER-006` | `tests/test_line_search.cpp::LineSearchTest.FilterRejectsTrialAboveThetaMax` | `covered` |
 
 ## Open Gaps
 
-- Need benchmark/replay evidence for filter behavior on difficult nonlinear
-  cases.
+- Difficult nonlinear-case benchmark/replay evidence remains useful before
+  tuning default filter policy, but the current P1 contract semantics have
+  focused tests.

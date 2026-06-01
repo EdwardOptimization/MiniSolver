@@ -25,11 +25,11 @@ trust boundary.
 
 | ID | Requirement | Evidence status |
 | --- | --- | --- |
-| `PARAM-001` | Parameters are stored per knot in `KnotState::p`. | `partial` |
-| `PARAM-002` | Parameter setters validate horizon/stage/name/index/size and value finiteness before mutation. | `partial` |
-| `PARAM-003` | Generated model code may use parameters in cost, constraints, dynamics, and soft weights. | `partial` |
-| `PARAM-004` | Solver core treats parameterized modeling semantics as model/codegen-owned. | `partial` |
-| `PARAM-005` | Parameter mutations through callbacks affect subsequent model evaluation before solver decisions use packets. | `partial` |
+| `PARAM-001` | Parameters are stored per knot in `KnotState::p`. | `covered` |
+| `PARAM-002` | Parameter setters validate horizon/stage/name/index/size and value finiteness before mutation. | `covered` |
+| `PARAM-003` | Generated model code may use parameters in cost, constraints, dynamics, and soft weights. | `covered` |
+| `PARAM-004` | Solver core treats parameterized modeling semantics as model/codegen-owned. | `covered` |
+| `PARAM-005` | Parameter mutations through callbacks affect subsequent model evaluation before solver decisions use packets. | `covered` |
 
 ## Inputs And Outputs
 
@@ -51,15 +51,13 @@ trust boundary.
 
 | Contract ID | Evidence | Status |
 | --- | --- | --- |
-| `PARAM-001` | solver setter tests | `partial` |
-| `PARAM-002` | `tests/test_solver.cpp`, `tests/test_config_regressions.cpp` | `partial` |
-| `PARAM-003` | `tests/minimodel/test_constraints.py`, generated C++ tests | `partial` |
-| `PARAM-004` | design docs and code review | `partial` |
-| `PARAM-005` | callback tests/examples | `partial` |
+| `PARAM-001` | `tests/test_config_regressions.cpp::ConfigRegressionTest.CheckedScalarGettersReportInvalidAccess`, `tests/test_solver_snapshot.cpp` | `covered` |
+| `PARAM-002` | `tests/test_config_regressions.cpp::ConfigRegressionTest.ApiSettersReturnExplicitStatusAndDoNotMutate` | `covered` |
+| `PARAM-003` | `tests/minimodel/test_residual_costs.py::test_add_residual_accepts_parameter_vector_weight`, `tests/minimodel/test_residual_costs.py::test_add_residual_accepts_parameter_reference`, `tests/minimodel/test_constraints.py::test_soft_constraint_parameter_weight_packet_updates_knot`, `tests/minimodel/test_constraints.py::test_generated_soc_refreshes_parameterized_soft_weights` | `covered` |
+| `PARAM-004` | `tests/minimodel/test_model_safety.py::test_soft_constraint_weight_validation_is_explicit`, `docs/architecture/solver-development-principles.md` | `covered` |
+| `PARAM-005` | `tests/test_config_regressions.cpp::ConfigRegressionTest.ModelUpdateCallbackRunsBeforeFirstEvaluation`, `tests/test_config_regressions.cpp::ConfigRegressionTest.ModelUpdateCallbackRunsBeforePresolveSlackInitialization` | `covered` |
 
 ## Open Gaps
 
-- Broaden parameterized generated-model solve regressions before changing
-  parameter/codegen semantics. Current soft-weight paths have focused coverage;
-  future parameter-owned packets should get matching overwrite/update tests when
-  their ownership is optimized.
+- No open P1 evidence gaps. Future parameter-owned packet optimizations should
+  add matching overwrite/update tests with the behavior change.

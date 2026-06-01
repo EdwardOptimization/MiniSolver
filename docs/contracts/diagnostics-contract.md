@@ -29,11 +29,11 @@ Riccati diagnostics, and logging/profiling hooks.
 | ID | Requirement | Evidence status |
 | --- | --- | --- |
 | `DIAG-020` | Alpha trace storage must be pre-reserved for zero-allocation solve paths. | `covered` |
-| `DIAG-021` | Regularization escalation count increments only on actual escalation attempts. | `partial` |
-| `DIAG-022` | Degraded Riccati freeze count reports solver-provided degraded-step data. | `partial` |
-| `DIAG-023` | SOC counters distinguish attempt, accept, and reject. | `partial` |
-| `DIAG-024` | Restoration counters distinguish attempt and success. | `partial` |
-| `DIAG-025` | Diagnostic logging must not alter solver status semantics. | `partial` |
+| `DIAG-021` | Regularization escalation count increments only on actual escalation attempts. | `covered` |
+| `DIAG-022` | Degraded Riccati freeze count reports solver-provided degraded-step data. | `covered` |
+| `DIAG-023` | SOC counters distinguish attempt, accept, and reject. | `covered` |
+| `DIAG-024` | Restoration counters distinguish attempt and success. | `covered` |
+| `DIAG-025` | Diagnostic logging must not alter solver status semantics. | `covered` |
 
 ## Failure Semantics
 
@@ -47,12 +47,13 @@ Riccati diagnostics, and logging/profiling hooks.
 | Contract ID | Evidence | Status |
 | --- | --- | --- |
 | `DIAG-020` | `tests/test_memory.cpp::MemoryTest.DefaultConfigSolveDoesNotAllocate`, `tests/test_memory.cpp::MemoryTest.ZeroMalloc_SolveAfterSetConfigDoesNotAllocate` | `covered` |
-| `DIAG-021` | `tests/test_robustness.cpp`, `tests/test_status.cpp` | `partial` |
-| `DIAG-022` | `tests/test_robustness.cpp`, `tests/test_status.cpp` | `partial` |
-| `DIAG-023` | `tests/test_status.cpp`, `tests/test_line_search.cpp` | `partial` |
-| `DIAG-024` | `tests/test_status.cpp`, restoration tests | `partial` |
-| `DIAG-025` | `tests/test_logger.cpp` | `partial` |
+| `DIAG-021` | `tests/test_bugfixes.cpp::BugfixTest.MehrotraDoesNotUpdateMuWhenCorrectorSolveFails`, `tests/test_robustness.cpp`, `tests/test_status.cpp` | `covered` |
+| `DIAG-022` | `tests/test_status.cpp::StatusTest.SolverInfoReportsDegradedRiccatiStep` | `covered` |
+| `DIAG-023` | `tests/test_bugfixes.cpp::BugfixTest.SolverInfoRecordsSocLineSearchDiagnostics`, `tests/test_status.cpp::StatusTest.SolverInfoResetsBeforeSolveEntryCallback` | `covered` |
+| `DIAG-024` | `tests/test_bugfixes.cpp::BugfixTest.FeasibilityRestorationRequiresViolationImprovement`, `tests/test_bugfixes.cpp::BugfixTest.FeasibilityRestorationSuccessUpdatesCounters` | `covered` |
+| `DIAG-025` | `tests/test_logger.cpp` | `covered` |
 
 ## Open Gaps
 
-- Need field-owner table for all diagnostic fields.
+- No open P1 evidence gaps. Add owner/reset/projection rows when adding new
+  diagnostics fields.

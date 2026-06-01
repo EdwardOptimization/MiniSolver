@@ -26,12 +26,12 @@ soft-weight consistency, accept/reject semantics, and diagnostics.
 
 | ID | Requirement | Evidence status |
 | --- | --- | --- |
-| `SOC-001` | SOC is attempted only when enabled and the accepted/trial alpha meets the configured trigger. | `partial` |
-| `SOC-002` | SOC candidate constraints are evaluated at the SOC trial point. | `partial` |
-| `SOC-003` | SOC trial soft weights are refreshed for the trial knot before soft semantics use them. | `partial` |
-| `SOC-004` | SOC row scaling uses the active scale policy consistently with normal candidates. | `partial` |
-| `SOC-005` | SOC accept/reject counters in `SolverInfo` reflect attempts and outcomes. | `partial` |
-| `SOC-006` | Rejected SOC candidate must not corrupt the active trajectory. | `partial` |
+| `SOC-001` | SOC is attempted only when enabled and the accepted/trial alpha meets the configured trigger. | `covered` |
+| `SOC-002` | SOC candidate constraints are evaluated at the SOC trial point. | `covered` |
+| `SOC-003` | SOC trial soft weights are refreshed for the trial knot before soft semantics use them. | `covered` |
+| `SOC-004` | SOC row scaling uses the active scale policy consistently with normal candidates. | `covered` |
+| `SOC-005` | SOC accept/reject counters in `SolverInfo` reflect attempts and outcomes. | `covered` |
+| `SOC-006` | Rejected SOC candidate must not corrupt the active trajectory. | `covered` |
 
 ## Inputs And Outputs
 
@@ -52,13 +52,13 @@ soft-weight consistency, accept/reject semantics, and diagnostics.
 
 | Contract ID | Evidence | Status |
 | --- | --- | --- |
-| `SOC-001` | `tests/test_line_search.cpp` | `partial` |
-| `SOC-002` | `tests/test_line_search.cpp`, `tests/test_soft_constraints.cpp` | `partial` |
-| `SOC-003` | `tests/test_soft_constraints.cpp` | `partial` |
-| `SOC-004` | `tests/test_scaling_regressions.cpp`, `tests/test_soft_constraints.cpp` | `partial` |
-| `SOC-005` | `tests/test_status.cpp` | `partial` |
-| `SOC-006` | `tests/test_line_search.cpp` | `partial` |
+| `SOC-001` | `tests/test_line_search.cpp::LineSearchTest.FilterSocSkippedInRolloutMode`, `tests/test_line_search.cpp::LineSearchTest.FilterSocDampsCorrectionToStayInterior` | `covered` |
+| `SOC-002` | `tests/test_line_search.cpp::LineSearchTest.FilterSocUsesCandidateSlackAsCorrectionBase`, `tests/test_line_search.cpp::LineSearchTest.FilterSocUsesModelSocConstraintOverride`, `tests/test_replay_corpus.cpp::ReplayCorpusTest.SocNonlinearObstaclePathAttemptsAndAcceptsCorrection` | `covered` |
+| `SOC-003` | `tests/minimodel/test_constraints.py::test_generated_soc_refreshes_parameterized_soft_weights` | `covered` |
+| `SOC-004` | `tests/test_scaling_regressions.cpp::ScalingRegressionTest.SocConstraintRowScalingReusesCandidateScale`, `tests/minimodel/test_constraints.py::test_generated_soc_refreshes_parameterized_soft_weights` | `covered` |
+| `SOC-005` | `tests/test_bugfixes.cpp::BugfixTest.SolverInfoRecordsSocLineSearchDiagnostics`, `tests/test_status.cpp::StatusTest.SolverInfoResetsBeforeSolveEntryCallback` | `covered` |
+| `SOC-006` | `tests/test_line_search.cpp::LineSearchTest.FilterRejectsTrialAboveThetaMax` | `covered` |
 
 ## Open Gaps
 
-- Need a generated-model SOC regression with parameterized soft weights.
+- No open P1 evidence gaps.

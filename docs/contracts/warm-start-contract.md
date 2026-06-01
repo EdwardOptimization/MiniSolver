@@ -60,12 +60,12 @@ Out of scope:
 
 | ID | Requirement | Evidence status |
 | --- | --- | --- |
-| `WARM-001` | `COLD_START` rebuilds primal-dual barrier state for the current problem data. | `partial` |
-| `WARM-002` | `REUSE_PRIMAL` reuses primal guess but rebuilds slack/dual/barrier state. | `partial` |
-| `WARM-003` | `REUSE_PRIMAL_DUAL` may reuse slack/dual only when stored primal-dual state is valid. | `partial` |
-| `WARM-004` | Invalid or non-positive reused `mu` falls back to config bounds/defaults. | `partial` |
-| `WARM-005` | Invalid or non-positive reused `reg` falls back or clamps according to regularization mode. | `partial` |
-| `WARM-006` | `FROM_COMPLEMENTARITY_GAP` computes `mu` from positive valid complementarity pairs. | `partial` |
+| `WARM-001` | `COLD_START` rebuilds primal-dual barrier state for the current problem data. | `covered` |
+| `WARM-002` | `REUSE_PRIMAL` reuses primal guess but rebuilds slack/dual/barrier state. | `covered` |
+| `WARM-003` | `REUSE_PRIMAL_DUAL` may reuse slack/dual only when stored primal-dual state is valid. | `covered` |
+| `WARM-004` | Invalid or non-positive reused `mu` falls back to config bounds/defaults. | `covered` |
+| `WARM-005` | Invalid or non-positive reused `reg` falls back or clamps according to regularization mode. | `covered` |
+| `WARM-006` | `FROM_COMPLEMENTARITY_GAP` computes `mu` from positive valid complementarity pairs. | `covered` |
 | `WARM-007` | Acceptable NMPC zero-step shortcut may only use a reused primal-dual warm start and no callback. | `covered` |
 
 ## Failure Semantics
@@ -86,14 +86,15 @@ Out of scope:
 
 | Contract ID | Evidence | Status |
 | --- | --- | --- |
-| `WARM-001` | `tests/test_solver.cpp`, `tests/test_soft_constraints.cpp` | `partial` |
-| `WARM-002` | `tests/test_solver.cpp` | `partial` |
-| `WARM-003` | `tests/test_solver.cpp`, `tests/test_termination.cpp` | `partial` |
-| `WARM-004` | `tests/test_termination.cpp` | `partial` |
-| `WARM-005` | `tests/test_solver.cpp` | `partial` |
-| `WARM-006` | `tests/test_barrier_residual_contract.cpp` | `partial` |
+| `WARM-001` | `tests/test_solver.cpp`, `tests/test_soft_constraints.cpp`, `tests/test_config_regressions.cpp::ConfigRegressionTest.DefaultWarmStartResetsBarrierAndRegularization` | `covered` |
+| `WARM-002` | `tests/test_solver.cpp`, `tests/test_config_regressions.cpp::ConfigRegressionTest.DefaultWarmStartResetsBarrierAndRegularization` | `covered` |
+| `WARM-003` | `tests/test_solver.cpp`, `tests/test_termination.cpp`, `tests/test_replay_corpus.cpp::ReplayCorpusTest.WarmStartSoftConstraintNeighboringFrameSurvivesActiveSetChange` | `covered` |
+| `WARM-004` | `tests/test_config_regressions.cpp::ConfigRegressionTest.WarmStartCanReusePreviousBarrier`, `tests/test_config_regressions.cpp::ConfigRegressionTest.WarmStartCanUseComplementarityGapBarrier`, `tests/test_config_regressions.cpp::ConfigRegressionTest.WarmStartInvalidPrimalDualFallsBackToMuInit` | `covered` |
+| `WARM-005` | `tests/test_config_regressions.cpp::ConfigRegressionTest.WarmStartRegularizationModesAreExplicit` | `covered` |
+| `WARM-006` | `tests/test_config_regressions.cpp::ConfigRegressionTest.WarmStartCanUseComplementarityGapBarrier`, `tests/test_config_regressions.cpp::ConfigRegressionTest.WarmStartComplementarityGapIncludesL1SoftPair`, `tests/test_barrier_residual_contract.cpp` | `covered` |
 | `WARM-007` | `tests/test_termination.cpp::TerminationTest.AcceptableNmpcCallbackDoesNotSkipDirectionSolve` | `covered` |
 
 ## Open Gaps
 
-- Need replay cases for neighboring MPC warm-start behavior.
+- No open P1 evidence gaps. External user-side shifting strategies remain out
+  of scope for this solver-core contract.
