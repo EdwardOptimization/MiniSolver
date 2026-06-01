@@ -502,13 +502,13 @@ TEST(MemoryTest, ZeroMalloc_ImplicitIntegrator)
     // Implicit Midpoint
     for (int i = 0; i < 100; ++i) {
         ImplicitIntegrator<MemTestImplicitModel>::compute_dynamics(
-            kp, IntegratorType::RK2_IMPLICIT, 0.1, nc);
+            kp, IntegratorType::GAUSS_LEGENDRE_2, 0.1, nc);
     }
 
     // Gauss-Legendre (2-stage, 2*NX=4 coupled Newton)
     for (int i = 0; i < 100; ++i) {
         ImplicitIntegrator<MemTestImplicitModel>::compute_dynamics(
-            kp, IntegratorType::RK4_IMPLICIT, 0.1, nc);
+            kp, IntegratorType::GAUSS_LEGENDRE_4, 0.1, nc);
     }
 
     g_memory_check_active = false;

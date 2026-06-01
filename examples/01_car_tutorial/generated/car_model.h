@@ -18,9 +18,9 @@ struct CarModel {
     static const int NC=5;
     static const int NP=13;
 
-    static constexpr std::uint64_t model_fingerprint = 0x8211a32045d81984ull;
+    static constexpr std::uint64_t model_fingerprint = 0x1cc16debf3f447beull;
 
-    static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
+    static constexpr IntegratorType generated_integrator = IntegratorType::RUNGE_KUTTA_4;
 
     static constexpr std::array<bool, NC> constraint_has_l1 = {false, false, false, false, false};
     static constexpr std::array<bool, NC> constraint_has_l2 = {false, false, false, false, false};
@@ -130,7 +130,7 @@ struct CarModel {
             case IntegratorType::EULER_EXPLICIT:
                 return x_in + dynamics_continuous(x_in, u_in, p_in) * dt;
 
-            case IntegratorType::RK2_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_2:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -138,12 +138,12 @@ struct CarModel {
             }
 
             case IntegratorType::EULER_IMPLICIT:
-            case IntegratorType::RK2_IMPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
+            case IntegratorType::GAUSS_LEGENDRE_2:
+            case IntegratorType::GAUSS_LEGENDRE_4:
                 throw std::invalid_argument(
                     "Implicit integrators require minisolver::detail::dispatch_integrate");
 
-            case IntegratorType::RK4_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_4:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -203,7 +203,7 @@ struct CarModel {
                 kp.B(3,0) = dt;
                 return;
             }
-            case IntegratorType::RK2_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_2:
             {
                 T tmp_d0 = acc*dt;
                 T tmp_d1 = 0.5*tmp_d0 + v;
@@ -254,7 +254,7 @@ struct CarModel {
                 kp.B(3,0) = dt;
                 return;
             }
-            case IntegratorType::RK4_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_4:
             {
                 T tmp_d0 = cos(theta);
                 T tmp_d1 = acc*dt;
@@ -331,8 +331,8 @@ struct CarModel {
                 return;
             }
             case IntegratorType::EULER_IMPLICIT:
-            case IntegratorType::RK2_IMPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
+            case IntegratorType::GAUSS_LEGENDRE_2:
+            case IntegratorType::GAUSS_LEGENDRE_4:
                 throw std::invalid_argument("Implicit integrators require minisolver::detail::dispatch_compute_dynamics");
             case IntegratorType::DISCRETE:
                 throw std::invalid_argument("DISCRETE integrator requires Next(state) dynamics");

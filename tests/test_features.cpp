@@ -193,7 +193,7 @@ TEST(FeaturesTest, DynamicsDefectRolloutRefinement)
     int N = 20;
     SolverConfig config;
     config.print_level = PrintLevel::DEBUG;
-    config.integrator = IntegratorType::RK4_EXPLICIT;
+    config.integrator = IntegratorType::RUNGE_KUTTA_4;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
     config.inertia_strategy = InertiaStrategy::REGULARIZATION;
     config.direction_refinement = DirectionRefinementMode::DYNAMICS_DEFECT_ROLLOUT;

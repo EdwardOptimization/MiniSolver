@@ -117,11 +117,11 @@ TEST(ImplicitSparseRiccatiTest, BackwardEulerSolveMatchesGenericRiccati)
 TEST(ImplicitSparseRiccatiTest, ImplicitMidpointSolveMatchesGenericRiccati)
 {
     expect_implicit_sparse_riccati_matches_generic<FusedMidpointImplicitRegressionModel,
-        GenericMidpointImplicitRegressionModel>(IntegratorType::RK2_IMPLICIT);
+        GenericMidpointImplicitRegressionModel>(IntegratorType::GAUSS_LEGENDRE_2);
 }
 
 TEST(ImplicitSparseRiccatiTest, GaussLegendreSolveMatchesGenericRiccati)
 {
     expect_implicit_sparse_riccati_matches_generic<FusedGaussImplicitRegressionModel,
-        GenericGaussImplicitRegressionModel>(IntegratorType::RK4_IMPLICIT);
+        GenericGaussImplicitRegressionModel>(IntegratorType::GAUSS_LEGENDRE_4);
 }

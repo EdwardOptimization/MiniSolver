@@ -154,9 +154,9 @@ int main()
     run_case<FusedEulerImplicitRegressionModel, GenericEulerImplicitRegressionModel>(
         "backward_euler", IntegratorType::EULER_IMPLICIT);
     run_case<FusedMidpointImplicitRegressionModel, GenericMidpointImplicitRegressionModel>(
-        "midpoint", IntegratorType::RK2_IMPLICIT);
+        "midpoint", IntegratorType::GAUSS_LEGENDRE_2);
     run_case<FusedGaussImplicitRegressionModel, GenericGaussImplicitRegressionModel>(
-        "gauss_legendre", IntegratorType::RK4_IMPLICIT);
+        "gauss_legendre", IntegratorType::GAUSS_LEGENDRE_4);
 
     return 0;
 }

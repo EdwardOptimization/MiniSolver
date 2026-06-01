@@ -137,7 +137,7 @@ SolverConfig base_config()
 {
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
-    config.integrator = IntegratorType::RK4_EXPLICIT;
+    config.integrator = IntegratorType::RUNGE_KUTTA_4;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
     config.line_search_type = LineSearchType::FILTER;
     config.max_iters = 100;

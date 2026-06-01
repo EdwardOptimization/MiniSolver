@@ -217,7 +217,7 @@ template <typename Model> void run_gauss_compute_case(int iters)
     config.tol = 1e-12;
     config.regularization = 1e-12;
 
-    ImplicitIntegrator<Model>::compute_dynamics(kp, IntegratorType::RK4_IMPLICIT, 0.05, config);
+    ImplicitIntegrator<Model>::compute_dynamics(kp, IntegratorType::GAUSS_LEGENDRE_4, 0.05, config);
     sink += checksum<Model::NX, 1>(kp.f_resid) + checksum<Model::NX, Model::NX>(kp.A)
         + checksum<Model::NX, Model::NU>(kp.B);
 
@@ -225,7 +225,8 @@ template <typename Model> void run_gauss_compute_case(int iters)
     const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < iters; ++i) {
         fill_gauss_knot<Model>(kp);
-        ImplicitIntegrator<Model>::compute_dynamics(kp, IntegratorType::RK4_IMPLICIT, 0.05, config);
+        ImplicitIntegrator<Model>::compute_dynamics(
+            kp, IntegratorType::GAUSS_LEGENDRE_4, 0.05, config);
         sink += checksum<Model::NX, 1>(kp.f_resid) + checksum<Model::NX, Model::NX>(kp.A)
             + checksum<Model::NX, Model::NU>(kp.B);
     }

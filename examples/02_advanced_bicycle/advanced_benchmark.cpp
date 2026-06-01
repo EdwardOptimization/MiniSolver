@@ -212,7 +212,7 @@ int main()
 
     // Base Config
     SolverConfig base;
-    base.integrator = IntegratorType::RK4_EXPLICIT;
+    base.integrator = IntegratorType::RUNGE_KUTTA_4;
     base.default_dt = 0.1;
     base.max_iters = 300;
     base.tol_con = 0.05; // Relaxed for challenging obstacle scenario

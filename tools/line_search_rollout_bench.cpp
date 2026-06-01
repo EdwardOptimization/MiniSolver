@@ -124,8 +124,8 @@ int main()
               << "mstatus" << std::setw(12) << "rstatus" << std::setw(14) << "cost_diff"
               << "\n";
 
-    run_case<FusedMidpointImplicitRegressionModel>("midpoint", IntegratorType::RK2_IMPLICIT);
-    run_case<FusedGaussImplicitRegressionModel>("gauss", IntegratorType::RK4_IMPLICIT);
+    run_case<FusedMidpointImplicitRegressionModel>("midpoint", IntegratorType::GAUSS_LEGENDRE_2);
+    run_case<FusedGaussImplicitRegressionModel>("gauss", IntegratorType::GAUSS_LEGENDRE_4);
 
     return 0;
 }

@@ -347,7 +347,7 @@ TEST(SolverQualityTest, FiniteDifferenceJacobianVerification)
     double dt = 0.1;
 
     // Compute analytical derivatives
-    Model::compute_dynamics(kp, IntegratorType::RK4_EXPLICIT, dt);
+    Model::compute_dynamics(kp, IntegratorType::RUNGE_KUTTA_4, dt);
     Model::compute_constraints(kp);
     Model::compute_cost_exact(kp);
 
@@ -369,8 +369,8 @@ TEST(SolverQualityTest, FiniteDifferenceJacobianVerification)
         KnotPoint<double, NX, NU, NC, NP> kp_p = kp, kp_m = kp;
         kp_p.x(j) += eps;
         kp_m.x(j) -= eps;
-        Model::compute_dynamics(kp_p, IntegratorType::RK4_EXPLICIT, dt);
-        Model::compute_dynamics(kp_m, IntegratorType::RK4_EXPLICIT, dt);
+        Model::compute_dynamics(kp_p, IntegratorType::RUNGE_KUTTA_4, dt);
+        Model::compute_dynamics(kp_m, IntegratorType::RUNGE_KUTTA_4, dt);
         for (int i = 0; i < NX; ++i) {
             double fd = (kp_p.f_resid(i) - kp_m.f_resid(i)) / (2 * eps);
             EXPECT_NEAR(A_an(i, j), fd, 1e-4)
@@ -383,8 +383,8 @@ TEST(SolverQualityTest, FiniteDifferenceJacobianVerification)
         KnotPoint<double, NX, NU, NC, NP> kp_p = kp, kp_m = kp;
         kp_p.u(j) += eps;
         kp_m.u(j) -= eps;
-        Model::compute_dynamics(kp_p, IntegratorType::RK4_EXPLICIT, dt);
-        Model::compute_dynamics(kp_m, IntegratorType::RK4_EXPLICIT, dt);
+        Model::compute_dynamics(kp_p, IntegratorType::RUNGE_KUTTA_4, dt);
+        Model::compute_dynamics(kp_m, IntegratorType::RUNGE_KUTTA_4, dt);
         for (int i = 0; i < NX; ++i) {
             double fd = (kp_p.f_resid(i) - kp_m.f_resid(i)) / (2 * eps);
             EXPECT_NEAR(B_an(i, j), fd, 1e-4) << "B(" << i << "," << j << ") mismatch";

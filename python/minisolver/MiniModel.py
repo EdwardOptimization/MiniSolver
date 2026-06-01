@@ -1243,9 +1243,9 @@ class OptimalControlModel:
 
         if integrator_type == 'EULER_IMPLICIT':
             return self._backward_euler_riccati_patterns(Jx_pattern, Ju_pattern, nx, nu)
-        if integrator_type == 'RK2_IMPLICIT':
+        if integrator_type == 'GAUSS_LEGENDRE_2':
             return self._implicit_midpoint_riccati_patterns(Jx_pattern, Ju_pattern, nx, nu)
-        if integrator_type == 'RK4_IMPLICIT':
+        if integrator_type == 'GAUSS_LEGENDRE_4':
             return self._gauss_legendre_2_riccati_patterns(Jx_pattern, Ju_pattern, nx, nu)
 
         raise ValueError(f"Unsupported implicit integrator: {integrator_type}")
@@ -1387,11 +1387,11 @@ class OptimalControlModel:
 
     def _resolve_integrator_type(self, integrator_type):
         if integrator_type is None:
-            integrator_type = "DISCRETE" if self.dynamics_mode == "next" else "RK4_EXPLICIT"
+            integrator_type = "DISCRETE" if self.dynamics_mode == "next" else "RUNGE_KUTTA_4"
 
         valid_integrators = {
-            "EULER_EXPLICIT", "EULER_IMPLICIT", "RK2_EXPLICIT",
-            "RK2_IMPLICIT", "RK4_EXPLICIT", "RK4_IMPLICIT", "DISCRETE",
+            "EULER_EXPLICIT", "EULER_IMPLICIT", "RUNGE_KUTTA_2",
+            "GAUSS_LEGENDRE_2", "RUNGE_KUTTA_4", "GAUSS_LEGENDRE_4", "DISCRETE",
         }
         if integrator_type not in valid_integrators:
             raise ValueError(f"Unknown integrator_type: {integrator_type}")
@@ -1553,7 +1553,7 @@ class OptimalControlModel:
             case IntegratorType::EULER_EXPLICIT:
                 return x_in + dynamics_continuous(x_in, u_in, p_in) * dt;
 
-            case IntegratorType::RK2_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_2:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -1561,12 +1561,12 @@ class OptimalControlModel:
             }
 
             case IntegratorType::EULER_IMPLICIT:
-            case IntegratorType::RK2_IMPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
+            case IntegratorType::GAUSS_LEGENDRE_2:
+            case IntegratorType::GAUSS_LEGENDRE_4:
                 throw std::invalid_argument(
                     "Implicit integrators require minisolver::detail::dispatch_integrate");
 
-            case IntegratorType::RK4_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_4:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -1616,19 +1616,19 @@ class OptimalControlModel:
             k1_rk2 = f_cont
             k2_rk2 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk2, u_vec)
             x_next_rk2 = x_vec + dt_sym * k2_rk2
-            integrators['RK2_EXPLICIT'] = x_next_rk2
+            integrators['RUNGE_KUTTA_2'] = x_next_rk2
 
             k1_rk4 = f_cont
             k2_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k1_rk4, u_vec)
             k3_rk4 = get_f_subs(x_vec + 0.5*dt_sym*k2_rk4, u_vec)
             k4_rk4 = get_f_subs(x_vec + dt_sym*k3_rk4, u_vec)
             x_next_rk4 = x_vec + (dt_sym / 6.0) * (k1_rk4 + 2*k2_rk4 + 2*k3_rk4 + k4_rk4)
-            integrators['RK4_EXPLICIT'] = x_next_rk4
+            integrators['RUNGE_KUTTA_4'] = x_next_rk4
 
             return [
                 (['EULER_EXPLICIT'], integrators['EULER_EXPLICIT']),
-                (['RK2_EXPLICIT'], integrators['RK2_EXPLICIT']),
-                (['RK4_EXPLICIT'], integrators['RK4_EXPLICIT']),
+                (['RUNGE_KUTTA_2'], integrators['RUNGE_KUTTA_2']),
+                (['RUNGE_KUTTA_4'], integrators['RUNGE_KUTTA_4']),
             ]
 
         integrators['DISCRETE'] = x_next_direct
@@ -1705,8 +1705,8 @@ class OptimalControlModel:
 
         if self.dynamics_mode == "dot":
             code += "            case IntegratorType::EULER_IMPLICIT:\n"
-            code += "            case IntegratorType::RK2_IMPLICIT:\n"
-            code += "            case IntegratorType::RK4_IMPLICIT:\n"
+            code += "            case IntegratorType::GAUSS_LEGENDRE_2:\n"
+            code += "            case IntegratorType::GAUSS_LEGENDRE_4:\n"
             code += "                throw std::invalid_argument(\"Implicit integrators require minisolver::detail::dispatch_compute_dynamics\");\n"
             code += "            case IntegratorType::DISCRETE:\n"
             code += "                throw std::invalid_argument(\"DISCRETE integrator requires Next(state) dynamics\");\n"
@@ -1888,7 +1888,7 @@ class OptimalControlModel:
         # [NEW] Generate Fused Riccati Kernel
         code_fused_riccati = ""
         if self.use_fused_riccati:
-            implicit_integrators = {'EULER_IMPLICIT', 'RK2_IMPLICIT', 'RK4_IMPLICIT'}
+            implicit_integrators = {'EULER_IMPLICIT', 'GAUSS_LEGENDRE_2', 'GAUSS_LEGENDRE_4'}
             if integrator_type in implicit_integrators:
                 try:
                     A_pattern, B_pattern = self._generate_implicit_riccati_patterns(

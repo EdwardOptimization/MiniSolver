@@ -17,8 +17,8 @@ Coverage matrix:
 
 ## Scope
 
-Explicit/discrete dynamics packet generation and dispatch for Euler, RK2, RK4,
-and direct discrete dynamics.
+Explicit/discrete dynamics packet generation and dispatch for explicit Euler,
+RK2 explicit midpoint, classic RK4, and direct discrete dynamics.
 
 ## Contract IDs
 

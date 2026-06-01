@@ -129,14 +129,14 @@ def test_next_model_rejects_non_discrete_runtime_integrators():
                 u_in(0) = 3.0;
                 try {
                     (void)Model::integrate(
-                        x_in, u_in, p_in, 0.1, minisolver::IntegratorType::RK4_EXPLICIT);
+                        x_in, u_in, p_in, 0.1, minisolver::IntegratorType::RUNGE_KUTTA_4);
                     return 2;
                 } catch (const std::invalid_argument&) {
                 }
 
                 try {
                     minisolver::detail::dispatch_compute_dynamics<Model>(
-                        kp, minisolver::IntegratorType::RK4_IMPLICIT, 0.1);
+                        kp, minisolver::IntegratorType::GAUSS_LEGENDRE_4, 0.1);
                     return 3;
                 } catch (const std::invalid_argument&) {
                 }
@@ -188,7 +188,7 @@ def test_generated_implicit_direct_calls_fail_loud_but_dispatch_succeeds():
     model.minimize(x**2 + u**2)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        model.generate(tmpdir, integrator_type="RK4_IMPLICIT")
+        model.generate(tmpdir, integrator_type="GAUSS_LEGENDRE_4")
         compile_and_run(
             tmpdir,
             "implicit_direct_guard_check.cpp",
@@ -209,7 +209,7 @@ def test_generated_implicit_direct_calls_fail_loud_but_dispatch_succeeds():
 
                 try {
                     Model::compute_dynamics(
-                        kp, minisolver::IntegratorType::RK4_IMPLICIT, 0.1);
+                        kp, minisolver::IntegratorType::GAUSS_LEGENDRE_4, 0.1);
                     return 1;
                 } catch (const std::invalid_argument&) {
                 }
@@ -222,19 +222,19 @@ def test_generated_implicit_direct_calls_fail_loud_but_dispatch_succeeds():
 
                 try {
                     (void)Model::integrate(
-                        x_in, u_in, p_in, 0.1, minisolver::IntegratorType::RK4_IMPLICIT);
+                        x_in, u_in, p_in, 0.1, minisolver::IntegratorType::GAUSS_LEGENDRE_4);
                     return 2;
                 } catch (const std::invalid_argument&) {
                 }
 
                 minisolver::detail::dispatch_compute_dynamics<Model>(
-                    kp, minisolver::IntegratorType::RK4_IMPLICIT, 0.1);
+                    kp, minisolver::IntegratorType::GAUSS_LEGENDRE_4, 0.1);
                 if (!std::isfinite(kp.f_resid(0))) return 3;
                 if (!std::isfinite(kp.A(0, 0))) return 4;
                 if (!std::isfinite(kp.B(0, 0))) return 5;
 
                 const auto z = minisolver::detail::dispatch_integrate<Model>(
-                    x_in, u_in, p_in, 0.1, minisolver::IntegratorType::RK4_IMPLICIT);
+                    x_in, u_in, p_in, 0.1, minisolver::IntegratorType::GAUSS_LEGENDRE_4);
                 if (!std::isfinite(z(0))) return 6;
 
                 minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> explicit_kp;
@@ -242,7 +242,7 @@ def test_generated_implicit_direct_calls_fail_loud_but_dispatch_succeeds():
                 explicit_kp.x(0) = 1.0;
                 explicit_kp.u(0) = 0.0;
                 Model::compute_dynamics(
-                    explicit_kp, minisolver::IntegratorType::RK4_EXPLICIT, 0.1);
+                    explicit_kp, minisolver::IntegratorType::RUNGE_KUTTA_4, 0.1);
                 if (!std::isfinite(explicit_kp.f_resid(0))) return 7;
 
                 return 0;
@@ -284,7 +284,7 @@ def test_generate_rejects_integrator_mode_mismatch():
         x = model.state("x")
         u = model.control("u")
         model.subject_to(Next(x) == x + u)
-        model.generate(integrator_type="RK4_EXPLICIT")
+        model.generate(integrator_type="RUNGE_KUTTA_4")
 
     expect_value_error(dot_with_discrete_integrator, "DISCRETE")
     expect_value_error(next_with_continuous_integrator, "Next")
@@ -327,10 +327,10 @@ def test_model_fingerprint_changes_between_dot_and_next_modes():
     for forbidden in (
         "EULER_EXPLICIT",
         "EULER_IMPLICIT",
-        "RK2_EXPLICIT",
-        "RK2_IMPLICIT",
-        "RK4_EXPLICIT",
-        "RK4_IMPLICIT",
+        "RUNGE_KUTTA_2",
+        "GAUSS_LEGENDRE_2",
+        "RUNGE_KUTTA_4",
+        "GAUSS_LEGENDRE_4",
     ):
         if forbidden in text_next:
             raise AssertionError(f"Next-generated model should not contain {forbidden}")

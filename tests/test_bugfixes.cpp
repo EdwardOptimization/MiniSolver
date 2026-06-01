@@ -808,11 +808,11 @@ TEST(BugfixTest, CostStagnationNotGatedOnMuFinal)
 struct IntegratorTaggedModel : public BugTestModel {
     // Opt-in marker: compile-time integrator the fused kernel was generated
     // for. MiniSolver's constructor warns on runtime mismatches.
-    static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
+    static constexpr IntegratorType generated_integrator = IntegratorType::RUNGE_KUTTA_4;
 };
 
 struct IntegratorTaggedFusedModel : public BugTestModel {
-    static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
+    static constexpr IntegratorType generated_integrator = IntegratorType::RUNGE_KUTTA_4;
     inline static int fused_calls = 0;
 
     template <typename T>
@@ -986,7 +986,7 @@ TEST(BugfixTest, SolverWarnsOnFusedKernelIntegratorMismatch)
 {
     SolverConfig conf;
     conf.print_level = PrintLevel::NONE;
-    conf.integrator = IntegratorType::EULER_EXPLICIT; // != model's RK4_EXPLICIT
+    conf.integrator = IntegratorType::EULER_EXPLICIT; // != model's RUNGE_KUTTA_4
 
     using TaggedSolver = MiniSolver<IntegratorTaggedModel, 10>;
 
@@ -1012,7 +1012,7 @@ TEST(BugfixTest, RiccatiSkipsFusedKernelOnIntegratorMismatch)
 
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
-    config.integrator = IntegratorType::EULER_IMPLICIT; // != generated RK4_EXPLICIT
+    config.integrator = IntegratorType::EULER_IMPLICIT; // != generated RUNGE_KUTTA_4
     config.enable_defect_correction = false;
 
     RiccatiWorkspace<Knot> ws;
@@ -1036,7 +1036,7 @@ TEST(BugfixTest, RiccatiUsesFusedKernelWhenIntegratorMatches)
 
     SolverConfig config;
     config.print_level = PrintLevel::NONE;
-    config.integrator = IntegratorType::RK4_EXPLICIT; // matches generated_integrator
+    config.integrator = IntegratorType::RUNGE_KUTTA_4; // matches generated_integrator
     config.enable_defect_correction = false;
 
     RiccatiWorkspace<Knot> ws;

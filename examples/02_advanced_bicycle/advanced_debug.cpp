@@ -64,7 +64,7 @@ int main()
 
     // --- Configuration ---
     SolverConfig config;
-    config.integrator = IntegratorType::RK4_EXPLICIT;
+    config.integrator = IntegratorType::RUNGE_KUTTA_4;
     config.default_dt = 0.05;
 
     // Enable debug printing

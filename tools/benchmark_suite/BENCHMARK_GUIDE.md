@@ -20,14 +20,14 @@ We have defined 8 distinct configuration sets ("Archetypes") representing common
 ### ⚖️ 2. BALANCED_RT
 * **Target Application**: General-purpose UGV/UAV navigation, Real-Time planning (50Hz).
 * **Key Settings**:
-    * `Integrator = RK2_EXPLICIT` (Midpoint): Good balance of accuracy vs. speed.
+    * `Integrator = RUNGE_KUTTA_2` (explicit midpoint): Good balance of accuracy vs. speed.
     * `BarrierStrategy = MEHROTRA`: Predictor-Corrector logic reduces total iteration count significantly.
 * **Pros**: Stable convergence with moderate CPU usage. Recommended starting point.
 
 ### 🎯 3. QUALITY_PLANNER (Default)
 * **Target Application**: Autonomous Driving trajectory planners, dynamic maneuvers.
 * **Key Settings**:
-    * `Integrator = RK4_EXPLICIT`: High physical fidelity.
+    * `Integrator = RUNGE_KUTTA_4`: High physical fidelity.
     * `BarrierStrategy = MEHROTRA`: State-of-the-art convergence rate.
     * `Tol = 1e-4`: Standard engineering tolerance.
 * **Pros**: High-quality smooth trajectories; reliable constraint handling.
@@ -80,8 +80,8 @@ We have defined 8 distinct configuration sets ("Archetypes") representing common
 | Type | Order | Cost | Use Case |
 | :--- | :---: | :--- | :--- |
 | **Euler** | 1 | 1x | Simple dynamics, short horizons, MCUs. |
-| **RK2** | 2 | 2x | General robotics, good trade-off. |
-| **RK4** | 4 | 4x | Complex dynamics (vehicles, drones), long horizons. |
+| **RK2 explicit midpoint** | 2 | 2x | General robotics, good trade-off. |
+| **Classic RK4** | 4 | 4x | Complex dynamics (vehicles, drones), long horizons. |
 
 ### Barrier Strategies
 * **Monotone**: Conservative. Good for debugging.

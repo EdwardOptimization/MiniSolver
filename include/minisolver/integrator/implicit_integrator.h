@@ -42,8 +42,8 @@ namespace detail {
 
     inline bool is_implicit_integrator(IntegratorType type)
     {
-        return type == IntegratorType::EULER_IMPLICIT || type == IntegratorType::RK2_IMPLICIT
-            || type == IntegratorType::RK4_IMPLICIT;
+        return type == IntegratorType::EULER_IMPLICIT || type == IntegratorType::GAUSS_LEGENDRE_2
+            || type == IntegratorType::GAUSS_LEGENDRE_4;
     }
 } // namespace detail
 
@@ -67,10 +67,10 @@ public:
         case IntegratorType::EULER_IMPLICIT:
             backward_euler(kp, dt, config);
             break;
-        case IntegratorType::RK2_IMPLICIT:
+        case IntegratorType::GAUSS_LEGENDRE_2:
             implicit_midpoint(kp, dt, config);
             break;
-        case IntegratorType::RK4_IMPLICIT:
+        case IntegratorType::GAUSS_LEGENDRE_4:
             compute_gauss_legendre_2(kp, dt, config);
             break;
         default:
@@ -84,7 +84,7 @@ public:
     {
         MSVec<double, NX> z = x;
 
-        if (type == IntegratorType::RK2_IMPLICIT) {
+        if (type == IntegratorType::GAUSS_LEGENDRE_2) {
             // Implicit midpoint
             auto eval = [&](const MSVec<double, NX>& z_in, MSVec<double, NX>& F,
                             MSMat<double, NX, NX>& J) {
@@ -97,7 +97,7 @@ public:
             if (!ns.solve(z, eval, config)) {
                 return invalid_state();
             }
-        } else if (type == IntegratorType::RK4_IMPLICIT) {
+        } else if (type == IntegratorType::GAUSS_LEGENDRE_4) {
             // Gauss-Legendre 2-stage: coupled 2*NX system
             constexpr int N2 = 2 * NX;
             constexpr double sqrt3 = 1.7320508075688772;
@@ -286,7 +286,7 @@ private:
         }
     }
 
-    // --- Gauss-Legendre 2-stage (RK4 Implicit, order 4) ---
+    // --- Gauss-Legendre 2-stage (order 4) ---
     // Butcher tableau:
     //   c1=1/2-√3/6, c2=1/2+√3/6
     //   a11=1/4, a12=1/4-√3/6, a21=1/4+√3/6, a22=1/4

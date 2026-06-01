@@ -7,7 +7,7 @@ namespace minisolver {
 struct SolverPlanInfo {
     Backend backend = Backend::CPU_SERIAL;
     LineSearchType line_search_type = LineSearchType::FILTER;
-    IntegratorType integrator = IntegratorType::RK4_EXPLICIT;
+    IntegratorType integrator = IntegratorType::RUNGE_KUTTA_4;
     ConstraintScalingMethod constraint_scaling = ConstraintScalingMethod::NONE;
     ObjectiveScalingMethod objective_scaling = ObjectiveScalingMethod::NONE;
     ProblemScalingMethod problem_scaling = ProblemScalingMethod::NONE;

@@ -106,7 +106,7 @@ struct InnerDcolNorm2Model {
             case IntegratorType::EULER_EXPLICIT:
                 return x_in + dynamics_continuous(x_in, u_in, p_in) * dt;
 
-            case IntegratorType::RK2_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_2:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -114,12 +114,12 @@ struct InnerDcolNorm2Model {
             }
 
             case IntegratorType::EULER_IMPLICIT:
-            case IntegratorType::RK2_IMPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
+            case IntegratorType::GAUSS_LEGENDRE_2:
+            case IntegratorType::GAUSS_LEGENDRE_4:
                 throw std::invalid_argument(
                     "Implicit integrators require minisolver::detail::dispatch_integrate");
 
-            case IntegratorType::RK4_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_4:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -153,7 +153,7 @@ struct InnerDcolNorm2Model {
                 kp.B.setZero();
                 return;
             }
-            case IntegratorType::RK2_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_2:
             {
                 kp.f_resid(0) = dummy;
 
@@ -165,7 +165,7 @@ struct InnerDcolNorm2Model {
                 kp.B.setZero();
                 return;
             }
-            case IntegratorType::RK4_EXPLICIT:
+            case IntegratorType::RUNGE_KUTTA_4:
             {
                 kp.f_resid(0) = dummy;
 
@@ -178,8 +178,8 @@ struct InnerDcolNorm2Model {
                 return;
             }
             case IntegratorType::EULER_IMPLICIT:
-            case IntegratorType::RK2_IMPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
+            case IntegratorType::GAUSS_LEGENDRE_2:
+            case IntegratorType::GAUSS_LEGENDRE_4:
                 throw std::invalid_argument("Implicit integrators require minisolver::detail::dispatch_compute_dynamics");
             case IntegratorType::DISCRETE:
                 throw std::invalid_argument("DISCRETE integrator requires Next(state) dynamics");

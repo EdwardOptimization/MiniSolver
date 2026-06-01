@@ -40,14 +40,16 @@ std::string integrator_to_string(IntegratorType t)
     switch (t) {
     case IntegratorType::EULER_EXPLICIT:
         return "EULER";
-    case IntegratorType::RK2_EXPLICIT:
+    case IntegratorType::RUNGE_KUTTA_2:
         return "RK2";
-    case IntegratorType::RK4_EXPLICIT:
+    case IntegratorType::RUNGE_KUTTA_4:
         return "RK4";
     case IntegratorType::EULER_IMPLICIT:
         return "EULER_IMP";
-    case IntegratorType::RK2_IMPLICIT:
-        return "RK2_IMP";
+    case IntegratorType::GAUSS_LEGENDRE_2:
+        return "GL2";
+    case IntegratorType::GAUSS_LEGENDRE_4:
+        return "GL4";
     default:
         return "UNKNOWN";
     }
@@ -146,16 +148,14 @@ public:
         std::uniform_int_distribution<int> dist_int_2(0, 1); // 2 options
         std::uniform_int_distribution<int> dist_bool(0, 1);
 
-        // Integrator: RK4, RK2, EULER (0,1,2 in enum order roughly? Check SolverOptions.h)
-        // Order: EULER_EXPLICIT=0, EULER_IMPLICIT=1, RK2_EXPLICIT=2, RK2_IMPLICIT=3,
-        // RK4_EXPLICIT=4... Let's pick explicitly
+        // Integrator: Euler, RK2 explicit midpoint, classic RK4.
         int r_int = std::uniform_int_distribution<int>(0, 2)(rng);
         if (r_int == 0) {
             p.integrator = IntegratorType::EULER_EXPLICIT;
         } else if (r_int == 1) {
-            p.integrator = IntegratorType::RK2_EXPLICIT;
+            p.integrator = IntegratorType::RUNGE_KUTTA_2;
         } else {
-            p.integrator = IntegratorType::RK4_EXPLICIT;
+            p.integrator = IntegratorType::RUNGE_KUTTA_4;
         }
 
         int r_bar = dist_int_3(rng);

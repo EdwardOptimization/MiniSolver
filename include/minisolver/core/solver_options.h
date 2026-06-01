@@ -5,10 +5,10 @@ namespace minisolver {
 enum class IntegratorType {
     EULER_EXPLICIT,
     EULER_IMPLICIT,
-    RK2_EXPLICIT,
-    RK2_IMPLICIT,
-    RK4_EXPLICIT,
-    RK4_IMPLICIT,
+    RUNGE_KUTTA_2,
+    GAUSS_LEGENDRE_2,
+    RUNGE_KUTTA_4,
+    GAUSS_LEGENDRE_4,
     DISCRETE
 };
 
@@ -174,7 +174,7 @@ struct SolverConfig {
 
     // --- Integration ---
     // RK4 is a good balance for general nonlinear problems
-    IntegratorType integrator = IntegratorType::RK4_EXPLICIT;
+    IntegratorType integrator = IntegratorType::RUNGE_KUTTA_4;
     double default_dt = 0.1;
     NewtonConfig newton_config; // Implicit integrator Newton solver parameters
 

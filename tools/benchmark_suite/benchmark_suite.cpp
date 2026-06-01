@@ -166,9 +166,9 @@ int main()
 
     // 2. BALANCED_RT
     // Target: General Robotics (UGV/UAV), 50Hz loops.
-    // Config: RK2 (Midpoint), Mehrotra (Fewer Iters), Standard Tol.
+    // Config: RK2 explicit midpoint, Mehrotra (Fewer Iters), Standard Tol.
     SolverConfig c2;
-    c2.integrator = IntegratorType::RK2_EXPLICIT;
+    c2.integrator = IntegratorType::RUNGE_KUTTA_2;
     c2.barrier_strategy = BarrierStrategy::MEHROTRA;
     c2.line_search_type = LineSearchType::FILTER;
     c2.tol_con = 1e-3;
@@ -177,30 +177,30 @@ int main()
 
     // 3. QUALITY_PLANNER (Default)
     // Target: Autonomous Driving Planning, high fidelity.
-    // Config: RK4, Mehrotra, High Precision.
+    // Config: classic RK4, Mehrotra, High Precision.
     SolverConfig c3;
-    c3.integrator = IntegratorType::RK4_EXPLICIT;
+    c3.integrator = IntegratorType::RUNGE_KUTTA_4;
     c3.barrier_strategy = BarrierStrategy::MEHROTRA;
     c3.line_search_type = LineSearchType::FILTER;
     c3.tol_con = 1e-4;
     c3.print_level = PrintLevel::NONE;
-    cases.push_back({ "QUALITY_PLANNER", "RK4 + Mehrotra + High Prec", c3 });
+    cases.push_back({ "QUALITY_PLANNER", "Classic RK4 + Mehrotra + High Prec", c3 });
 
     // 3b. QUALITY_PLANNER without line search (fraction-to-boundary full step only)
     SolverConfig c3_nols = c3;
     c3_nols.line_search_type = LineSearchType::NONE;
-    cases.push_back({ "QUALITY_NOLS", "RK4 + Mehrotra + NoLineSearch", c3_nols });
+    cases.push_back({ "QUALITY_NOLS", "Classic RK4 + Mehrotra + NoLineSearch", c3_nols });
 
     // 4. CLASSIC_STABLE
     // Target: Research comparison, older reliable methods.
-    // Config: RK4, Monotone Barrier, Merit Function.
+    // Config: classic RK4, Monotone Barrier, Merit Function.
     SolverConfig c4;
-    c4.integrator = IntegratorType::RK4_EXPLICIT;
+    c4.integrator = IntegratorType::RUNGE_KUTTA_4;
     c4.barrier_strategy = BarrierStrategy::MONOTONE;
     c4.line_search_type = LineSearchType::MERIT;
     c4.tol_con = 1e-4;
     c4.print_level = PrintLevel::NONE;
-    cases.push_back({ "CLASSIC_STABLE", "RK4 + Monotone + Merit", c4 });
+    cases.push_back({ "CLASSIC_STABLE", "Classic RK4 + Monotone + Merit", c4 });
 
     // 5. ROBUST_OBSTACLE
     // Target: Complex environments, narrow passages.

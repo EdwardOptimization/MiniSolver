@@ -46,19 +46,19 @@ struct NonlinearDecayModel {
         case IntegratorType::EULER_EXPLICIT:
             return x + dynamics_continuous(x, u, p) * dt;
 
-        case IntegratorType::RK2_EXPLICIT: {
+        case IntegratorType::RUNGE_KUTTA_2: {
             auto k1 = dynamics_continuous(x, u, p);
             auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u, p);
             return x + k2 * dt;
         }
 
         case IntegratorType::EULER_IMPLICIT:
-        case IntegratorType::RK2_IMPLICIT:
-        case IntegratorType::RK4_IMPLICIT:
+        case IntegratorType::GAUSS_LEGENDRE_2:
+        case IntegratorType::GAUSS_LEGENDRE_4:
             throw std::invalid_argument(
                 "Implicit integrators require minisolver::detail::dispatch_integrate");
 
-        case IntegratorType::RK4_EXPLICIT: {
+        case IntegratorType::RUNGE_KUTTA_4: {
             auto k1 = dynamics_continuous(x, u, p);
             auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u, p);
             auto k3 = dynamics_continuous<T>(x + k2 * (0.5 * dt), u, p);
@@ -171,7 +171,7 @@ TEST(ImplicitIntegratorTest, DispatchRejectsImplicitWithoutContinuousDynamics)
     u(0) = 1.0;
     MSVec<double, 0> p;
     EXPECT_THROW(detail::dispatch_integrate<ExplicitOnlyDispatchModel>(
-                     x, u, p, 0.1, IntegratorType::RK2_IMPLICIT),
+                     x, u, p, 0.1, IntegratorType::GAUSS_LEGENDRE_2),
         std::invalid_argument);
 }
 
@@ -332,11 +332,11 @@ TEST(IntegratorTest, AccuracyComparison)
     }
     double err_ee = std::abs(x_ee(0) - x_exact);
 
-    // 3. RK4 Explicit
+    // 3. Classic RK4
     MSVec<double, 1> x_rk4;
     x_rk4(0) = x0_val;
     for (int k = 0; k < steps; ++k) {
-        x_rk4 = NonlinearDecayModel::integrate(x_rk4, u, p, dt, IntegratorType::RK4_EXPLICIT);
+        x_rk4 = NonlinearDecayModel::integrate(x_rk4, u, p, dt, IntegratorType::RUNGE_KUTTA_4);
     }
     double err_rk4 = std::abs(x_rk4(0) - x_exact);
 
@@ -349,9 +349,9 @@ TEST(IntegratorTest, AccuracyComparison)
     }
     double err_ei = std::abs(x_ei(0) - x_exact);
 
-    // Verify Accuracy Hierarchy: RK4 > Euler
+    // Verify accuracy hierarchy: classic RK4 > Euler
     EXPECT_LT(err_rk4, err_ee);
-    EXPECT_LT(err_rk4, 1e-5); // RK4 should be very accurate
+    EXPECT_LT(err_rk4, 1e-5); // Classic RK4 should be very accurate
 
     // Implicit vs Explicit Euler on this stable decaying system
     // Euler explicit: x_{k+1} = x_k - dt*x_k^2
@@ -362,11 +362,11 @@ TEST(IntegratorTest, AccuracyComparison)
     EXPECT_LT(err_ee, 0.1);
     EXPECT_LT(err_ei, 0.1);
 
-    // RK2 Explicit
+    // Explicit midpoint
     MSVec<double, 1> x_rk2;
     x_rk2(0) = x0_val;
     for (int k = 0; k < steps; ++k) {
-        x_rk2 = NonlinearDecayModel::integrate(x_rk2, u, p, dt, IntegratorType::RK2_EXPLICIT);
+        x_rk2 = NonlinearDecayModel::integrate(x_rk2, u, p, dt, IntegratorType::RUNGE_KUTTA_2);
     }
     double err_rk2 = std::abs(x_rk2(0) - x_exact);
 
@@ -561,7 +561,7 @@ TEST(ImplicitIntegratorTest, ImplicitMidpointAccuracy)
     x_im(0) = x0_val;
     for (int k = 0; k < steps; ++k) {
         x_im = ImplicitIntegrator<StiffDecayModel>::integrate(
-            x_im, u, p, dt, IntegratorType::RK2_IMPLICIT);
+            x_im, u, p, dt, IntegratorType::GAUSS_LEGENDRE_2);
     }
 
     double x_exact = x0_val * std::exp(-lambda * t_end);
@@ -765,8 +765,8 @@ TEST(ImplicitIntegratorTest, JacobiansMatchFiniteDifferenceForAllImplicitSchemes
 
     const std::array<IntegratorType, 3> implicit_types = {
         IntegratorType::EULER_IMPLICIT,
-        IntegratorType::RK2_IMPLICIT,
-        IntegratorType::RK4_IMPLICIT,
+        IntegratorType::GAUSS_LEGENDRE_2,
+        IntegratorType::GAUSS_LEGENDRE_4,
     };
 
     for (IntegratorType type : implicit_types) {
@@ -820,7 +820,7 @@ TEST(ImplicitIntegratorTest, TerminalImplicitEvaluationAtZeroDtIsFinite)
     using Knot = KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>;
 
     SolverConfig config;
-    config.integrator = IntegratorType::RK4_IMPLICIT;
+    config.integrator = IntegratorType::GAUSS_LEGENDRE_4;
     config.newton_config.tol = 1e-13;
 
     Knot kp;
@@ -850,7 +850,7 @@ TEST(ImplicitIntegratorTest, TerminalEvaluateModelStageSkipsDynamics)
     using Knot = KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP>;
 
     SolverConfig config;
-    config.integrator = IntegratorType::RK4_EXPLICIT;
+    config.integrator = IntegratorType::RUNGE_KUTTA_4;
 
     Knot kp;
     kp.set_zero();
@@ -867,7 +867,7 @@ TEST(ImplicitIntegratorTest, TerminalEvaluateModelStageSkipsDynamics)
     EXPECT_DOUBLE_EQ(MatOps::norm_inf(kp.B), 0.0);
 }
 
-// --- Gauss-Legendre (RK4 Implicit) accuracy: O(dt^4) for linear ---
+// --- Gauss-Legendre order-4 accuracy: O(dt^4) for linear ---
 TEST(ImplicitIntegratorTest, GaussLegendreAccuracy)
 {
     double lambda = 2.0;
@@ -895,16 +895,16 @@ TEST(ImplicitIntegratorTest, GaussLegendreAccuracy)
     x_im(0) = x0_val;
     for (int k = 0; k < steps; ++k) {
         x_im = ImplicitIntegrator<StiffDecayModel>::integrate(
-            x_im, u, p, dt, IntegratorType::RK2_IMPLICIT);
+            x_im, u, p, dt, IntegratorType::GAUSS_LEGENDRE_2);
     }
     double err_im = std::abs(x_im(0) - x0_val * std::exp(-lambda * t_end));
 
-    // Gauss-Legendre (RK4 Implicit)
+    // Gauss-Legendre order 4
     MSVec<double, 1> x_gl;
     x_gl(0) = x0_val;
     for (int k = 0; k < steps; ++k) {
         x_gl = ImplicitIntegrator<StiffDecayModel>::integrate(
-            x_gl, u, p, dt, IntegratorType::RK4_IMPLICIT);
+            x_gl, u, p, dt, IntegratorType::GAUSS_LEGENDRE_4);
     }
     double err_gl = std::abs(x_gl(0) - x0_val * std::exp(-lambda * t_end));
 

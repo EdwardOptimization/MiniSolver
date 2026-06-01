@@ -46,9 +46,9 @@ if __name__ == "__main__":
 
     generate_pair(output_dir, "EULER_IMPLICIT",
         "FusedEulerImplicitRegressionModel", "GenericEulerImplicitRegressionModel")
-    generate_pair(output_dir, "RK2_IMPLICIT",
+    generate_pair(output_dir, "GAUSS_LEGENDRE_2",
         "FusedMidpointImplicitRegressionModel", "GenericMidpointImplicitRegressionModel")
-    generate_pair(output_dir, "RK4_IMPLICIT",
+    generate_pair(output_dir, "GAUSS_LEGENDRE_4",
         "FusedGaussImplicitRegressionModel", "GenericGaussImplicitRegressionModel")
 
     print(f"Generated implicit sparse Riccati regression models in {output_dir}")

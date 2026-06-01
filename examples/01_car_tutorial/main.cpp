@@ -59,8 +59,8 @@ int main(int /*argc*/, char** /*argv*/)
     SolverConfig config;
     config.print_level = PrintLevel::DEBUG; // Show progress
 
-    // [FIX] Enable RK4 and Restoration to recover stability
-    config.integrator = IntegratorType::RK4_EXPLICIT;
+    // [FIX] Enable classic RK4 and restoration to recover stability
+    config.integrator = IntegratorType::RUNGE_KUTTA_4;
     config.enable_feasibility_restoration = true;
     config.enable_slack_reset = true;
 

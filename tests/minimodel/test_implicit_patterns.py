@@ -42,7 +42,7 @@ def check_implicit_chain_pattern(integrator_type):
 
 
 def test_implicit_riccati_pattern_keeps_inverse_fill_in():
-    for integrator_type in ("EULER_IMPLICIT", "RK2_IMPLICIT", "RK4_IMPLICIT"):
+    for integrator_type in ("EULER_IMPLICIT", "GAUSS_LEGENDRE_2", "GAUSS_LEGENDRE_4"):
         check_implicit_chain_pattern(integrator_type)
 
 

@@ -152,7 +152,7 @@ TEST(AssetRegressionTest, KinematicBicycleStraightTrackRecovery)
     config.max_iters = 60;
     config.tol_con = 1e-4;
     config.mu_final = 1e-6;
-    config.integrator = IntegratorType::RK2_EXPLICIT;
+    config.integrator = IntegratorType::RUNGE_KUTTA_2;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
     config.line_search_type = LineSearchType::FILTER;
 
@@ -223,7 +223,7 @@ TEST(AssetRegressionTest, DoubleIntegrator3DReferenceTracking)
     config.max_iters = 50;
     config.tol_con = 1e-5;
     config.mu_final = 1e-6;
-    config.integrator = IntegratorType::RK2_EXPLICIT;
+    config.integrator = IntegratorType::RUNGE_KUTTA_2;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
     config.line_search_type = LineSearchType::FILTER;
 
@@ -304,7 +304,7 @@ TEST(AssetRegressionTest, KinematicBicycleCurvedTrackClosedLoop)
     config.max_iters = 70;
     config.tol_con = 2e-4;
     config.mu_final = 1e-6;
-    config.integrator = IntegratorType::RK2_EXPLICIT;
+    config.integrator = IntegratorType::RUNGE_KUTTA_2;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
     config.line_search_type = LineSearchType::FILTER;
 
@@ -372,7 +372,7 @@ TEST(AssetRegressionTest, DoubleIntegrator3DShiftedResolveMatchesReference)
     config.max_iters = 60;
     config.tol_con = 1e-5;
     config.mu_final = 1e-6;
-    config.integrator = IntegratorType::RK2_EXPLICIT;
+    config.integrator = IntegratorType::RUNGE_KUTTA_2;
     config.barrier_strategy = BarrierStrategy::MEHROTRA;
     config.line_search_type = LineSearchType::FILTER;
 
