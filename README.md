@@ -1,15 +1,15 @@
 
 
-# MiniSolver: High-Performance Embedded NMPC Library
+# MiniSolver: High-Performance NMPC Library
 
 ![C++17](https://img.shields.io/badge/C++-17-blue.svg)
 ![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)
-![Platform](https://img.shields.io/badge/Platform-Linux%20|%20macOS%20|%20Embedded-lightgrey)
+![Platform](https://img.shields.io/badge/Platform-Linux%20|%20macOS%20|%20Embedded--Oriented-lightgrey)
 ![Zero-Malloc](https://img.shields.io/badge/Memory-Zero--Malloc-brightgreen)
 
 **MiniSolver** is a professional-grade, header-only C++17 library for solving Nonlinear Model Predictive Control (NMPC) problems.
 
-Engineered specifically for **embedded robotics** and **autonomous driving**, it combines the flexibility of Python-based symbolic modeling with the raw performance of highly optimized, template-generated C++ code. The default real-time configuration is designed for **Zero Dynamic Memory Allocation (Zero-Malloc)** during the solve phase; profiling and iteration logging are opt-in diagnostics and should stay disabled in hard real-time loops.
+Designed for real-time robotics and autonomous-driving research, it combines the flexibility of Python-based symbolic modeling with the raw performance of highly optimized, template-generated C++ code. The default real-time configuration is designed for **Zero Dynamic Memory Allocation (Zero-Malloc)** during the solve phase; profiling and iteration logging are opt-in diagnostics and should stay disabled in hard real-time loops.
 
 ---
 
@@ -21,7 +21,7 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
 * **Analytical Derivatives**: Uses SymPy to generate flattened, algebraically simplified C++ code for Jacobians and Hessians at compile-time, including true Gauss-Newton Hessians for explicit least-squares residuals.
 * **🔥 Fused Riccati Kernels**: Unlike solvers that use generic matrix libraries, MiniSolver uses Python (SymPy) to symbolically fuse the Riccati backward pass (`Q + A'PA`) into a single, flattened C++ function. This eliminates all loop overhead and explicitly bypasses multiplication by zero, achieving **perfect sparsity exploitation** for small-to-medium systems ($N_x < 20$).
 
-### 🛡️ Embedded Safety & Robustness
+### 🛡️ Real-Time Robustness
 * **Zero-Malloc Solve Path**: The default solver configuration performs no `new`/`malloc` calls during `solve()`. Keep profiling and iteration logging disabled for hard real-time use.
 * **Robust Interior Point Method (IPM)**:
     * **Mehrotra Predictor-Corrector**: Drastically reduces iteration counts by utilizing higher-order corrections.
@@ -37,7 +37,11 @@ Engineered specifically for **embedded robotics** and **autonomous driving**, it
 
 ## 📊 Performance Benchmarks
 
-Benchmarks performed on an Intel Core i7 (Single Thread) for a **Kinematic Bicycle Model with Obstacle Avoidance** ($N_x=6, N_u=2, N=50$).
+Historical local benchmark snapshot on an Intel Core i7 (single thread) for a
+**Kinematic Bicycle Model with Obstacle Avoidance** ($N_x=6, N_u=2, N=50$).
+For release claims or solver-to-solver comparisons, use the dated reports in
+the benchmark repository with the exact MiniSolver commit, command line,
+backend, and hardware recorded.
 
 | Strategy | Integrator | Line Search | Avg Time | Iterations | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -129,12 +133,19 @@ MiniSolver includes a one-click build script that handles dependency checking, c
 ./build.sh
 ```
 
-## 📦 Embedded Deployment
+## 📦 Embedded-Oriented Deployment Notes
 
-1.  Generate your model headers on a PC: `python3 generate_model.py`
-2.  Copy the `minisolver/` include folder and your generated headers to your MCU project.
-3.  Define `USE_CUSTOM_MATRIX` to remove `Eigen3` dependency.
-4.  Compile with `-O3`. **No external libraries required.**
+1.  Generate your model headers on a development machine:
+    `python3 generate_model.py`.
+2.  Copy the `minisolver/` include folder and your generated headers into the
+    target project.
+3.  Define `USE_CUSTOM_MATRIX` to remove the Eigen dependency when the
+    built-in fixed-size matrix backend is appropriate.
+4.  Keep profiling, iteration logging, snapshots, and code generation out of
+    hard real-time loops.
+5.  Validate the target toolchain and runtime profile. MiniSolver is
+    embedded-oriented, but it is not yet documented as a freestanding C++ or
+    no-exceptions embedded profile.
 
 -----
 

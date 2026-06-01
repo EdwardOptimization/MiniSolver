@@ -68,5 +68,6 @@ No owned state.
 
 ## Known Gaps
 
-- Fraction-to-boundary contract should be shared by line-search and solver route
-  if additional alpha helpers exist.
+- Fraction-to-boundary behavior is currently covered through line-search and
+  soft-constraint contracts. Add a dedicated shared-alpha contract only if more
+  solver-route helpers start owning boundary-safe step lengths.

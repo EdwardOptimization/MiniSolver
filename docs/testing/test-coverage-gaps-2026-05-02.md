@@ -1,17 +1,23 @@
-# MiniSolver Test Coverage Gap Analysis
+# MiniSolver Test Coverage Gap Snapshot
 
 **Date:** 2026-05-02
 **Baseline:** 25 CTest entries after the `18da9fc` test split, Eigen and Custom backends
 **Source:** [review_2026-05-02.md](../reviews/review_2026-05-02.md)
+**Status:** historical snapshot. For current contract coverage, use
+[`contract-coverage-matrix.md`](contract-coverage-matrix.md) and
+[`contract-rollout-completion-audit.md`](contract-rollout-completion-audit.md).
 
 **2026-05-02 follow-up:** `GAP-1` through `GAP-9` and `GAP-12` now have direct
 regression coverage, except `GAP-6`, which remains a benchmark or real-case
 trigger candidate. Covered items were confirmed as coverage gaps rather than
 current behavior failures.
 
+This file preserves the May 2 review follow-up state. Do not treat the test
+counts below as the current suite inventory.
+
 ---
 
-## Current Coverage Overview
+## 2026-05-02 Coverage Snapshot
 
 | Test File | Test Count | Coverage Area |
 |-----------|------------|---------------|
@@ -74,9 +80,13 @@ Well-covered areas:
 #### GAP-4: Mehrotra `mu_curr == 0`
 
 - **Related issue:** Low-priority review finding that `avg_complementarity_gap / current_mu` had no zero guard.
-- **Coverage:** `BarrierResidualContractTest.MehrotraTargetMuHandlesZeroCurrentMu`.
+- **Historical coverage:** `BarrierResidualContractTest.MehrotraTargetMuHandlesZeroCurrentMu`.
 - **Original missing test:** Directly call the target-mu helper with `mu_curr = 0.0` and verify finite output.
-- **Current conclusion:** Current behavior returns `mu_final` for zero-current-mu edge cases. Keep this as a regression guard unless a stronger barrier-update contract is designed.
+- **Current conclusion:** Later review triage moved this from a hot-path guard to
+  an invariant-boundary policy: nonpositive barrier state is outside valid
+  solver invariants and should be prevented at config/build/initialization
+  boundaries. See
+  [`../reviews/review-fix-plan-2026-05-02-deep.md`](../reviews/review-fix-plan-2026-05-02-deep.md).
 
 #### GAP-5: Tiny L1 Weight Initialization
 

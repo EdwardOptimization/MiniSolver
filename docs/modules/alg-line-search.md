@@ -80,4 +80,9 @@ accepted-step refresh, SOC integration points, and barrier-update history reset.
 
 ## Known Gaps
 
-- Separate contracts for merit and filter globalization are not assigned yet.
+- Current globalization contracts are split across
+  [`../contracts/line-search-contract.md`](../contracts/line-search-contract.md),
+  [`../contracts/merit-line-search-contract.md`](../contracts/merit-line-search-contract.md),
+  and
+  [`../contracts/filter-line-search-contract.md`](../contracts/filter-line-search-contract.md).
+  Remaining merit/filter evidence is tracked per contract row.

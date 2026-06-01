@@ -27,7 +27,7 @@ memory/allocation tests, replay corpus tests, and coverage/gap documentation.
 | --- | --- | --- |
 | Source code under test | Repository | Current checkout. |
 | Generated assets | MiniModel scripts and committed references | Regenerated only when intentionally updated. |
-| Contract IDs | `docs/contracts/**` | Added in later phases. |
+| Contract IDs | `docs/contracts/**` | Stable IDs mirrored in the coverage matrix. |
 | Benchmark/replay evidence | `nmpc-bench` or in-repo replay tests | Linked, not dumped wholesale. |
 
 ## Outputs
@@ -82,4 +82,7 @@ test-only friend boundaries and must not grow public solver API.
 
 ## Known Gaps
 
-- Contract coverage matrix is scaffolded but not filled.
+- The initial contract rollout is complete:
+  [`../testing/contract-rollout-completion-audit.md`](../testing/contract-rollout-completion-audit.md).
+  Remaining `partial` rows in the coverage matrix are intentionally deferred
+  `P1/P2` evidence paths, not unassigned contract coverage.

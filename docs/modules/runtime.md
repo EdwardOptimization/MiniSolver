@@ -84,4 +84,8 @@ test/example/tool build switches, and matrix backend compile definitions.
 
 ## Known Gaps
 
-- Logging/profiling and backend contract IDs are not assigned yet.
+- Logging/profiling, backend policy, and memory exclusions are covered by
+  [`../contracts/logging-profiling-contract.md`](../contracts/logging-profiling-contract.md),
+  [`../contracts/backend-contract.md`](../contracts/backend-contract.md),
+  and
+  [`../contracts/memory-allocation-contract.md`](../contracts/memory-allocation-contract.md).

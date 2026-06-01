@@ -82,4 +82,9 @@ and residual stagnation monitoring.
 
 ## Known Gaps
 
-- Termination contract IDs are not assigned yet.
+- Termination, postsolve, status, and tolerance semantics are covered by
+  [`../contracts/termination-contract.md`](../contracts/termination-contract.md),
+  [`../contracts/postsolve-contract.md`](../contracts/postsolve-contract.md),
+  [`../contracts/status-semantics-contract.md`](../contracts/status-semantics-contract.md),
+  and
+  [`../contracts/tolerance-contract.md`](../contracts/tolerance-contract.md).

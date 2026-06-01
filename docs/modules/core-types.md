@@ -86,5 +86,12 @@ per-knot state/matrix storage, phase result structs, and build-plan state.
 
 ## Known Gaps
 
-- Solver context contract IDs are not assigned yet.
-- Double-buffer field ownership should be locked by a dedicated contract.
+- Solver status, public info projection, solve-loop phase state, and
+  zero-allocation data-carrier requirements are covered by
+  [`../contracts/status-semantics-contract.md`](../contracts/status-semantics-contract.md),
+  [`../contracts/solver-info-contract.md`](../contracts/solver-info-contract.md),
+  [`../contracts/solve-loop-contract.md`](../contracts/solve-loop-contract.md),
+  and
+  [`../contracts/memory-allocation-contract.md`](../contracts/memory-allocation-contract.md).
+  Add a dedicated double-buffer contract only if future changes alter
+  `KnotState`/`KnotMatrices` copy ownership.

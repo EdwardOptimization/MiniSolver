@@ -87,5 +87,10 @@ dynamics-defect refinement, and unsupported backend reporting.
 
 ## Known Gaps
 
-- Riccati contract IDs for sigma convention and soft derivatives are not
-  assigned yet.
+- Riccati sigma convention, regularization, and soft derivative behavior are
+  covered by
+  [`../contracts/riccati-contract.md`](../contracts/riccati-contract.md),
+  [`../contracts/regularization-contract.md`](../contracts/regularization-contract.md),
+  [`../contracts/hard-constraints-contract.md`](../contracts/hard-constraints-contract.md),
+  and
+  [`../contracts/soft-constraints-contract.md`](../contracts/soft-constraints-contract.md).

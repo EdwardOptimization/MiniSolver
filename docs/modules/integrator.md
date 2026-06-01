@@ -79,4 +79,8 @@ dynamics marking on failed implicit solves.
 
 ## Known Gaps
 
-- Integrator contract IDs are not assigned yet.
+- Integrator behavior is covered by
+  [`../contracts/explicit-integrator-contract.md`](../contracts/explicit-integrator-contract.md),
+  [`../contracts/implicit-integrator-contract.md`](../contracts/implicit-integrator-contract.md),
+  and
+  [`../contracts/numerical-jacobian-contract.md`](../contracts/numerical-jacobian-contract.md).

@@ -2,7 +2,8 @@
 
 Date: 2026-05-03
 
-Status: N-THEORY-3, N-THEORY-6, and N-THEORY-1 implemented; N-THEORY-2 deferred
+Status: current-state ledger. N-THEORY-3, N-THEORY-6, and N-THEORY-1 are
+implemented; N-THEORY-2 is deferred.
 
 Related:
 
@@ -12,17 +13,21 @@ Related:
 
 ## Purpose
 
-The deep review groups four remaining theory items:
+The deep review originally grouped four theory items:
 
-- N-THEORY-1: Filter line-search gaps against the Waechter-Biegler route.
-- N-THEORY-2: Fixed ring-buffer filter history instead of a Pareto frontier.
-- N-THEORY-3: Mehrotra affine step uses one combined fraction-to-boundary
-  instead of separate primal and dual affine step lengths.
-- N-THEORY-6: Merit line search uses finite-difference directional derivative
-  instead of an analytic directional derivative.
+- N-THEORY-1: Filter line-search gaps against the Waechter-Biegler route
+  (implemented except Pareto-frontier history).
+- N-THEORY-2: Fixed ring-buffer filter history instead of a Pareto frontier
+  (deferred).
+- N-THEORY-3: Mehrotra affine step used one combined fraction-to-boundary
+  instead of separate primal and dual affine step lengths (implemented).
+- N-THEORY-6: Merit line search used finite-difference directional derivative
+  instead of an analytic directional derivative (implemented for the default
+  multiple-shooting merit path).
 
-These are not one bug. They touch different solver phases and need separate red
-tests and commits.
+These were not one bug. They touched different solver phases and were handled
+with separate tests and commits. This file now records the current state rather
+than an open implementation queue.
 
 ## Source Survey
 
@@ -39,7 +44,7 @@ Local source survey:
   `sigma`, `alpha_prim`, and `alpha_dual`, matching the standard primal-dual IPM
   distinction between primal and dual step lengths.
 
-MiniSolver previously had:
+Historical baseline before the follow-up work:
 
 - `FilterLineSearch::is_acceptable()` with sufficient decrease plus filter
   entries, but no `theta_max` sentinel, no f-type/h-type switch, and no f-type
@@ -62,15 +67,15 @@ MiniSolver previously had:
 
 ### N-THEORY-3: Split Mehrotra Affine Step Lengths
 
-Classification: theory-standard.
+Status: implemented.
 
-Why it is real:
+Current behavior:
 
-- Standard Mehrotra computes separate affine primal and dual steps, then uses
-  them to estimate the affine complementarity gap.
-- MiniSolver currently uses one scalar fraction-to-boundary for `s`, `lambda`,
-  `soft_s`, and `w-lambda`. This is safe but can be conservative because a
-  primal-limited direction also shortens the dual affine step and vice versa.
+- MiniSolver computes separate affine primal and dual step lengths.
+- `compute_affine_barrier_mu_()` evaluates primal quantities with
+  `alpha_primal_aff` and dual quantities with `alpha_dual_aff`.
+- Accepted primal-dual damping may still use a combined alpha when a single
+  interior step bound is required.
 
 Implementation shape:
 
@@ -82,40 +87,34 @@ struct FractionToBoundaryResult {
 };
 ```
 
-Use:
+Current use:
 
 - `primal` for `s` and L1 `soft_s`.
 - `dual` for `lambda` and L1 `w-lambda`.
 - `combined()` for accepted primal-dual step damping where one scalar is still
   required.
-- `compute_affine_barrier_mu_()` should evaluate `s` and `soft_s` with
+- `compute_affine_barrier_mu_()` evaluates `s` and `soft_s` with
   `alpha_primal`, and `lambda` / `w-lambda` with `alpha_dual`.
 
-Red test:
+Evidence:
 
-- Construct a small solver state where the affine primal step is strongly
-  limited but the dual step is not.
-- Verify `mu_aff` from split steps is lower than the current combined-step
-  value and matches a direct recomputation using separate alphas.
-- Verify L1 soft pair uses `soft_s + alpha_p * dsoft_s` and
-  `w - (lambda + alpha_d * dlambda)`.
+- `tests/test_bugfixes.cpp::BugfixTest.MehrotraUsesSeparateAffinePrimalAndDualStepLengths`.
+- `tests/test_bugfixes.cpp::BugfixTest.MehrotraMuAffIncludesL1SoftPair`.
 
 ### N-THEORY-6: Analytic Merit Directional Derivative
 
-Classification: theory-standard but implementation-sensitive.
+Status: implemented for the default multiple-shooting merit path.
 
-Why it is real:
+Current behavior:
 
-- Current finite-difference `dphi` costs an extra trial construction and model
-  evaluation per search.
-- It is also sensitive to `eps_alpha` and can misclassify nearly flat merit
-  directions.
-- acados computes the directional derivative analytically from cost,
-  dynamics, and inequality contributions.
+- Merit line search computes the directional derivative analytically from
+  already available cost, dynamics, and constraint quantities.
+- The default hot path does not construct an extra finite-difference probe to
+  estimate `dphi`.
 
 Implementation shape:
 
-- Add an internal `MeritDirectionalDerivative` helper, not a public API.
+- Keep the derivative helper internal, not a public API.
 - Compute directional derivative of:
   - cost: `q^T dx + r^T du` using already evaluated gradients;
   - hard/L1/L2 residual penalties using signs of current true residuals and
@@ -123,20 +122,15 @@ Implementation shape:
   - dynamics defect penalties using signs of current defects and
     `dx_next - A dx - B du`;
   - barrier terms for `s`, `soft_s`, and `w-lambda`.
-- Keep finite-difference derivative behind a debug comparison flag only if a
-  red test shows useful coverage; do not keep both paths in default hot logic.
 
-Red tests:
+Evidence:
 
-- Compare analytic derivative against finite difference on a fixed small model
-  for hard, L1, and L2 constraints.
-- Cover rollout disabled first. Rollout-enabled merit derivative can be
-  deferred unless the feature is used in benchmarks.
-- Verify no extra model evaluation is needed to compute `dphi`.
+- `tests/test_line_search.cpp::LineSearchTest.MeritArmijoDoesNotBuildFiniteDifferenceProbe`.
+- `tests/test_line_search.cpp::LineSearchTest.MeritNonFiniteDphiReturnsNumericalError`.
 
 ### N-THEORY-1: Filter Theory Completion
 
-Classification: implemented except Pareto-frontier history.
+Status: implemented except Pareto-frontier history.
 
 Sub-items:
 
@@ -145,15 +139,14 @@ Sub-items:
    accepted steps.
 3. Done: switching condition using the filter objective directional derivative.
 
-Implementation shape:
+Current implementation shape:
 
-- Add `FilterAcceptanceKind { HType, FType }` as an internal result, not a user
-  API.
+- `FilterAcceptanceKind { HType, FType }` is an internal result, not a user API.
 - Keep `LineSearchType::FILTER` as the user-facing selection.
-- Add `filter_theta_max_factor` / `filter_theta_min_factor` only if needed for
-  behavior tuning; otherwise keep defaults internal first.
+- `filter_theta_max_factor` is a config field for the implemented theta gate;
+  `theta_min` remains an internal constant.
 
-Red tests:
+Evidence:
 
 - `LineSearchTest.FilterRejectsTrialAboveThetaMax`.
 - `LineSearchTest.FilterFTypeUsesArmijoAndDoesNotAugmentFilter`.
@@ -186,10 +179,10 @@ Red test:
 
 ## Recommended Order
 
-1. N-THEORY-3 split affine primal/dual step lengths. It is the smallest
-   standard-route correctness/performance improvement.
-2. N-THEORY-6 analytic merit directional derivative for merit line search.
-3. N-THEORY-1a `theta_max` gate.
+1. Done: N-THEORY-3 split affine primal/dual step lengths.
+2. Done: N-THEORY-6 analytic merit directional derivative for merit line
+   search.
+3. Done: N-THEORY-1a `theta_max` gate.
 4. Done: N-THEORY-1b f-type/h-type acceptance and filter augmentation rules.
 5. Done: N-THEORY-1c switching condition using derivative machinery from
    N-THEORY-6.

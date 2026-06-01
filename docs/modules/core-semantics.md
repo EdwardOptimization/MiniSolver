@@ -77,5 +77,8 @@ The helpers live in `minisolver::detail` and are internal implementation API.
 
 ## Known Gaps
 
-- Soft/hard row mode contract IDs are not assigned yet.
-- Runtime soft weight semantics should be captured in `soft-constraints-contract.md`.
+- Hard rows, soft rows, mixed L1/L2, and zero/tiny runtime soft-weight
+  semantics are covered by
+  [`../contracts/hard-constraints-contract.md`](../contracts/hard-constraints-contract.md)
+  and
+  [`../contracts/soft-constraints-contract.md`](../contracts/soft-constraints-contract.md).

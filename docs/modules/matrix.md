@@ -78,4 +78,7 @@ No persistent runtime state.
 
 ## Known Gaps
 
-- Matrix backend contract IDs are not assigned yet.
+- Matrix backend behavior is covered by
+  [`../contracts/matrix-backend-contract.md`](../contracts/matrix-backend-contract.md)
+  and the zero-allocation evidence in
+  [`../contracts/memory-allocation-contract.md`](../contracts/memory-allocation-contract.md).

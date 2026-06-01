@@ -80,4 +80,7 @@ and active/candidate swaps.
 
 ## Known Gaps
 
-- No dedicated trajectory ownership contract yet.
+- Trajectory behavior is currently covered by solve-loop, memory-allocation,
+  and line-search contracts. Add a dedicated trajectory contract only if future
+  changes expose trajectory ownership or copy/swap semantics beyond those
+  domains.

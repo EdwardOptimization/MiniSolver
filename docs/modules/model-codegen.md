@@ -88,6 +88,11 @@ Riccati code generation.
 
 ## Known Gaps
 
-- Codegen packet overwrite contract IDs are not assigned yet.
-- MiniModel public API contract should be split from generated C++ runtime
-  contract.
+- MiniModel/codegen, generated packet ownership, and the generated C++ model
+  interface are covered by
+  [`../contracts/minimodel-codegen-contract.md`](../contracts/minimodel-codegen-contract.md),
+  [`../contracts/generated-packets-contract.md`](../contracts/generated-packets-contract.md),
+  and
+  [`../contracts/model-interface-contract.md`](../contracts/model-interface-contract.md).
+  Split public DSL and generated-runtime contracts further only when a future
+  modeling feature needs separate ownership.

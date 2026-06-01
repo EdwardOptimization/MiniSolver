@@ -67,4 +67,7 @@ No owned state.
 
 ## Known Gaps
 
-- Barrier update contract IDs are not assigned yet.
+- Current barrier-mu contracts live in
+  [`../contracts/barrier-mu-contract.md`](../contracts/barrier-mu-contract.md).
+  Remaining tuning or replay evidence should be tracked in
+  [`../testing/contract-coverage-matrix.md`](../testing/contract-coverage-matrix.md).

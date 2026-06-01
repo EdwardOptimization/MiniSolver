@@ -80,4 +80,8 @@ constraint evaluation, scaling application, and residual helpers.
 
 ## Known Gaps
 
-- Packet ownership and scaling contract IDs are not assigned yet.
+- Packet ownership and scaling contracts live in
+  [`../contracts/constraint-packets-contract.md`](../contracts/constraint-packets-contract.md),
+  [`../contracts/generated-packets-contract.md`](../contracts/generated-packets-contract.md),
+  [`../contracts/scaling-contract.md`](../contracts/scaling-contract.md), and
+  [`../contracts/row-scaling-contract.md`](../contracts/row-scaling-contract.md).

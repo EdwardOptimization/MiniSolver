@@ -74,4 +74,9 @@ No owned state; mutates caller-owned knot and solver scalar state.
 
 ## Known Gaps
 
-- Initialization contract IDs for mixed soft central path are not assigned yet.
+- Current initialization and mixed soft central-path contracts live in
+  [`../contracts/initialization-contract.md`](../contracts/initialization-contract.md)
+  and
+  [`../contracts/soft-constraints-contract.md`](../contracts/soft-constraints-contract.md).
+  Remaining evidence gaps should stay in the coverage matrix, not this module
+  summary.

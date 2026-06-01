@@ -90,5 +90,11 @@ and top-level failure/status projection.
 
 ## Known Gaps
 
-- Full solve-loop contract IDs are not assigned yet.
-- Public API mutator contract should be separated from internal solve route.
+- Full solve-loop behavior is covered by
+  [`../contracts/solve-loop-contract.md`](../contracts/solve-loop-contract.md),
+  [`../contracts/status-semantics-contract.md`](../contracts/status-semantics-contract.md),
+  [`../contracts/postsolve-contract.md`](../contracts/postsolve-contract.md),
+  and
+  [`../contracts/solver-info-contract.md`](../contracts/solver-info-contract.md).
+  Public mutators are covered where they belong, primarily config, parameter,
+  callback, and warm-start contracts.

@@ -77,4 +77,7 @@ No persistent runtime state beyond local snapshot structs and file I/O.
 
 ## Known Gaps
 
-- Snapshot/replay contract IDs are not assigned yet.
+- Snapshot/replay and diagnostic ownership are covered by
+  [`../contracts/snapshot-replay-contract.md`](../contracts/snapshot-replay-contract.md)
+  and
+  [`../contracts/diagnostics-contract.md`](../contracts/diagnostics-contract.md).

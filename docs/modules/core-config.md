@@ -78,5 +78,9 @@ This module owns no runtime state. It owns defaults and validation policy.
 
 ## Known Gaps
 
-- Contract IDs for config validation and config-to-plan projection are not
-  assigned yet.
+- Config validation and field-registry behavior is covered by
+  [`../contracts/config-api-contract.md`](../contracts/config-api-contract.md)
+  and
+  [`../contracts/build-config-contract.md`](../contracts/build-config-contract.md).
+  Config-to-plan implementation details should be added there if future plan
+  projection semantics become externally relevant.
