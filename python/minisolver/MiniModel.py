@@ -1561,27 +1561,12 @@ class OptimalControlModel:
             }
 
             case IntegratorType::EULER_IMPLICIT:
-            {
-                // Simple Fixed-Point Iteration for x_next = x + f(x_next, u) * dt
-                MSVec<T, NX> x_next = x_in; // Guess
-                for(int i=0; i<5; ++i) {
-                    x_next = x_in + dynamics_continuous(x_next, u_in, p_in) * dt;
-                }
-                return x_next;
-            }
-
             case IntegratorType::RK2_IMPLICIT:
-            {
-                // Implicit Midpoint: k = f(x + 0.5*dt*k). x_next = x + dt*k
-                MSVec<T, NX> k = dynamics_continuous(x_in, u_in, p_in); // Guess k0
-                for(int i=0; i<5; ++i) {
-                    k = dynamics_continuous<T>(x_in + k * (0.5 * dt), u_in, p_in);
-                }
-                return x_in + k * dt;
-            }
+            case IntegratorType::RK4_IMPLICIT:
+                throw std::invalid_argument(
+                    "Implicit integrators require minisolver::detail::dispatch_integrate");
 
             case IntegratorType::RK4_EXPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -1640,16 +1625,10 @@ class OptimalControlModel:
             x_next_rk4 = x_vec + (dt_sym / 6.0) * (k1_rk4 + 2*k2_rk4 + 2*k3_rk4 + k4_rk4)
             integrators['RK4_EXPLICIT'] = x_next_rk4
 
-            # Map implicit to explicit for the generated switch cases.
-            # The runtime ImplicitIntegrator handles the actual implicit solve.
-            integrators['EULER_IMPLICIT'] = x_next_euler
-            integrators['RK2_IMPLICIT'] = x_next_rk2
-            integrators['RK4_IMPLICIT'] = x_next_rk4
-
             return [
-                (['EULER_EXPLICIT', 'EULER_IMPLICIT'], integrators['EULER_EXPLICIT']),
-                (['RK2_EXPLICIT', 'RK2_IMPLICIT'], integrators['RK2_EXPLICIT']),
-                (['RK4_EXPLICIT', 'RK4_IMPLICIT'], integrators['RK4_EXPLICIT']),
+                (['EULER_EXPLICIT'], integrators['EULER_EXPLICIT']),
+                (['RK2_EXPLICIT'], integrators['RK2_EXPLICIT']),
+                (['RK4_EXPLICIT'], integrators['RK4_EXPLICIT']),
             ]
 
         integrators['DISCRETE'] = x_next_direct
@@ -1721,13 +1700,18 @@ class OptimalControlModel:
                     "kp", "B", mat, nx, nu, indent="                ")
 
             if self.dynamics_mode == "dot":
-                code += "                break;\n"
+                code += "                return;\n"
                 code += "            }\n"
 
         if self.dynamics_mode == "dot":
+            code += "            case IntegratorType::EULER_IMPLICIT:\n"
+            code += "            case IntegratorType::RK2_IMPLICIT:\n"
+            code += "            case IntegratorType::RK4_IMPLICIT:\n"
+            code += "                throw std::invalid_argument(\"Implicit integrators require minisolver::detail::dispatch_compute_dynamics\");\n"
             code += "            case IntegratorType::DISCRETE:\n"
             code += "                throw std::invalid_argument(\"DISCRETE integrator requires Next(state) dynamics\");\n"
-            code += "        }"
+            code += "        }\n"
+            code += "        throw std::invalid_argument(\"Unsupported integrator type\");"
 
         return code, target_A_expr, target_B_expr
 

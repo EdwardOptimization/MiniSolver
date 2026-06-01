@@ -22,8 +22,10 @@ struct DcolTwoCarsModel {
 
     static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
 
-    static constexpr std::array<double, NC> constraint_weights = {0.0};
-    static constexpr std::array<int, NC> constraint_types = {0};
+    static constexpr std::array<bool, NC> constraint_has_l1 = {false};
+    static constexpr std::array<bool, NC> constraint_has_l2 = {false};
+    static constexpr bool any_l1_constraints = false;
+    static constexpr bool any_l2_constraints = false;
 
 
     // --- Name Arrays (for Map Construction) ---
@@ -186,27 +188,12 @@ struct DcolTwoCarsModel {
             }
 
             case IntegratorType::EULER_IMPLICIT:
-            {
-                // Simple Fixed-Point Iteration for x_next = x + f(x_next, u) * dt
-                MSVec<T, NX> x_next = x_in; // Guess
-                for(int i=0; i<5; ++i) {
-                    x_next = x_in + dynamics_continuous(x_next, u_in, p_in) * dt;
-                }
-                return x_next;
-            }
-
             case IntegratorType::RK2_IMPLICIT:
-            {
-                // Implicit Midpoint: k = f(x + 0.5*dt*k). x_next = x + dt*k
-                MSVec<T, NX> k = dynamics_continuous(x_in, u_in, p_in); // Guess k0
-                for(int i=0; i<5; ++i) {
-                    k = dynamics_continuous<T>(x_in + k * (0.5 * dt), u_in, p_in);
-                }
-                return x_in + k * dt;
-            }
+            case IntegratorType::RK4_IMPLICIT:
+                throw std::invalid_argument(
+                    "Implicit integrators require minisolver::detail::dispatch_integrate");
 
             case IntegratorType::RK4_EXPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -240,7 +227,6 @@ struct DcolTwoCarsModel {
 
         switch(type) {
             case IntegratorType::EULER_EXPLICIT:
-            case IntegratorType::EULER_IMPLICIT:
             {
                 T tmp_d0 = dt*cos(theta1);
                 T tmp_d1 = tmp_d0*v1;
@@ -284,10 +270,9 @@ struct DcolTwoCarsModel {
                 kp.B(3,0) = dt;
                 kp.B(6,3) = dt;
                 kp.B(7,2) = dt;
-                break;
+                return;
             }
             case IntegratorType::RK2_EXPLICIT:
-            case IntegratorType::RK2_IMPLICIT:
             {
                 T tmp_d0 = a1*dt;
                 T tmp_d1 = 0.5*tmp_d0 + v1;
@@ -356,10 +341,9 @@ struct DcolTwoCarsModel {
                 kp.B(5,3) = tmp_d11*tmp_d23;
                 kp.B(6,3) = dt;
                 kp.B(7,2) = dt;
-                break;
+                return;
             }
             case IntegratorType::RK4_EXPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
             {
                 T tmp_d0 = cos(theta1);
                 T tmp_d1 = a1*dt;
@@ -446,12 +430,24 @@ struct DcolTwoCarsModel {
                 kp.B(5,3) = tmp_d11*(dt*tmp_d25 + tmp_d26*tmp_d41);
                 kp.B(6,3) = tmp_d40;
                 kp.B(7,2) = tmp_d40;
-                break;
+                return;
             }
+            case IntegratorType::EULER_IMPLICIT:
+            case IntegratorType::RK2_IMPLICIT:
+            case IntegratorType::RK4_IMPLICIT:
+                throw std::invalid_argument("Implicit integrators require minisolver::detail::dispatch_compute_dynamics");
             case IntegratorType::DISCRETE:
                 throw std::invalid_argument("DISCRETE integrator requires Next(state) dynamics");
         }
+        throw std::invalid_argument("Unsupported integrator type");
     }
+
+    // --- 1.5 Update Soft Constraint Weights ---
+    template<typename T>
+    static void update_soft_constraint_weights(KnotPoint<T,NX,NU,NC,NP>& kp) {
+        (void)kp;
+    }
+
 
     // --- 2. Compute QP/IPM Constraints (g_val, C, D) ---
     template<typename T>
@@ -528,7 +524,6 @@ struct DcolTwoCarsModel {
         T tmp_c26 = dcol_h45*tmp_c1;
 
         // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_val.setZero();
         kp.C.setZero();
         kp.D.setZero();
 
@@ -598,9 +593,6 @@ struct DcolTwoCarsModel {
         T dcol_h55 = kp.p(41);
 
 
-        // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_true.setZero();
-
         // g_true
         kp.g_true(0,0) = -dcol_alpha - dcol_gtheta1*(theta1 - theta1_lin) - dcol_gtheta2*(theta2 - theta2_lin) - dcol_gx1*(x1 - x1_lin) - dcol_gx2*(x2 - x2_lin) - dcol_gy1*(y1 - y1_lin) - dcol_gy2*(y2 - y2_lin) - 1.0/2.0*dcol_h00*pow(x1 - x1_lin, 2) - dcol_h01*(x1 - x1_lin)*(y1 - y1_lin) - dcol_h02*(theta1 - theta1_lin)*(x1 - x1_lin) - dcol_h03*(x1 - x1_lin)*(x2 - x2_lin) - dcol_h04*(x1 - x1_lin)*(y2 - y2_lin) - dcol_h05*(theta2 - theta2_lin)*(x1 - x1_lin) - 1.0/2.0*dcol_h11*pow(y1 - y1_lin, 2) - dcol_h12*(theta1 - theta1_lin)*(y1 - y1_lin) - dcol_h13*(x2 - x2_lin)*(y1 - y1_lin) - dcol_h14*(y1 - y1_lin)*(y2 - y2_lin) - dcol_h15*(theta2 - theta2_lin)*(y1 - y1_lin) - 1.0/2.0*dcol_h22*pow(theta1 - theta1_lin, 2) - dcol_h23*(theta1 - theta1_lin)*(x2 - x2_lin) - dcol_h24*(theta1 - theta1_lin)*(y2 - y2_lin) - dcol_h25*(theta1 - theta1_lin)*(theta2 - theta2_lin) - 1.0/2.0*dcol_h33*pow(x2 - x2_lin, 2) - dcol_h34*(x2 - x2_lin)*(y2 - y2_lin) - dcol_h35*(theta2 - theta2_lin)*(x2 - x2_lin) - 1.0/2.0*dcol_h44*pow(y2 - y2_lin, 2) - dcol_h45*(theta2 - theta2_lin)*(y2 - y2_lin) - 1.0/2.0*dcol_h55*pow(theta2 - theta2_lin, 2) + 1.0;
 
@@ -654,7 +646,6 @@ struct DcolTwoCarsModel {
 
 
         // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_val.setZero();
         kp.C.setZero();
         kp.D.setZero();
 
@@ -723,9 +714,6 @@ struct DcolTwoCarsModel {
         T dcol_h45 = kp.p(40);
         T dcol_h55 = kp.p(41);
 
-
-        // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_true.setZero();
 
         // g_true
         kp.g_true(0,0) = -dcol_alpha - dcol_gtheta1*(theta1 - theta1_lin) - dcol_gtheta2*(theta2 - theta2_lin) - dcol_gx1*(x1 - x1_lin) - dcol_gx2*(x2 - x2_lin) - dcol_gy1*(y1 - y1_lin) - dcol_gy2*(y2 - y2_lin) - 1.0/2.0*dcol_h00*pow(x1 - x1_lin, 2) - dcol_h01*(x1 - x1_lin)*(y1 - y1_lin) - dcol_h02*(theta1 - theta1_lin)*(x1 - x1_lin) - dcol_h03*(x1 - x1_lin)*(x2 - x2_lin) - dcol_h04*(x1 - x1_lin)*(y2 - y2_lin) - dcol_h05*(theta2 - theta2_lin)*(x1 - x1_lin) - 1.0/2.0*dcol_h11*pow(y1 - y1_lin, 2) - dcol_h12*(theta1 - theta1_lin)*(y1 - y1_lin) - dcol_h13*(x2 - x2_lin)*(y1 - y1_lin) - dcol_h14*(y1 - y1_lin)*(y2 - y2_lin) - dcol_h15*(theta2 - theta2_lin)*(y1 - y1_lin) - 1.0/2.0*dcol_h22*pow(theta1 - theta1_lin, 2) - dcol_h23*(theta1 - theta1_lin)*(x2 - x2_lin) - dcol_h24*(theta1 - theta1_lin)*(y2 - y2_lin) - dcol_h25*(theta1 - theta1_lin)*(theta2 - theta2_lin) - 1.0/2.0*dcol_h33*pow(x2 - x2_lin, 2) - dcol_h34*(x2 - x2_lin)*(y2 - y2_lin) - dcol_h35*(theta2 - theta2_lin)*(x2 - x2_lin) - 1.0/2.0*dcol_h44*pow(y2 - y2_lin, 2) - dcol_h45*(theta2 - theta2_lin)*(y2 - y2_lin) - 1.0/2.0*dcol_h55*pow(theta2 - theta2_lin, 2) + 1.0;
@@ -804,10 +792,6 @@ struct DcolTwoCarsModel {
         T tmp_j12 = -dcol_h34*lam_0;
         T tmp_j13 = -dcol_h35*lam_0;
         T tmp_j14 = -dcol_h45*lam_0;
-
-        // Clear generated output packets; nonzero entries are assigned below.
-        kp.q.setZero();
-        kp.r.setZero();
 
         // q
         kp.q(0,0) = 0.16*x1 - 0.16*x1_ref;
@@ -947,7 +931,6 @@ template<typename T>
 
 
         // Clear generated output packets; nonzero entries are assigned below.
-        kp.q.setZero();
         kp.r.setZero();
 
         // q
@@ -1034,6 +1017,7 @@ template<typename T>
     // --- 4. Compute All (Convenience) ---
     template<typename T>
     static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        update_soft_constraint_weights(kp);
         compute_dynamics(kp, type, dt);
         compute_qp_constraints(kp);
         compute_true_constraints(kp);
@@ -1042,6 +1026,7 @@ template<typename T>
 
     template<typename T>
     static void compute_exact(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        update_soft_constraint_weights(kp);
         compute_dynamics(kp, type, dt);
         compute_qp_constraints(kp);
         compute_true_constraints(kp);

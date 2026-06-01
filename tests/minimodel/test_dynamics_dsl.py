@@ -179,6 +179,78 @@ def test_dot_model_rejects_discrete_runtime_integrator():
         )
 
 
+def test_generated_implicit_direct_calls_fail_loud_but_dispatch_succeeds():
+    model = OptimalControlModel("ImplicitDirectGuardModel")
+    x = model.state("x")
+    u = model.control("u")
+
+    model.subject_to(Dot(x) == -2.0 * x + u)
+    model.minimize(x**2 + u**2)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model.generate(tmpdir, integrator_type="RK4_IMPLICIT")
+        compile_and_run(
+            tmpdir,
+            "implicit_direct_guard_check.cpp",
+            "implicit_direct_guard_check",
+            """
+            #include "implicitdirectguardmodel.h"
+            #include "minisolver/integrator/implicit_integrator.h"
+            #include <cmath>
+            #include <stdexcept>
+
+            int main() {
+                using Model = minisolver::ImplicitDirectGuardModel;
+
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> kp;
+                kp.set_zero();
+                kp.x(0) = 1.0;
+                kp.u(0) = 0.0;
+
+                try {
+                    Model::compute_dynamics(
+                        kp, minisolver::IntegratorType::RK4_IMPLICIT, 0.1);
+                    return 1;
+                } catch (const std::invalid_argument&) {
+                }
+
+                minisolver::MSVec<double, Model::NX> x_in;
+                minisolver::MSVec<double, Model::NU> u_in;
+                minisolver::MSVec<double, Model::NP> p_in;
+                x_in(0) = 1.0;
+                u_in(0) = 0.0;
+
+                try {
+                    (void)Model::integrate(
+                        x_in, u_in, p_in, 0.1, minisolver::IntegratorType::RK4_IMPLICIT);
+                    return 2;
+                } catch (const std::invalid_argument&) {
+                }
+
+                minisolver::detail::dispatch_compute_dynamics<Model>(
+                    kp, minisolver::IntegratorType::RK4_IMPLICIT, 0.1);
+                if (!std::isfinite(kp.f_resid(0))) return 3;
+                if (!std::isfinite(kp.A(0, 0))) return 4;
+                if (!std::isfinite(kp.B(0, 0))) return 5;
+
+                const auto z = minisolver::detail::dispatch_integrate<Model>(
+                    x_in, u_in, p_in, 0.1, minisolver::IntegratorType::RK4_IMPLICIT);
+                if (!std::isfinite(z(0))) return 6;
+
+                minisolver::KnotPoint<double, Model::NX, Model::NU, Model::NC, Model::NP> explicit_kp;
+                explicit_kp.set_zero();
+                explicit_kp.x(0) = 1.0;
+                explicit_kp.u(0) = 0.0;
+                Model::compute_dynamics(
+                    explicit_kp, minisolver::IntegratorType::RK4_EXPLICIT, 0.1);
+                if (!std::isfinite(explicit_kp.f_resid(0))) return 7;
+
+                return 0;
+            }
+            """,
+        )
+
+
 def test_dynamics_dsl_rejects_mixed_dot_and_next_modes():
     def mixed_modes():
         model = OptimalControlModel("MixedDynamicsModel")
@@ -270,6 +342,7 @@ if __name__ == "__main__":
     test_next_subject_to_generates_discrete_dynamics_map()
     test_next_model_rejects_non_discrete_runtime_integrators()
     test_dot_model_rejects_discrete_runtime_integrator()
+    test_generated_implicit_direct_calls_fail_loud_but_dispatch_succeeds()
     test_dynamics_dsl_rejects_mixed_dot_and_next_modes()
     test_plain_equalities_are_not_supported_as_constraints()
     test_generate_rejects_integrator_mode_mismatch()

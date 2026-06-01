@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 using namespace minisolver;
 
@@ -35,7 +36,8 @@ struct NonlinearDecayModel {
         return xdot;
     }
 
-    // Standard Integrator Implementation (copied from generated code pattern)
+    // Direct helper mirrors generated explicit dynamics; implicit enums must route through
+    // ImplicitIntegrator/dispatch so tests do not grow a second implicit implementation.
     template <typename T>
     static MSVec<T, NX> integrate(const MSVec<T, NX>& x, const MSVec<T, NU>& u,
         const MSVec<T, NP>& p, double dt, IntegratorType type)
@@ -50,26 +52,13 @@ struct NonlinearDecayModel {
             return x + k2 * dt;
         }
 
-        case IntegratorType::EULER_IMPLICIT: {
-            // Simple Fixed-Point Iteration
-            MSVec<T, NX> x_next = x; // Guess
-            for (int i = 0; i < 10; ++i) {
-                x_next = x + dynamics_continuous(x_next, u, p) * dt;
-            }
-            return x_next;
-        }
+        case IntegratorType::EULER_IMPLICIT:
+        case IntegratorType::RK2_IMPLICIT:
+        case IntegratorType::RK4_IMPLICIT:
+            throw std::invalid_argument(
+                "Implicit integrators require minisolver::detail::dispatch_integrate");
 
-        case IntegratorType::RK2_IMPLICIT: {
-            // Implicit Midpoint
-            MSVec<T, NX> k = dynamics_continuous(x, u, p); // Guess k0
-            for (int i = 0; i < 10; ++i) {
-                k = dynamics_continuous<T>(x + k * (0.5 * dt), u, p);
-            }
-            return x + k * dt;
-        }
-
-        case IntegratorType::RK4_EXPLICIT:
-        default: {
+        case IntegratorType::RK4_EXPLICIT: {
             auto k1 = dynamics_continuous(x, u, p);
             auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u, p);
             auto k3 = dynamics_continuous<T>(x + k2 * (0.5 * dt), u, p);
@@ -77,19 +66,10 @@ struct NonlinearDecayModel {
             return x + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
         }
 
-        case IntegratorType::RK4_IMPLICIT: {
-            // Gauss-Legendre RK4 (Implicit) is complex to implement generically without Butcher
-            // tableau. The generated code usually maps RK4_IMPLICIT to RK4_EXPLICIT or a specific
-            // implicit scheme. For this test, we assume it falls back to explicit or uses a simple
-            // implementation if available. In CarModel it was mapped to same block as Explicit.
-            // Let's copy explicit logic here as placeholder if that's what generator does.
-            auto k1 = dynamics_continuous(x, u, p);
-            auto k2 = dynamics_continuous<T>(x + k1 * (0.5 * dt), u, p);
-            auto k3 = dynamics_continuous<T>(x + k2 * (0.5 * dt), u, p);
-            auto k4 = dynamics_continuous<T>(x + k3 * dt, u, p);
-            return x + (k1 + k2 * 2.0 + k3 * 2.0 + k4) * (dt / 6.0);
+        case IntegratorType::DISCRETE:
+            throw std::invalid_argument("DISCRETE integrator requires Next(state) dynamics");
         }
-        }
+        throw std::invalid_argument("Unsupported integrator type");
     }
 };
 
@@ -364,7 +344,8 @@ TEST(IntegratorTest, AccuracyComparison)
     MSVec<double, 1> x_ei;
     x_ei(0) = x0_val;
     for (int k = 0; k < steps; ++k) {
-        x_ei = NonlinearDecayModel::integrate(x_ei, u, p, dt, IntegratorType::EULER_IMPLICIT);
+        x_ei = ImplicitIntegrator<NonlinearDecayModel>::integrate(
+            x_ei, u, p, dt, IntegratorType::EULER_IMPLICIT);
     }
     double err_ei = std::abs(x_ei(0) - x_exact);
 

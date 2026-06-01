@@ -22,8 +22,10 @@ struct InnerDcolNorm2Model {
 
     static constexpr IntegratorType generated_integrator = IntegratorType::EULER_EXPLICIT;
 
-    static constexpr std::array<double, NC> constraint_weights = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    static constexpr std::array<int, NC> constraint_types = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    static constexpr std::array<bool, NC> constraint_has_l1 = {false, false, false, false, false, false, false, false, false, false};
+    static constexpr std::array<bool, NC> constraint_has_l2 = {false, false, false, false, false, false, false, false, false, false};
+    static constexpr bool any_l1_constraints = false;
+    static constexpr bool any_l2_constraints = false;
 
 
     // --- Name Arrays (for Map Construction) ---
@@ -112,27 +114,12 @@ struct InnerDcolNorm2Model {
             }
 
             case IntegratorType::EULER_IMPLICIT:
-            {
-                // Simple Fixed-Point Iteration for x_next = x + f(x_next, u) * dt
-                MSVec<T, NX> x_next = x_in; // Guess
-                for(int i=0; i<5; ++i) {
-                    x_next = x_in + dynamics_continuous(x_next, u_in, p_in) * dt;
-                }
-                return x_next;
-            }
-
             case IntegratorType::RK2_IMPLICIT:
-            {
-                // Implicit Midpoint: k = f(x + 0.5*dt*k). x_next = x + dt*k
-                MSVec<T, NX> k = dynamics_continuous(x_in, u_in, p_in); // Guess k0
-                for(int i=0; i<5; ++i) {
-                    k = dynamics_continuous<T>(x_in + k * (0.5 * dt), u_in, p_in);
-                }
-                return x_in + k * dt;
-            }
+            case IntegratorType::RK4_IMPLICIT:
+                throw std::invalid_argument(
+                    "Implicit integrators require minisolver::detail::dispatch_integrate");
 
             case IntegratorType::RK4_EXPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -155,7 +142,6 @@ struct InnerDcolNorm2Model {
 
         switch(type) {
             case IntegratorType::EULER_EXPLICIT:
-            case IntegratorType::EULER_IMPLICIT:
             {
                 kp.f_resid(0) = dummy;
 
@@ -165,10 +151,9 @@ struct InnerDcolNorm2Model {
 
                 // Clear dynamics Jacobian B; nonzero entries are assigned below.
                 kp.B.setZero();
-                break;
+                return;
             }
             case IntegratorType::RK2_EXPLICIT:
-            case IntegratorType::RK2_IMPLICIT:
             {
                 kp.f_resid(0) = dummy;
 
@@ -178,10 +163,9 @@ struct InnerDcolNorm2Model {
 
                 // Clear dynamics Jacobian B; nonzero entries are assigned below.
                 kp.B.setZero();
-                break;
+                return;
             }
             case IntegratorType::RK4_EXPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
             {
                 kp.f_resid(0) = dummy;
 
@@ -191,12 +175,24 @@ struct InnerDcolNorm2Model {
 
                 // Clear dynamics Jacobian B; nonzero entries are assigned below.
                 kp.B.setZero();
-                break;
+                return;
             }
+            case IntegratorType::EULER_IMPLICIT:
+            case IntegratorType::RK2_IMPLICIT:
+            case IntegratorType::RK4_IMPLICIT:
+                throw std::invalid_argument("Implicit integrators require minisolver::detail::dispatch_compute_dynamics");
             case IntegratorType::DISCRETE:
                 throw std::invalid_argument("DISCRETE integrator requires Next(state) dynamics");
         }
+        throw std::invalid_argument("Unsupported integrator type");
     }
+
+    // --- 1.5 Update Soft Constraint Weights ---
+    template<typename T>
+    static void update_soft_constraint_weights(KnotPoint<T,NX,NU,NC,NP>& kp) {
+        (void)kp;
+    }
+
 
     // --- 2. Compute QP/IPM Constraints (g_val, C, D) ---
     template<typename T>
@@ -242,7 +238,6 @@ struct InnerDcolNorm2Model {
         T tmp_c24 = 1.0/tmp_c19;
 
         // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_val.setZero();
         kp.C.setZero();
         kp.D.setZero();
 
@@ -315,9 +310,6 @@ struct InnerDcolNorm2Model {
         T y2 = kp.p(4);
         T theta2 = kp.p(5);
 
-
-        // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_true.setZero();
 
         // g_true
         kp.g_true(0,0) = -2.25*alpha + (p1x - x1)*cos(theta1) + (p1y - y1)*sin(theta1);
@@ -407,7 +399,6 @@ struct InnerDcolNorm2Model {
 
         // Clear generated output packets; nonzero entries are assigned below.
         kp.q.setZero();
-        kp.r.setZero();
 
         // q
 
@@ -510,6 +501,7 @@ template<typename T>
     // --- 4. Compute All (Convenience) ---
     template<typename T>
     static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        update_soft_constraint_weights(kp);
         compute_dynamics(kp, type, dt);
         compute_qp_constraints(kp);
         compute_true_constraints(kp);
@@ -518,6 +510,7 @@ template<typename T>
 
     template<typename T>
     static void compute_exact(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        update_soft_constraint_weights(kp);
         compute_dynamics(kp, type, dt);
         compute_qp_constraints(kp);
         compute_true_constraints(kp);

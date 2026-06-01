@@ -18,12 +18,14 @@ struct BicycleExtModel {
     static const int NC=10;
     static const int NP=15;
 
-    static constexpr std::uint64_t model_fingerprint = 0x5902cc381545aadaull;
+    static constexpr std::uint64_t model_fingerprint = 0x3d443ad82343ec3full;
 
     static constexpr IntegratorType generated_integrator = IntegratorType::RK4_EXPLICIT;
 
-    static constexpr std::array<double, NC> constraint_weights = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    static constexpr std::array<int, NC> constraint_types = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    static constexpr std::array<bool, NC> constraint_has_l1 = {false, false, false, false, false, false, false, false, false, false};
+    static constexpr std::array<bool, NC> constraint_has_l2 = {false, false, false, false, false, false, false, false, false, false};
+    static constexpr bool any_l1_constraints = false;
+    static constexpr bool any_l2_constraints = false;
 
 
     // --- Name Arrays (for Map Construction) ---
@@ -145,27 +147,12 @@ struct BicycleExtModel {
             }
 
             case IntegratorType::EULER_IMPLICIT:
-            {
-                // Simple Fixed-Point Iteration for x_next = x + f(x_next, u) * dt
-                MSVec<T, NX> x_next = x_in; // Guess
-                for(int i=0; i<5; ++i) {
-                    x_next = x_in + dynamics_continuous(x_next, u_in, p_in) * dt;
-                }
-                return x_next;
-            }
-
             case IntegratorType::RK2_IMPLICIT:
-            {
-                // Implicit Midpoint: k = f(x + 0.5*dt*k). x_next = x + dt*k
-                MSVec<T, NX> k = dynamics_continuous(x_in, u_in, p_in); // Guess k0
-                for(int i=0; i<5; ++i) {
-                    k = dynamics_continuous<T>(x_in + k * (0.5 * dt), u_in, p_in);
-                }
-                return x_in + k * dt;
-            }
+            case IntegratorType::RK4_IMPLICIT:
+                throw std::invalid_argument(
+                    "Implicit integrators require minisolver::detail::dispatch_integrate");
 
             case IntegratorType::RK4_EXPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
             {
                auto k1 = dynamics_continuous(x_in, u_in, p_in);
                auto k2 = dynamics_continuous<T>(x_in + k1 * (0.5 * dt), u_in, p_in);
@@ -195,7 +182,6 @@ struct BicycleExtModel {
 
         switch(type) {
             case IntegratorType::EULER_EXPLICIT:
-            case IntegratorType::EULER_IMPLICIT:
             {
                 T tmp_d0 = dt*cos(theta);
                 T tmp_d1 = tmp_d0*v;
@@ -229,10 +215,9 @@ struct BicycleExtModel {
                 kp.B.setZero();
                 kp.B(3,0) = dt;
                 kp.B(5,1) = dt;
-                break;
+                return;
             }
             case IntegratorType::RK2_EXPLICIT:
-            case IntegratorType::RK2_IMPLICIT:
             {
                 T tmp_d0 = 0.5*a*dt + v;
                 T tmp_d1 = dt*tmp_d0;
@@ -286,10 +271,9 @@ struct BicycleExtModel {
                 kp.B(3,0) = dt;
                 kp.B(4,1) = tmp_d13;
                 kp.B(5,1) = dt;
-                break;
+                return;
             }
             case IntegratorType::RK4_EXPLICIT:
-            case IntegratorType::RK4_IMPLICIT:
             {
                 T tmp_d0 = cos(theta);
                 T tmp_d1 = 0.5*dt;
@@ -386,12 +370,24 @@ struct BicycleExtModel {
                 kp.B(3,0) = tmp_d34;
                 kp.B(4,1) = tmp_d41;
                 kp.B(5,1) = tmp_d34;
-                break;
+                return;
             }
+            case IntegratorType::EULER_IMPLICIT:
+            case IntegratorType::RK2_IMPLICIT:
+            case IntegratorType::RK4_IMPLICIT:
+                throw std::invalid_argument("Implicit integrators require minisolver::detail::dispatch_compute_dynamics");
             case IntegratorType::DISCRETE:
                 throw std::invalid_argument("DISCRETE integrator requires Next(state) dynamics");
         }
+        throw std::invalid_argument("Unsupported integrator type");
     }
+
+    // --- 1.5 Update Soft Constraint Weights ---
+    template<typename T>
+    static void update_soft_constraint_weights(KnotPoint<T,NX,NU,NC,NP>& kp) {
+        (void)kp;
+    }
+
 
     // --- 2. Compute QP/IPM Constraints (g_val, C, D) ---
     template<typename T>
@@ -406,7 +402,6 @@ struct BicycleExtModel {
 
 
         // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_val.setZero();
         kp.C.setZero();
         kp.D.setZero();
 
@@ -454,9 +449,6 @@ struct BicycleExtModel {
         T jerk = kp.u(1);
 
 
-        // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_true.setZero();
-
         // g_true
         kp.g_true(0,0) = v - 15.0;
         kp.g_true(1,0) = -v;
@@ -482,7 +474,6 @@ struct BicycleExtModel {
 
 
         // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_val.setZero();
         kp.C.setZero();
         kp.D.setZero();
 
@@ -523,9 +514,6 @@ struct BicycleExtModel {
         T v = kp.x(4);
         T a = kp.x(5);
 
-
-        // Clear generated output packets; nonzero entries are assigned below.
-        kp.g_true.setZero();
 
         // g_true
         kp.g_true(0,0) = v - 15.0;
@@ -580,10 +568,6 @@ struct BicycleExtModel {
         T tmp_j3 = 2*w_dkappa;
         T tmp_j4 = 2*w_jerk;
         T tmp_j5 = 2*w_pos;
-
-        // Clear generated output packets; nonzero entries are assigned below.
-        kp.q.setZero();
-        kp.r.setZero();
 
         // q
         kp.q(0,0) = w_pos*(2*x - 2*x_ref);
@@ -655,7 +639,6 @@ template<typename T>
 
 
         // Clear generated output packets; nonzero entries are assigned below.
-        kp.q.setZero();
         kp.r.setZero();
 
         // q
@@ -702,6 +685,7 @@ template<typename T>
     // --- 4. Compute All (Convenience) ---
     template<typename T>
     static void compute(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        update_soft_constraint_weights(kp);
         compute_dynamics(kp, type, dt);
         compute_qp_constraints(kp);
         compute_true_constraints(kp);
@@ -710,6 +694,7 @@ template<typename T>
 
     template<typename T>
     static void compute_exact(KnotPoint<T,NX,NU,NC,NP>& kp, IntegratorType type, double dt) {
+        update_soft_constraint_weights(kp);
         compute_dynamics(kp, type, dt);
         compute_qp_constraints(kp);
         compute_true_constraints(kp);
